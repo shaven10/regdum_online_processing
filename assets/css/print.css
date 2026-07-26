@@ -1,0 +1,245 @@
+/* Claim stub — simple A4 layout */
+.claim-stub-page {
+    background: #eef1f5;
+    min-height: 100vh;
+    padding: 1.25rem;
+    font-family: "Plus Jakarta Sans", Arial, sans-serif;
+    color: #111827;
+}
+
+.claim-stub-toolbar {
+    width: min(210mm, 100%);
+    margin: 0 auto 1rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: .75rem;
+}
+
+.claim-stub-toolbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+}
+
+.claim-stub-toolbar .btn.is-busy {
+    opacity: .7;
+    pointer-events: none;
+}
+
+.claim-stub-sheet {
+    width: 210mm;
+    max-width: 100%;
+    min-height: 260mm;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, .08);
+    padding: 14mm 16mm;
+    box-sizing: border-box;
+}
+
+.claim-stub-top {
+    text-align: center;
+    padding-bottom: 8mm;
+    border-bottom: 2px solid #111827;
+    margin-bottom: 8mm;
+}
+
+.claim-stub-office {
+    margin: 0;
+    font-size: 11pt;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+.claim-stub-subtitle {
+    margin: 2mm 0 0;
+    font-size: 9pt;
+    color: #64748b;
+}
+
+.claim-stub-heading {
+    margin: 5mm 0 0;
+    font-size: 16pt;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.claim-stub-code-block {
+    text-align: center;
+    padding: 8mm 6mm;
+    margin-bottom: 8mm;
+    border: 2px solid #111827;
+    background: #f8fafc;
+}
+
+.claim-stub-code-label {
+    display: block;
+    font-size: 8pt;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: #64748b;
+    margin-bottom: 3mm;
+}
+
+.claim-stub-code-value {
+    display: block;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 24pt;
+    font-weight: 700;
+    letter-spacing: .16em;
+    line-height: 1.2;
+}
+
+.claim-stub-request-no {
+    display: block;
+    margin-top: 4mm;
+    font-size: 10pt;
+    color: #334155;
+}
+
+.claim-stub-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 8mm;
+    font-size: 10pt;
+}
+
+.claim-stub-table th,
+.claim-stub-table td {
+    border: 1px solid #dbe3ee;
+    padding: 3.5mm 4mm;
+    vertical-align: top;
+}
+
+.claim-stub-table th {
+    width: 34%;
+    text-align: left;
+    background: #f8fafc;
+    font-size: 8pt;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: #64748b;
+    font-weight: 700;
+}
+
+.claim-stub-table td {
+    font-weight: 600;
+    color: #111827;
+}
+
+.claim-stub-note {
+    margin: 0 0 8mm;
+    padding: 4mm 5mm;
+    border-left: 3px solid #2563eb;
+    background: #eff6ff;
+    font-size: 9.5pt;
+    line-height: 1.5;
+    color: #1e3a8a;
+}
+
+.claim-stub-instructions {
+    margin-bottom: 10mm;
+}
+
+.claim-stub-instructions h2 {
+    margin: 0 0 3mm;
+    font-size: 9pt;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: #475569;
+}
+
+.claim-stub-instructions ol {
+    margin: 0;
+    padding-left: 5mm;
+    font-size: 9.5pt;
+    line-height: 1.55;
+    color: #334155;
+}
+
+.claim-stub-instructions li + li {
+    margin-top: 1.5mm;
+}
+
+.claim-stub-signatures {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10mm;
+    margin-bottom: 8mm;
+}
+
+.claim-stub-sign-line {
+    border-top: 1px solid #111827;
+    padding-top: 2mm;
+    text-align: center;
+    font-size: 8.5pt;
+    color: #64748b;
+}
+
+.claim-stub-footer {
+    border-top: 1px solid #e2e8f0;
+    padding-top: 4mm;
+    text-align: center;
+    font-size: 8pt;
+    color: #94a3b8;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+@media screen and (max-width: 820px) {
+    .claim-stub-page {
+        padding: .75rem;
+    }
+
+    .claim-stub-sheet {
+        min-height: auto;
+        padding: 10mm 8mm;
+    }
+
+    .claim-stub-code-value {
+        font-size: 18pt;
+        letter-spacing: .1em;
+    }
+
+    .claim-stub-signatures {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media print {
+    @page {
+        size: A4 portrait;
+        margin: 10mm;
+    }
+
+    html,
+    body {
+        width: 210mm;
+        height: 297mm;
+    }
+
+    body.claim-stub-page {
+        background: #fff;
+        padding: 0;
+        margin: 0;
+    }
+
+    .no-print,
+    .claim-stub-toolbar {
+        display: none !important;
+    }
+
+    .claim-stub-sheet {
+        width: 100%;
+        min-height: auto;
+        max-width: none;
+        border: none;
+        box-shadow: none;
+        padding: 0;
+        margin: 0;
+    }
+}

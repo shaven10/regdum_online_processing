@@ -1,0 +1,22 @@
+# Uploaded student/user files
+/uploads/documents/*
+/uploads/instructions/*
+/uploads/receipts/*
+/uploads/request_docs/*
+/uploads/student_ids/*
+!/uploads/**/.gitkeep
+
+# OS / editor
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local / temp
+*.log
+*.tmp
+.env
+.env.*
