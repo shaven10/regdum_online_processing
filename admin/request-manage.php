@@ -105,6 +105,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="detail-item"><label>Purpose</label><span><?= purposeLabel($request['purpose'] ?? '') ?></span></div>
                 <?= renderRequestTermInfoHtml($request) ?>
                 <?= renderRequestSoaInfoHtml($request) ?>
+                <div class="detail-item"><label>Request Type</label><span><?= e(copyRequestTypeLabel($request['copy_request_type'] ?? null)) ?></span></div>
                 <div class="detail-item"><label>Copies</label><span><?= (int) $request['copies'] ?></span></div>
                 <div class="detail-item"><label>Amount</label><span><?= formatMoney((float)$request['total_amount']) ?></span></div>
                 <div class="detail-item"><label>Delivery</label><span><?= e(deliveryMethodLabel($request['delivery_method'])) ?></span></div>

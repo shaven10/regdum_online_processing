@@ -135,6 +135,7 @@ CREATE TABLE document_types (
     requires_auth_document_type TINYINT(1) NOT NULL DEFAULT 0,
     is_active TINYINT(1) DEFAULT 1,
     requirements_required TINYINT(1) NOT NULL DEFAULT 1,
+    second_copy_requirements_required TINYINT(1) NOT NULL DEFAULT 1,
     assignment_office VARCHAR(30) NOT NULL DEFAULT 'registrar',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -170,6 +171,7 @@ CREATE TABLE requests (
     document_type_id TINYINT UNSIGNED NULL,
     purpose ENUM('employment','scholarship','transfer','further_studies','personal','legal','other') NOT NULL,
     purpose_other VARCHAR(255),
+    copy_request_type ENUM('first_request','second_copy') NOT NULL DEFAULT 'first_request',
     request_school_year VARCHAR(20),
     request_semester VARCHAR(30),
     request_soa_assessment_scope VARCHAR(30),
@@ -451,16 +453,17 @@ INSERT INTO requirement_subcategories (requirement_code, code, name, description
 ('other_enrollment_requirements', 'live_birth_psa_photocopy', 'Live Birth PSA Photocopy', 'Upload a photocopy of your PSA Live Birth Certificate.', 1, 2),
 ('other_enrollment_requirements', 'f137a', 'F137A', 'Upload your Form 137-A (Secondary Student Permanent Record).', 1, 3);
 
--- Default requirements per credential type (admin configurable)
+-- Default requirements per credential type + request type (first / second copy)
 CREATE TABLE document_type_requirement_defaults (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     document_type_id TINYINT UNSIGNED NOT NULL,
     requirement_code VARCHAR(50) NOT NULL,
+    copy_request_type ENUM('first_request','second_copy') NOT NULL DEFAULT 'first_request',
     is_enabled TINYINT(1) DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (document_type_id) REFERENCES document_types(id) ON DELETE CASCADE,
-    UNIQUE KEY uk_doc_type_requirement (document_type_id, requirement_code)
+    UNIQUE KEY uk_doc_type_requirement_copy (document_type_id, requirement_code, copy_request_type)
 );
 
 CREATE TABLE app_settings (

@@ -68,17 +68,24 @@ function ensureComplianceSchema(): void {
 }
 
 function ensureRequirementDefaultsSchema(): void {
+    static $ready = false;
+    if ($ready) {
+        return;
+    }
+    $ready = true;
+
     $db = getDB();
 
     $db->exec("CREATE TABLE IF NOT EXISTS document_type_requirement_defaults (
         id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         document_type_id TINYINT UNSIGNED NOT NULL,
         requirement_code VARCHAR(50) NOT NULL,
+        copy_request_type ENUM('first_request','second_copy') NOT NULL DEFAULT 'first_request',
         is_enabled TINYINT(1) DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (document_type_id) REFERENCES document_types(id) ON DELETE CASCADE,
-        UNIQUE KEY uk_doc_type_requirement (document_type_id, requirement_code)
+        UNIQUE KEY uk_doc_type_requirement_copy (document_type_id, requirement_code, copy_request_type)
     )");
 
     $db->exec("CREATE TABLE IF NOT EXISTS app_settings (
@@ -92,8 +99,100 @@ function ensureRequirementDefaultsSchema(): void {
         $db->exec('ALTER TABLE document_types ADD COLUMN requirements_required TINYINT(1) NOT NULL DEFAULT 1 AFTER is_active');
     }
 
+    $secondRequiredCol = $db->query("SHOW COLUMNS FROM document_types LIKE 'second_copy_requirements_required'")->fetch();
+    if (!$secondRequiredCol) {
+        $db->exec('ALTER TABLE document_types ADD COLUMN second_copy_requirements_required TINYINT(1) NOT NULL DEFAULT 1 AFTER requirements_required');
+        $db->exec('UPDATE document_types SET second_copy_requirements_required = requirements_required');
+    }
+
+    migrateRequirementDefaultsCopyTypeColumn();
+
     ensureRequirementDefinitionsSchema();
     seedDocumentTypeRequirementDefaults();
+}
+
+function migrateRequirementDefaultsCopyTypeColumn(): void {
+    $db = getDB();
+    $copyCol = $db->query("SHOW COLUMNS FROM document_type_requirement_defaults LIKE 'copy_request_type'")->fetch();
+    if (!$copyCol) {
+        $db->exec("ALTER TABLE document_type_requirement_defaults
+            ADD COLUMN copy_request_type ENUM('first_request','second_copy') NOT NULL DEFAULT 'first_request'
+            AFTER requirement_code");
+    }
+
+    // Upgrade legacy unique key (doc + code) to include copy type.
+    $indexes = $db->query("SHOW INDEX FROM document_type_requirement_defaults")->fetchAll();
+    $hasLegacy = false;
+    $hasNew = false;
+    $hasDocIndex = false;
+    foreach ($indexes as $index) {
+        $name = (string) ($index['Key_name'] ?? '');
+        if ($name === 'uk_doc_type_requirement') {
+            $hasLegacy = true;
+        }
+        if ($name === 'uk_doc_type_requirement_copy') {
+            $hasNew = true;
+        }
+        if ($name === 'idx_doc_type_requirement_defaults_doc' || (
+            $name !== 'PRIMARY'
+            && (int) ($index['Seq_in_index'] ?? 0) === 1
+            && ($index['Column_name'] ?? '') === 'document_type_id'
+            && (int) ($index['Non_unique'] ?? 1) === 1
+        )) {
+            $hasDocIndex = true;
+        }
+    }
+
+    // FK on document_type_id requires an index; add one before dropping the legacy unique key.
+    if (!$hasDocIndex) {
+        try {
+            $db->exec('ALTER TABLE document_type_requirement_defaults
+                ADD INDEX idx_doc_type_requirement_defaults_doc (document_type_id)');
+        } catch (Throwable $e) {
+            // Index may already exist.
+        }
+    }
+
+    if ($hasLegacy) {
+        try {
+            $db->exec('ALTER TABLE document_type_requirement_defaults DROP INDEX uk_doc_type_requirement');
+        } catch (Throwable $e) {
+            // Keep going; new unique key may still be addable.
+        }
+    }
+    if (!$hasNew) {
+        try {
+            $db->exec('ALTER TABLE document_type_requirement_defaults
+                ADD UNIQUE KEY uk_doc_type_requirement_copy (document_type_id, requirement_code, copy_request_type)');
+        } catch (Throwable $e) {
+            // Index may already exist under another path.
+        }
+    }
+
+    // Copy first-request rows into second-copy when second-copy config is missing.
+    $docIds = $db->query('SELECT DISTINCT document_type_id FROM document_type_requirement_defaults')->fetchAll(PDO::FETCH_COLUMN);
+    $insert = $db->prepare('INSERT IGNORE INTO document_type_requirement_defaults
+        (document_type_id, requirement_code, copy_request_type, is_enabled)
+        SELECT document_type_id, requirement_code, \'second_copy\', is_enabled
+        FROM document_type_requirement_defaults
+        WHERE document_type_id = ? AND copy_request_type = \'first_request\'');
+    $hasSecond = $db->prepare('SELECT COUNT(*) FROM document_type_requirement_defaults
+        WHERE document_type_id = ? AND copy_request_type = \'second_copy\'');
+    $addAffidavit = $db->prepare('INSERT IGNORE INTO document_type_requirement_defaults
+        (document_type_id, requirement_code, copy_request_type, is_enabled)
+        VALUES (?, \'affidavit_second_copy\', \'second_copy\', 1)');
+
+    foreach ($docIds as $docId) {
+        $hasSecond->execute([(int) $docId]);
+        if ((int) $hasSecond->fetchColumn() === 0) {
+            $insert->execute([(int) $docId]);
+            $addAffidavit->execute([(int) $docId]);
+        }
+    }
+}
+
+function normalizeRequirementCopyType(?string $copyRequestType): string {
+    return $copyRequestType === 'second_copy' ? 'second_copy' : 'first_request';
 }
 
 function defaultRequirementDefinitionSeed(): array {
@@ -371,8 +470,18 @@ function countAssignedRequestsUsingRequirementCode(string $code): int {
     return (int) $stmt->fetchColumn();
 }
 
-function documentTypeRequiresRequirements(int $documentTypeId): bool {
+function documentTypeRequiresRequirements(int $documentTypeId, ?string $copyRequestType = 'first_request'): bool {
+    ensureRequirementDefaultsSchema();
+    $copyRequestType = normalizeRequirementCopyType($copyRequestType);
     $db = getDB();
+
+    if ($copyRequestType === 'second_copy') {
+        $stmt = $db->prepare('SELECT second_copy_requirements_required FROM document_types WHERE id = ?');
+        $stmt->execute([$documentTypeId]);
+        $value = $stmt->fetchColumn();
+        return $value === false ? true : (bool) $value;
+    }
+
     $stmt = $db->prepare('SELECT requirements_required FROM document_types WHERE id = ?');
     $stmt->execute([$documentTypeId]);
     $value = $stmt->fetchColumn();
@@ -400,6 +509,34 @@ function isAutoApplyRequirementsEnabled(): bool {
     return getAppSetting('auto_apply_requirement_defaults', '1') === '1';
 }
 
+/**
+ * When global auto-apply is on, only credentials marked "no requirements required"
+ * skip registrar confirmation. Credentials with configured requirements still wait
+ * for registrar confirmation (with defaults pre-checked in the review form).
+ */
+function maybeAutoApplyOnRequestSubmission(int $requestId, array $documentTypeIds, string $copyRequestType = 'first_request'): string {
+    if (!isAutoApplyRequirementsEnabled()) {
+        return 'manual';
+    }
+
+    $documentTypeIds = array_values(array_unique(array_filter(array_map('intval', $documentTypeIds))));
+    if ($documentTypeIds === []) {
+        return 'manual';
+    }
+
+    $copyRequestType = normalizeRequirementCopyType($copyRequestType);
+
+    foreach ($documentTypeIds as $documentTypeId) {
+        if (documentTypeRequiresRequirements($documentTypeId, $copyRequestType)) {
+            return 'manual';
+        }
+    }
+
+    $primaryDocumentTypeId = $documentTypeIds[0];
+    applyNoRequirementsToRequest($requestId, $primaryDocumentTypeId, true);
+    return 'payment';
+}
+
 function standardDefaultRequirementCodes(): array {
     return ['online_clearance', 'final_clearance', 'other_enrollment_requirements'];
 }
@@ -418,22 +555,29 @@ function baseDocumentRequirementCodes(?string $documentTypeCode = null): array {
 function ensureAdditionalRequirementDefaults(array $codes): void {
     $checklist = registrarRequirementChecklist();
     $db = getDB();
+    ensureRequirementDefaultsSchema();
     $docTypes = $db->query('SELECT id FROM document_types WHERE is_active = 1')->fetchAll();
+    $copyTypes = ['first_request', 'second_copy'];
 
     foreach ($docTypes as $docType) {
-        foreach ($codes as $code) {
-            if (!array_key_exists($code, $checklist)) {
-                continue;
-            }
+        foreach ($copyTypes as $copyType) {
+            foreach ($codes as $code) {
+                if (!array_key_exists($code, $checklist)) {
+                    continue;
+                }
 
-            $exists = $db->prepare('SELECT COUNT(*) FROM document_type_requirement_defaults WHERE document_type_id = ? AND requirement_code = ?');
-            $exists->execute([(int) $docType['id'], $code]);
-            if ((int) $exists->fetchColumn() > 0) {
-                continue;
-            }
+                $exists = $db->prepare('SELECT COUNT(*) FROM document_type_requirement_defaults
+                    WHERE document_type_id = ? AND requirement_code = ? AND copy_request_type = ?');
+                $exists->execute([(int) $docType['id'], $code, $copyType]);
+                if ((int) $exists->fetchColumn() > 0) {
+                    continue;
+                }
 
-            $db->prepare('INSERT INTO document_type_requirement_defaults (document_type_id, requirement_code, is_enabled) VALUES (?, ?, 1)')
-               ->execute([(int) $docType['id'], $code]);
+                $db->prepare('INSERT INTO document_type_requirement_defaults
+                    (document_type_id, requirement_code, copy_request_type, is_enabled)
+                    VALUES (?, ?, ?, 1)')
+                   ->execute([(int) $docType['id'], $code, $copyType]);
+            }
         }
     }
 }
@@ -453,78 +597,95 @@ function removeRetiredRequirementCodes(): void {
 function seedDocumentTypeRequirementDefaults(?int $documentTypeId = null, ?string $code = null): void {
     $db = getDB();
 
-    if ($documentTypeId && $code) {
+    $seedOne = static function (int $docTypeId, string $docCode) use ($db): void {
         $existing = $db->prepare('SELECT COUNT(*) FROM document_type_requirement_defaults WHERE document_type_id = ?');
-        $existing->execute([$documentTypeId]);
+        $existing->execute([$docTypeId]);
         if ((int) $existing->fetchColumn() > 0) {
             return;
         }
 
-        $codes = baseDocumentRequirementCodes($code);
-
-        foreach ($codes as $reqCode) {
-            $db->prepare('INSERT INTO document_type_requirement_defaults (document_type_id, requirement_code, is_enabled) VALUES (?, ?, 1)')
-               ->execute([$documentTypeId, $reqCode]);
+        $firstCodes = baseDocumentRequirementCodes($docCode);
+        $secondCodes = $firstCodes;
+        if (!in_array('affidavit_second_copy', $secondCodes, true)) {
+            $secondCodes[] = 'affidavit_second_copy';
         }
+
+        $insert = $db->prepare('INSERT INTO document_type_requirement_defaults
+            (document_type_id, requirement_code, copy_request_type, is_enabled)
+            VALUES (?, ?, ?, 1)');
+
+        foreach ($firstCodes as $reqCode) {
+            $insert->execute([$docTypeId, $reqCode, 'first_request']);
+        }
+        foreach ($secondCodes as $reqCode) {
+            $insert->execute([$docTypeId, $reqCode, 'second_copy']);
+        }
+    };
+
+    if ($documentTypeId && $code) {
+        $seedOne($documentTypeId, $code);
         return;
     }
 
     $docTypes = $db->query('SELECT id, code FROM document_types WHERE is_active = 1')->fetchAll();
-    if (empty($docTypes)) {
-        return;
-    }
-
     foreach ($docTypes as $docType) {
-        $existing = $db->prepare('SELECT COUNT(*) FROM document_type_requirement_defaults WHERE document_type_id = ?');
-        $existing->execute([$docType['id']]);
-        if ((int) $existing->fetchColumn() > 0) {
-            continue;
-        }
-
-        $codes = baseDocumentRequirementCodes($docType['code']);
-
-        foreach ($codes as $code) {
-            $db->prepare('INSERT INTO document_type_requirement_defaults (document_type_id, requirement_code, is_enabled) VALUES (?, ?, 1)')
-               ->execute([$docType['id'], $code]);
-        }
+        $seedOne((int) $docType['id'], (string) $docType['code']);
     }
 }
 
-function getDocumentTypeRequirementDefaults(int $documentTypeId): array {
-    if (!documentTypeRequiresRequirements($documentTypeId)) {
+function getSavedDocumentTypeRequirementDefaults(int $documentTypeId, ?string $copyRequestType = 'first_request'): array {
+    $db = getDB();
+    ensureRequirementDefaultsSchema();
+    $copyRequestType = normalizeRequirementCopyType($copyRequestType);
+
+    $stmt = $db->prepare('SELECT requirement_code FROM document_type_requirement_defaults
+        WHERE document_type_id = ? AND copy_request_type = ? AND is_enabled = 1
+        ORDER BY id');
+    $stmt->execute([$documentTypeId, $copyRequestType]);
+    return array_values(array_map('strval', $stmt->fetchAll(PDO::FETCH_COLUMN) ?: []));
+}
+
+function getDocumentTypeRequirementDefaults(int $documentTypeId, ?string $copyRequestType = 'first_request'): array {
+    $copyRequestType = normalizeRequirementCopyType($copyRequestType);
+    if (!documentTypeRequiresRequirements($documentTypeId, $copyRequestType)) {
         return [];
     }
 
-    $db = getDB();
-
-    $stmt = $db->prepare('SELECT requirement_code FROM document_type_requirement_defaults
-        WHERE document_type_id = ? AND is_enabled = 1
-        ORDER BY id');
-    $stmt->execute([$documentTypeId]);
-    $codes = $stmt->fetchAll(PDO::FETCH_COLUMN);
-
+    $codes = getSavedDocumentTypeRequirementDefaults($documentTypeId, $copyRequestType);
     if (!empty($codes)) {
-        return array_values($codes);
+        return $codes;
     }
 
-    return standardDefaultRequirementCodes();
+    $fallback = standardDefaultRequirementCodes();
+    if ($copyRequestType === 'second_copy' && !in_array('affidavit_second_copy', $fallback, true)) {
+        $fallback[] = 'affidavit_second_copy';
+    }
+    return $fallback;
 }
 
-function saveDocumentTypeRequirementDefaults(int $documentTypeId, array $codes, bool $requirementsRequired = true): void {
+function saveDocumentTypeRequirementDefaultsForCopyType(
+    int $documentTypeId,
+    string $copyRequestType,
+    array $codes,
+    bool $requirementsRequired
+): void {
     $db = getDB();
     ensureRequirementDefaultsSchema();
-
-    $db->prepare('UPDATE document_types SET requirements_required = ? WHERE id = ?')
-       ->execute([$requirementsRequired ? 1 : 0, $documentTypeId]);
-
+    $copyRequestType = normalizeRequirementCopyType($copyRequestType);
     $checklist = registrarRequirementChecklist();
-    $db->prepare('DELETE FROM document_type_requirement_defaults WHERE document_type_id = ?')->execute([$documentTypeId]);
+
+    if ($copyRequestType === 'second_copy') {
+        $db->prepare('UPDATE document_types SET second_copy_requirements_required = ? WHERE id = ?')
+           ->execute([$requirementsRequired ? 1 : 0, $documentTypeId]);
+    } else {
+        $db->prepare('UPDATE document_types SET requirements_required = ? WHERE id = ?')
+           ->execute([$requirementsRequired ? 1 : 0, $documentTypeId]);
+    }
+
+    $db->prepare('DELETE FROM document_type_requirement_defaults WHERE document_type_id = ? AND copy_request_type = ?')
+       ->execute([$documentTypeId, $copyRequestType]);
 
     if (!$requirementsRequired) {
-        auditLog('update_requirement_defaults', 'document_types', $documentTypeId, null, [
-            'requirements_required' => 0,
-            'codes' => [],
-        ]);
         return;
     }
 
@@ -532,13 +693,38 @@ function saveDocumentTypeRequirementDefaults(int $documentTypeId, array $codes, 
         if (!in_array($code, $codes, true)) {
             continue;
         }
-        $db->prepare('INSERT INTO document_type_requirement_defaults (document_type_id, requirement_code, is_enabled) VALUES (?, ?, 1)')
-           ->execute([$documentTypeId, $code]);
+        $db->prepare('INSERT INTO document_type_requirement_defaults
+            (document_type_id, requirement_code, copy_request_type, is_enabled)
+            VALUES (?, ?, ?, 1)')
+           ->execute([$documentTypeId, $code, $copyRequestType]);
+    }
+}
+
+function saveDocumentTypeRequirementDefaults(
+    int $documentTypeId,
+    array $firstCodes,
+    bool $firstRequired = true,
+    ?array $secondCodes = null,
+    ?bool $secondRequired = null
+): void {
+    // Backward-compatible signature: saveDocumentTypeRequirementDefaults($id, $codes, $required)
+    if ($secondCodes === null && $secondRequired === null && func_num_args() <= 3) {
+        $secondCodes = $firstCodes;
+        $secondRequired = $firstRequired;
+        if ($secondRequired && !in_array('affidavit_second_copy', $secondCodes, true)) {
+            $secondCodes[] = 'affidavit_second_copy';
+        }
     }
 
+    $secondCodes = $secondCodes ?? $firstCodes;
+    $secondRequired = $secondRequired ?? $firstRequired;
+
+    saveDocumentTypeRequirementDefaultsForCopyType($documentTypeId, 'first_request', $firstCodes, $firstRequired);
+    saveDocumentTypeRequirementDefaultsForCopyType($documentTypeId, 'second_copy', $secondCodes, $secondRequired);
+
     auditLog('update_requirement_defaults', 'document_types', $documentTypeId, null, [
-        'requirements_required' => 1,
-        'codes' => $codes,
+        'first_request' => ['required' => $firstRequired ? 1 : 0, 'codes' => $firstCodes],
+        'second_copy' => ['required' => $secondRequired ? 1 : 0, 'codes' => $secondCodes],
     ]);
 }
 
@@ -552,7 +738,9 @@ function getAllDocumentTypeRequirementSettings(): array {
     foreach ($docTypes as $docType) {
         $settings[] = [
             'document_type' => $docType,
-            'codes' => getDocumentTypeRequirementDefaults((int) $docType['id']),
+            'first_request_codes' => getDocumentTypeRequirementDefaults((int) $docType['id'], 'first_request'),
+            'second_copy_codes' => getDocumentTypeRequirementDefaults((int) $docType['id'], 'second_copy'),
+            'codes' => getDocumentTypeRequirementDefaults((int) $docType['id'], 'first_request'),
         ];
     }
 
@@ -593,11 +781,16 @@ function applyNoRequirementsToRequest(int $requestId, int $documentTypeId, bool 
 }
 
 function applyRequirementDefaultsToRequest(int $requestId, int $documentTypeId, bool $changeStatus = true, ?int $requestItemId = null): bool {
-    if (!documentTypeRequiresRequirements($documentTypeId)) {
+    $db = getDB();
+    $copyTypeStmt = $db->prepare('SELECT copy_request_type FROM requests WHERE id = ?');
+    $copyTypeStmt->execute([$requestId]);
+    $copyRequestType = normalizeRequirementCopyType((string) ($copyTypeStmt->fetchColumn() ?: 'first_request'));
+
+    if (!documentTypeRequiresRequirements($documentTypeId, $copyRequestType)) {
         return applyNoRequirementsToRequest($requestId, $documentTypeId, $changeStatus);
     }
 
-    $codes = getDocumentTypeRequirementDefaults($documentTypeId);
+    $codes = getDocumentTypeRequirementDefaults($documentTypeId, $copyRequestType);
     if (empty($codes)) {
         return false;
     }
@@ -608,6 +801,7 @@ function applyRequirementDefaultsToRequest(int $requestId, int $documentTypeId, 
     }
 
     saveAssignedRequirements($requestId, $requirements, $requestItemId);
+    ensureSecondCopyAffidavitRequirement($requestId);
 
     if (hasAssignedRequirement($requestId, 'online_clearance')) {
         require_once __DIR__ . '/clearance.php';
@@ -880,6 +1074,54 @@ function assignedRequirementSubcodes(int $requestId): array {
 
 function hasAssignedRequirement(int $requestId, string $code): bool {
     return in_array($code, assignedRequirementCodes($requestId), true);
+}
+
+function appendAssignedRequirement(int $requestId, string $code, ?int $requestItemId = null): bool {
+    ensureRequirementDefinitionsSchema();
+    $code = normalizeRequirementCode($code);
+    if ($code === '' || hasAssignedRequirement($requestId, $code)) {
+        return false;
+    }
+
+    $requirements = buildRequirementsFromCodes([$code]);
+    if (empty($requirements)) {
+        return false;
+    }
+
+    $db = getDB();
+    $maxSort = $db->prepare('SELECT COALESCE(MAX(sort_order), 0) FROM request_assigned_requirements WHERE request_id = ?');
+    $maxSort->execute([$requestId]);
+    $sortBase = (int) $maxSort->fetchColumn();
+
+    foreach ($requirements as $i => $req) {
+        $name = trim($req['name'] ?? '');
+        if ($name === '') {
+            continue;
+        }
+        $db->prepare('INSERT INTO request_assigned_requirements
+            (request_id, request_item_id, requirement_code, subcategory_code, requirement_name, description, requires_upload, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([
+            $requestId,
+            $requestItemId,
+            $req['code'] ?? null,
+            !empty($req['subcategory_code']) ? $req['subcategory_code'] : null,
+            $name,
+            trim($req['description'] ?? '') ?: null,
+            !empty($req['requires_upload']) ? 1 : 0,
+            $req['sort_order'] ?? ($sortBase + $i + 1),
+        ]);
+    }
+
+    return true;
+}
+
+function ensureSecondCopyAffidavitRequirement(int $requestId): bool {
+    require_once __DIR__ . '/student.php';
+    if (!isSecondCopyRequest($requestId)) {
+        return false;
+    }
+
+    return appendAssignedRequirement($requestId, 'affidavit_second_copy');
 }
 
 function syncAssignedClearanceRequirement(int $requestId): void {
@@ -1682,7 +1924,8 @@ function processComplianceAction(int $requestId, array $checks, string $action, 
 
         $requirements = $extra['requirements'] ?? [];
         if (empty($requirements)) {
-            if (!documentTypeRequiresRequirements((int) $request['document_type_id'])) {
+            $copyType = normalizeRequirementCopyType($request['copy_request_type'] ?? 'first_request');
+            if (!documentTypeRequiresRequirements((int) $request['document_type_id'], $copyType)) {
                 return applyNoRequirementsToRequest($requestId, (int) $request['document_type_id'], true, $remarks ?: null);
             }
 
@@ -1690,6 +1933,7 @@ function processComplianceAction(int $requestId, array $checks, string $action, 
         }
 
         saveAssignedRequirements($requestId, $requirements);
+        ensureSecondCopyAffidavitRequirement($requestId);
 
         if (hasAssignedRequirement($requestId, 'online_clearance')) {
             require_once __DIR__ . '/clearance.php';

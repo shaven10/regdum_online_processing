@@ -177,8 +177,8 @@ function purposeLabel(string $purpose): string {
     return ucwords(str_replace('_', ' ', $purpose));
 }
 
-function purposeOptions(): array {
-    return getActiveRequestPurposeCodes();
+function purposeOptions(?string $enrollmentStatus = null): array {
+    return getActiveRequestPurposeCodes($enrollmentStatus);
 }
 
 function uploadFile(array $file, string $subdir = 'documents'): ?string {

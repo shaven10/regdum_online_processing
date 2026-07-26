@@ -74,6 +74,9 @@ function runApplicationMigrations(): array {
     ensureDeliveryMethods();
     $log[] = 'On-site pickup delivery methods';
 
+    ensureRequestCopyTypeSchema();
+    $log[] = 'First request / second copy field';
+
     ensurePrivacyConsentSchema();
     $log[] = 'Data privacy consent timestamp on users';
 

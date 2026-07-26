@@ -79,6 +79,7 @@ function buildClaimStubRows(array $data): array {
         ['Course / Year', $courseYear ?: '—'],
         ['Document', $request['document_name']],
         ['Copies', (string) (int) $request['copies']],
+        ['Request Type', copyRequestTypeLabel($request['copy_request_type'] ?? null)],
         ['Purpose', purposeLabel($request['purpose']) . ($request['purpose_other'] ? ' — ' . $request['purpose_other'] : '')],
         ['Delivery', deliveryMethodLabel($request['delivery_method'])],
         ['Release Schedule', $releaseSchedule],

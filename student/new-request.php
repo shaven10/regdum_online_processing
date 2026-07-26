@@ -6,6 +6,7 @@ requireRole('student');
 $user = currentUser();
 
 ensureDeliveryMethods();
+ensureRequestCopyTypeSchema();
 ensureStudentEmploymentFields();
 ensureAcademicProgramsSchema();
 ensureEnrollmentStatuses();
@@ -43,18 +44,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     }
 
     $postedCopies = $_POST['document_copies'] ?? [];
-    $postedTerms = $_POST['document_term'] ?? [];
+    $postedTermLines = $_POST['document_term_lines'] ?? [];
     $postedAuthItems = $_POST['document_auth_items'] ?? [];
     $docTypesById = [];
     foreach ($docTypes as $docTypeRow) {
         $docTypesById[(int) $docTypeRow['id']] = $docTypeRow;
     }
     $data = [
-        'document_type_ids' => array_values(array_unique(array_filter(array_map('intval', $_POST['document_type_ids'] ?? [])))),
-        'purpose'          => $_POST['purpose'] ?? '',
-        'purpose_other'    => trim($_POST['purpose_other'] ?? ''),
-        'notes'            => trim($_POST['notes'] ?? ''),
+        'document_type_ids'  => array_values(array_unique(array_filter(array_map('intval', $_POST['document_type_ids'] ?? [])))),
+        'purpose'            => $_POST['purpose'] ?? '',
+        'purpose_other'      => trim($_POST['purpose_other'] ?? ''),
+        'copy_request_type'  => $_POST['copy_request_type'] ?? '',
+        'notes'              => trim($_POST['notes'] ?? ''),
     ];
+
+    $normalizeTermLines = static function ($rawLines): array {
+        $lines = [];
+        foreach ((array) $rawLines as $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+            $schoolYear = trim((string) ($line['school_year'] ?? ''));
+            $semester = trim((string) ($line['semester'] ?? ''));
+            $copies = max(1, (int) ($line['copies'] ?? 1));
+            if ($schoolYear === '' && $semester === '') {
+                continue;
+            }
+            $lines[] = [
+                'school_year' => $schoolYear,
+                'semester' => $semester,
+                'copies' => $copies,
+            ];
+        }
+        return array_values($lines);
+    };
 
     $validDocTypeIds = validateActiveDocumentTypeIdsForEnrollment($data['document_type_ids'], $enrollmentStatus);
     if (empty($validDocTypeIds)) {
@@ -64,6 +87,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     } elseif (count($validDocTypeIds) !== count($data['document_type_ids'])) {
         $errors['document_type_ids'] = 'One or more selected documents are not available for your enrollment status.';
     }
+
+    $validatedTermLinesByDoc = [];
 
     foreach ($validDocTypeIds as $documentTypeId) {
         $docType = $docTypesById[$documentTypeId] ?? null;
@@ -77,27 +102,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             continue;
         }
 
+        if ($docType && documentTypeRequiresTermInfo($docType)) {
+            $termLines = $normalizeTermLines($postedTermLines[$documentTypeId] ?? []);
+            if ($termLines === []) {
+                $errors['document_term_' . $documentTypeId] = 'Add at least one school year and semester for this document.';
+                continue;
+            }
+
+            $seenTerms = [];
+            foreach ($termLines as $lineIndex => $termLine) {
+                $termError = validateRequestTermFields($termLine['school_year'], $termLine['semester']);
+                if ($termError) {
+                    $errors['document_term_' . $documentTypeId] = $termError;
+                    break;
+                }
+
+                $copyError = validateStudentDocumentRequest($documentTypeId, $enrollmentStatus, (int) $termLine['copies']);
+                if ($copyError) {
+                    $errors['document_type_ids'] = $copyError;
+                    break 2;
+                }
+
+                $termKey = $termLine['school_year'] . '|' . $termLine['semester'];
+                if (isset($seenTerms[$termKey])) {
+                    $errors['document_term_' . $documentTypeId] = 'Each school year and semester combination can only be added once for this document.';
+                    break;
+                }
+                $seenTerms[$termKey] = true;
+                $validatedTermLinesByDoc[$documentTypeId][] = $termLine;
+            }
+            continue;
+        }
+
         $copies = (int) ($postedCopies[$documentTypeId] ?? 1);
         $copyError = validateStudentDocumentRequest($documentTypeId, $enrollmentStatus, $copies);
         if ($copyError) {
             $errors['document_type_ids'] = $copyError;
             break;
         }
-
-        if ($docType && documentTypeRequiresTermInfo($docType)) {
-            $term = $postedTerms[$documentTypeId] ?? [];
-            $termError = validateRequestTermFields($term['school_year'] ?? '', $term['semester'] ?? '');
-            if ($termError) {
-                $errors['document_term_' . $documentTypeId] = $termError;
-            }
-        }
-
     }
 
     if (!$data['purpose']) {
         $errors['purpose'] = 'Please select a purpose.';
-    } elseif (!isValidActiveRequestPurposeCode($data['purpose'])) {
-        $errors['purpose'] = 'Please select a valid purpose.';
+    } elseif (!isValidActiveRequestPurposeCode($data['purpose'], $enrollmentStatus)) {
+        $errors['purpose'] = 'Please select a valid purpose for your enrollment status.';
+    }
+
+    if (!isValidCopyRequestType($data['copy_request_type'])) {
+        $errors['copy_request_type'] = 'Please select whether this is a first request or a second copy.';
     }
 
     if (empty($errors)) {
@@ -114,45 +166,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             if ($docType && documentTypeRequiresAuthDocumentType($docType)) {
                 $authItems = normalizeAuthenticationItems($postedAuthItems[$documentTypeId] ?? []);
                 $copies = max(1, totalAuthenticationSets($authItems));
-            } else {
-                $copies = max(1, min($maxCopies, (int) ($postedCopies[$documentTypeId] ?? 1)));
+                $itemAmount = calculateRequestFee($documentTypeId, $copies, $authItems ?: null);
+                $itemDrafts[] = [
+                    'document_type_id' => $documentTypeId,
+                    'copies' => $copies,
+                    'item_amount' => $itemAmount,
+                    'request_school_year' => null,
+                    'request_semester' => null,
+                    'request_soa_assessment_scope' => null,
+                    'request_soa_remarks' => null,
+                    'auth_items' => $authItems,
+                ];
+                $batchTotal += $itemAmount;
+                continue;
             }
-
-            $itemAmount = calculateRequestFee($documentTypeId, $copies, $authItems ?: null);
-            $requestSchoolYear = null;
-            $requestSemester = null;
 
             if ($docType && documentTypeRequiresTermInfo($docType)) {
-                $term = $postedTerms[$documentTypeId] ?? [];
-                $requestSchoolYear = trim((string) ($term['school_year'] ?? '')) ?: null;
-                $requestSemester = trim((string) ($term['semester'] ?? '')) ?: null;
+                foreach ($validatedTermLinesByDoc[$documentTypeId] ?? [] as $termLine) {
+                    $copies = max(1, min($maxCopies, (int) $termLine['copies']));
+                    $itemAmount = calculateRequestFee($documentTypeId, $copies, null);
+                    $itemDrafts[] = [
+                        'document_type_id' => $documentTypeId,
+                        'copies' => $copies,
+                        'item_amount' => $itemAmount,
+                        'request_school_year' => $termLine['school_year'],
+                        'request_semester' => $termLine['semester'],
+                        'request_soa_assessment_scope' => null,
+                        'request_soa_remarks' => null,
+                        'auth_items' => [],
+                    ];
+                    $batchTotal += $itemAmount;
+                }
+                continue;
             }
 
+            $copies = max(1, min($maxCopies, (int) ($postedCopies[$documentTypeId] ?? 1)));
+            $itemAmount = calculateRequestFee($documentTypeId, $copies, null);
             $itemDrafts[] = [
                 'document_type_id' => $documentTypeId,
                 'copies' => $copies,
                 'item_amount' => $itemAmount,
-                'request_school_year' => $requestSchoolYear,
-                'request_semester' => $requestSemester,
+                'request_school_year' => null,
+                'request_semester' => null,
                 'request_soa_assessment_scope' => null,
                 'request_soa_remarks' => null,
-                'auth_items' => $authItems,
+                'auth_items' => [],
             ];
             $batchTotal += $itemAmount;
         }
 
         $primaryDocumentTypeId = $itemDrafts[0]['document_type_id'];
         $stmt = $db->prepare('INSERT INTO requests (
-            request_number, user_id, document_type_id, purpose, purpose_other, copies, delivery_method,
+            request_number, user_id, document_type_id, purpose, purpose_other, copy_request_type, copies, delivery_method,
             pickup_date, pickup_time, representative_name, representative_relationship, representative_phone,
             representative_id_number, total_amount, verification_code, notes
-        ) VALUES (?, ?, ?, ?, ?, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)');
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)');
         $stmt->execute([
             $requestNumber,
             $user['id'],
             $primaryDocumentTypeId,
             $data['purpose'],
             $data['purpose_other'] ?: null,
+            $data['copy_request_type'],
             $batchTotal,
             generateVerificationCode(),
             $data['notes'] ?: null,
@@ -178,11 +253,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             }
 
             initRequestCompliance($requestId, (int) $draft['document_type_id']);
-
-            if (isAutoApplyRequirementsEnabled() && applyRequirementDefaultsToRequest($requestId, (int) $draft['document_type_id'], $index === 0, $itemId)) {
-                $autoAppliedCount++;
-            }
         }
+
+        $autoApplyResult = maybeAutoApplyOnRequestSubmission(
+            $requestId,
+            array_column($itemDrafts, 'document_type_id'),
+            (string) $data['copy_request_type']
+        );
 
         refreshRequestTotalAmount($requestId);
 
@@ -203,12 +280,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             APP_URL . '/student/request-view.php?id=' . $requestId
         );
 
-        if ($autoAppliedCount === $documentCount) {
-            setFlash('success', 'Request submitted successfully! Required documents have been assigned — please complete them in your request details.');
-        } elseif ($autoAppliedCount > 0) {
-            setFlash('success', 'Request submitted with ' . $documentCount . ' documents. Some requirements have been assigned — complete them in your request details.');
+        if ($autoApplyResult === 'payment') {
+            setFlash('success', 'Request submitted successfully! No additional requirements are needed — you may proceed to payment.');
+        } elseif ($autoApplyResult === 'affidavit') {
+            setFlash('success', 'Request submitted successfully! Please upload the affidavit for your second copy request.');
         } else {
-            setFlash('success', 'Request submitted successfully with ' . $documentCount . ' document' . ($documentCount === 1 ? '' : 's') . '! The Registrar will review and assign requirements.');
+            setFlash('success', 'Request submitted successfully with ' . $documentCount . ' document' . ($documentCount === 1 ? '' : 's') . '! The Registrar will review and confirm the required requirements.');
         }
 
         redirect(APP_URL . '/student/request-view.php?id=' . $requestId);
@@ -227,92 +304,97 @@ $pageTitle = 'New Request';
 $activeNav = 'new-request';
 $selectedDocIds = array_map('intval', $_POST['document_type_ids'] ?? []);
 $postedCopies = array_map('intval', $_POST['document_copies'] ?? []);
-$postedTerms = $_POST['document_term'] ?? [];
+$postedTermLinesByDoc = $_POST['document_term_lines'] ?? [];
 $postedAuthItems = $_POST['document_auth_items'] ?? [];
 $defaultSchoolYear = trim((string) ($studentProfile['current_academic_year'] ?? ''));
 $defaultSemester = trim((string) ($studentProfile['current_semester'] ?? ''));
 $schoolYearChoices = schoolYearOptions();
 $semesterChoices = semesterOptions();
 $authDocumentTypeChoices = authenticationDocumentTypeOptions();
+$purposeOptions = purposeOptions($enrollmentStatus);
 $purposeSuggestions = [];
 $purposeHints = [];
-foreach (purposeOptions() as $purposeKey) {
-    $purposeSuggestions[$purposeKey] = getSuggestedDocumentIdsForPurpose($purposeKey, $docTypes);
-    $purposeHints[$purposeKey] = purposeSuggestionHint($purposeKey);
+foreach ($purposeOptions as $purposeKey) {
+    $purposeSuggestions[$purposeKey] = getSuggestedDocumentIdsForPurpose($purposeKey, $docTypes, $enrollmentStatus);
+    $purposeHints[$purposeKey] = purposeSuggestionHint($purposeKey, $enrollmentStatus);
 }
 $selectedPurpose = (string) ($_POST['purpose'] ?? '');
+$selectedCopyType = (string) ($_POST['copy_request_type'] ?? 'first_request');
+if (!isValidCopyRequestType($selectedCopyType)) {
+    $selectedCopyType = 'first_request';
+}
 
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
-<div class="card">
-    <div class="card-header"><h2>Credential Request Form</h2></div>
+<div class="card request-form-card">
+    <div class="card-header">
+        <div>
+            <h2>New Credential Request</h2>
+            <p class="text-muted request-form-subtitle">Available for <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> students</p>
+        </div>
+    </div>
     <div class="card-body">
         <?= renderStudentProfileIncompleteAlert($profileCompletion) ?>
 
         <?php if (!$profileCompletion['complete']): ?>
             <div class="empty-state">
                 <i class="fas fa-user-check"></i>
-                <p>Document requests are available only when your account profile is fully completed.</p>
+                <p>Complete your profile before submitting a document request.</p>
                 <a href="profile.php" class="btn btn-primary">Go to Profile</a>
             </div>
-        <?php else: ?>
-        <div class="alert alert-info enrollment-status-note">
-            <i class="fas fa-id-badge"></i>
-            Showing credentials available for <strong><?= e(enrollmentStatusLabel($enrollmentStatus)) ?></strong> students.
-            <?php if (empty($docTypes)): ?>
-                No documents are currently enabled for your enrollment status. Contact the Registrar's Office for assistance.
-            <?php endif; ?>
-        </div>
-        <?php if (empty($docTypes)): ?>
+        <?php elseif (empty($docTypes)): ?>
             <div class="empty-state">
                 <i class="fas fa-file-circle-xmark"></i>
-                <p>No credentials are available for your current enrollment status.</p>
+                <p>No credentials are available for your enrollment status.</p>
                 <a href="profile.php" class="btn btn-outline">Review Profile</a>
             </div>
         <?php else: ?>
-        <form method="POST" class="form-grid" id="requestForm">
+        <form method="POST" class="form-grid request-form-simple" id="requestForm">
             <?= csrfField() ?>
 
-            <div class="form-section">
-                <h3><i class="fas fa-bullseye"></i> Purpose of Request</h3>
-                <p class="text-muted document-checklist-note">Select your purpose first. We will suggest documents commonly needed for that purpose.</p>
+            <section class="form-section request-form-step">
+                <h3><span class="request-step-num">1</span> Purpose &amp; type</h3>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="purpose">Purpose *</label>
                         <select id="purpose" name="purpose" required>
-                            <option value="">— Select Purpose —</option>
-                            <?php foreach (purposeOptions() as $p): ?>
+                            <option value="">— Select purpose —</option>
+                            <?php foreach ($purposeOptions as $p): ?>
                                 <option value="<?= $p ?>" <?= $selectedPurpose === $p ? 'selected' : '' ?>><?= purposeLabel($p) ?></option>
                             <?php endforeach; ?>
                         </select>
                         <?php if (!empty($errors['purpose'])): ?><span class="field-error"><?= e($errors['purpose']) ?></span><?php endif; ?>
                     </div>
+                    <div class="form-group">
+                        <label for="copy_request_type">Request Type *</label>
+                        <select id="copy_request_type" name="copy_request_type" required>
+                            <?php foreach (copyRequestTypeOptions() as $copyValue => $copyLabel): ?>
+                                <option value="<?= e($copyValue) ?>" <?= $selectedCopyType === $copyValue ? 'selected' : '' ?>><?= e($copyLabel) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <?php if (!empty($errors['copy_request_type'])): ?>
+                            <span class="field-error"><?= e($errors['copy_request_type']) ?></span>
+                        <?php endif; ?>
+                    </div>
                 </div>
                 <div class="form-group" id="purposeOtherGroup" style="display:none">
-                    <label for="purpose_other">Specify Purpose</label>
-                    <input type="text" id="purpose_other" name="purpose_other" value="<?= e($_POST['purpose_other'] ?? '') ?>">
+                    <label for="purpose_other">Specify purpose</label>
+                    <input type="text" id="purpose_other" name="purpose_other" value="<?= e($_POST['purpose_other'] ?? '') ?>" placeholder="Describe your purpose">
                 </div>
                 <div class="purpose-suggestion-panel" id="purposeSuggestionPanel" hidden>
                     <div class="purpose-suggestion-header">
                         <i class="fas fa-lightbulb"></i>
-                        <strong>Suggested Documents</strong>
+                        <strong>Suggested for this purpose</strong>
+                        <button type="button" class="btn btn-outline btn-sm" id="applyPurposeSuggestions">Apply</button>
                     </div>
                     <p class="purpose-suggestion-hint" id="purposeSuggestionHint"></p>
                     <ul class="purpose-suggestion-list" id="purposeSuggestionList"></ul>
-                    <button type="button" class="btn btn-outline btn-sm" id="applyPurposeSuggestions">
-                        <i class="fas fa-check-double"></i> Re-apply suggested documents
-                    </button>
                 </div>
-                <div class="alert alert-info">
-                    <i class="fas fa-info-circle"></i>
-                    On-site pickup options will be available after the Registrar assigns your request to staff.
-                </div>
-            </div>
+            </section>
 
-            <div class="form-section">
-                <h3><i class="fas fa-file"></i> Documents to Request</h3>
-                <p class="text-muted document-checklist-note">Document selections update automatically when you change the purpose. Click a document row to expand details and copy options.</p>
+            <section class="form-section request-form-step">
+                <h3><span class="request-step-num">2</span> Select documents</h3>
                 <div class="document-checklist">
                     <?php foreach ($docTypes as $dt): ?>
                         <?php
@@ -321,8 +403,27 @@ require_once __DIR__ . '/../includes/header.php';
                         $requiresTermInfo = documentTypeRequiresTermInfo($dt);
                         $requiresAuthDocumentType = documentTypeRequiresAuthDocumentType($dt);
                         $feePerSet = documentTypeUsesFeePerSet($dt);
-                        $termSchoolYear = trim((string) ($postedTerms[$dt['id']]['school_year'] ?? $defaultSchoolYear));
-                        $termSemester = trim((string) ($postedTerms[$dt['id']]['semester'] ?? $defaultSemester));
+                        $rawTermLines = $postedTermLinesByDoc[$dt['id']] ?? null;
+                        $termLines = [];
+                        if (is_array($rawTermLines)) {
+                            foreach ($rawTermLines as $line) {
+                                if (!is_array($line)) {
+                                    continue;
+                                }
+                                $termLines[] = [
+                                    'school_year' => trim((string) ($line['school_year'] ?? $defaultSchoolYear)),
+                                    'semester' => trim((string) ($line['semester'] ?? $defaultSemester)),
+                                    'copies' => max(1, min($maxCopies, (int) ($line['copies'] ?? $docCopyCount))),
+                                ];
+                            }
+                        }
+                        if ($termLines === []) {
+                            $termLines[] = [
+                                'school_year' => $defaultSchoolYear,
+                                'semester' => $defaultSemester,
+                                'copies' => $docCopyCount,
+                            ];
+                        }
                         $termError = $errors['document_term_' . $dt['id']] ?? '';
                         $postedAuthForDoc = $postedAuthItems[$dt['id']] ?? [];
                         $authTypeError = $errors['document_auth_type_' . $dt['id']] ?? '';
@@ -344,6 +445,7 @@ require_once __DIR__ . '/../includes/header.php';
                                     data-requires-term="<?= $requiresTermInfo ? '1' : '0' ?>"
                                     data-requires-auth-type="<?= $requiresAuthDocumentType ? '1' : '0' ?>"
                                     data-fee-per-set="<?= $feePerSet ? '1' : '0' ?>"
+                                    data-qty-label="<?= e(documentTypeQuantityLabel($dt)) ?>"
                                     id="doc_type_<?= (int) $dt['id'] ?>"
                                     aria-label="Select <?= e($dt['name']) ?>"
                                     <?= $isSelected ? 'checked' : '' ?>
@@ -358,7 +460,10 @@ require_once __DIR__ . '/../includes/header.php';
                                         <span class="document-checklist-fee"><?= formatDocumentTypeUnitFee($dt) ?></span>
                                     </span>
                                     <span class="document-checklist-summary-meta">
-                                        <i class="fas fa-clock"></i> <?= (int) $dt['processing_days'] ?> day<?= (int) $dt['processing_days'] === 1 ? '' : 's' ?>
+                                        <?= (int) $dt['processing_days'] ?> day<?= (int) $dt['processing_days'] === 1 ? '' : 's' ?>
+                                        <?php if ($requiresTermInfo): ?>
+                                            · multiple school years allowed
+                                        <?php endif; ?>
                                     </span>
                                 </button>
                                 <span class="document-checklist-chevron" aria-hidden="true">
@@ -366,17 +471,7 @@ require_once __DIR__ . '/../includes/header.php';
                                 </span>
                             </div>
                             <div class="document-checklist-item-details" id="doc_details_<?= (int) $dt['id'] ?>">
-                                <?php if (!empty($dt['description'])): ?>
-                                    <span class="document-checklist-desc"><?= e($dt['description']) ?></span>
-                                <?php endif; ?>
-                                <span class="document-checklist-meta">
-                                    <i class="fas fa-clock"></i> <?= (int) $dt['processing_days'] ?> day<?= (int) $dt['processing_days'] === 1 ? '' : 's' ?> processing
-                                    · <?= e(documentTypeFeeMetaText($dt)) ?>
-                                    <?php if (!empty($dt['requires_documentary_stamp'])): ?>
-                                        · Documentary stamp <?= formatMoney(documentStampFeeAmount()) ?>
-                                    <?php endif; ?>
-                                </span>
-                                <?php if (!$requiresAuthDocumentType): ?>
+                                <?php if (!$requiresAuthDocumentType && !$requiresTermInfo): ?>
                                 <div class="document-checklist-copies">
                                     <label for="copies_<?= (int) $dt['id'] ?>"><?= e(documentTypeQuantityLabel($dt)) ?></label>
                                     <input type="number"
@@ -389,44 +484,66 @@ require_once __DIR__ . '/../includes/header.php';
                                         onclick="event.stopPropagation()">
                                     <small class="text-muted">Max <?= $maxCopies ?></small>
                                 </div>
-                                <?php else: ?>
+                                <?php elseif ($requiresAuthDocumentType): ?>
                                 <input type="hidden" name="document_copies[<?= (int) $dt['id'] ?>]" value="1">
                                 <?php endif; ?>
                                 <?php if ($requiresTermInfo): ?>
-                                <div class="document-checklist-term" data-extra-fields <?= $isSelected ? '' : 'hidden' ?>>
-                                    <div class="document-checklist-term-fields">
-                                        <div class="form-group">
-                                            <label for="term_sy_<?= (int) $dt['id'] ?>">School Year *</label>
-                                            <select id="term_sy_<?= (int) $dt['id'] ?>"
-                                                name="document_term[<?= (int) $dt['id'] ?>][school_year]"
-                                                <?= $isSelected ? 'required' : '' ?>
-                                                onclick="event.stopPropagation()">
-                                                <option value="">— Select School Year —</option>
-                                                <?php foreach ($schoolYearChoices as $value => $label): ?>
-                                                    <option value="<?= e($value) ?>" <?= $termSchoolYear === $value ? 'selected' : '' ?>><?= e($label) ?></option>
-                                                <?php endforeach; ?>
-                                            </select>
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="term_sem_<?= (int) $dt['id'] ?>">Semester *</label>
-                                            <select id="term_sem_<?= (int) $dt['id'] ?>"
-                                                name="document_term[<?= (int) $dt['id'] ?>][semester]"
-                                                <?= $isSelected ? 'required' : '' ?>
-                                                onclick="event.stopPropagation()">
-                                                <option value="">— Select Semester —</option>
-                                                <?php foreach ($semesterChoices as $value => $label): ?>
-                                                    <option value="<?= e($value) ?>" <?= $termSemester === $value ? 'selected' : '' ?>><?= e($label) ?></option>
-                                                <?php endforeach; ?>
-                                            </select>
-                                        </div>
+                                <div class="document-checklist-term" data-extra-fields data-term-block <?= $isSelected ? '' : 'hidden' ?>>
+                                    <p class="document-term-help">Request this document for one or more school years / semesters on the same request.</p>
+                                    <div class="document-term-lines" data-term-lines data-doc-id="<?= (int) $dt['id'] ?>">
+                                        <?php foreach ($termLines as $lineIndex => $termLine): ?>
+                                            <div class="document-term-line" data-term-line>
+                                                <div class="document-term-line-header">
+                                                    <strong>Term <?= (int) $lineIndex + 1 ?></strong>
+                                                    <button type="button" class="btn btn-outline btn-sm" data-remove-term-line <?= count($termLines) > 1 ? '' : 'hidden' ?>>Remove</button>
+                                                </div>
+                                                <div class="document-checklist-term-fields">
+                                                    <div class="form-group">
+                                                        <label>School Year *</label>
+                                                        <select name="document_term_lines[<?= (int) $dt['id'] ?>][<?= (int) $lineIndex ?>][school_year]"
+                                                            <?= $isSelected ? 'required' : '' ?>
+                                                            onclick="event.stopPropagation()">
+                                                            <option value="">— Select —</option>
+                                                            <?php foreach ($schoolYearChoices as $value => $label): ?>
+                                                                <option value="<?= e($value) ?>" <?= $termLine['school_year'] === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                                                            <?php endforeach; ?>
+                                                        </select>
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label>Semester *</label>
+                                                        <select name="document_term_lines[<?= (int) $dt['id'] ?>][<?= (int) $lineIndex ?>][semester]"
+                                                            <?= $isSelected ? 'required' : '' ?>
+                                                            onclick="event.stopPropagation()">
+                                                            <option value="">— Select —</option>
+                                                            <?php foreach ($semesterChoices as $value => $label): ?>
+                                                                <option value="<?= e($value) ?>" <?= $termLine['semester'] === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                                                            <?php endforeach; ?>
+                                                        </select>
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label><?= e(documentTypeQuantityLabel($dt)) ?></label>
+                                                        <input type="number"
+                                                            name="document_term_lines[<?= (int) $dt['id'] ?>][<?= (int) $lineIndex ?>][copies]"
+                                                            min="1"
+                                                            max="<?= $maxCopies ?>"
+                                                            value="<?= (int) $termLine['copies'] ?>"
+                                                            data-term-copies
+                                                            onchange="updateFee()"
+                                                            onclick="event.stopPropagation()">
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        <?php endforeach; ?>
                                     </div>
+                                    <button type="button" class="btn btn-outline btn-sm document-term-add-btn" data-add-term-line>
+                                        <i class="fas fa-plus"></i> Add another school year / semester
+                                    </button>
                                     <?php if ($termError): ?><span class="field-error"><?= e($termError) ?></span><?php endif; ?>
-                                    <small class="text-muted">Indicate the school year and semester covered by this request.</small>
                                 </div>
                                 <?php endif; ?>
                                 <?php if ($requiresAuthDocumentType): ?>
                                 <div class="document-checklist-auth-type" data-extra-fields <?= $isSelected ? '' : 'hidden' ?>>
-                                    <p class="auth-doc-options-title">Documents to Authenticate *</p>
+                                    <p class="auth-doc-options-title">Documents to authenticate *</p>
                                     <div class="auth-doc-options">
                                         <?php foreach ($authDocumentTypeChoices as $authValue => $authLabel): ?>
                                             <?php
@@ -458,7 +575,6 @@ require_once __DIR__ . '/../includes/header.php';
                                         <?php endforeach; ?>
                                     </div>
                                     <?php if ($authTypeError): ?><span class="field-error"><?= e($authTypeError) ?></span><?php endif; ?>
-                                    <small class="text-muted">Select one or more documents and indicate how many sets to authenticate for each.</small>
                                 </div>
                                 <?php endif; ?>
                             </div>
@@ -466,33 +582,32 @@ require_once __DIR__ . '/../includes/header.php';
                     <?php endforeach; ?>
                 </div>
                 <?php if (!empty($errors['document_type_ids'])): ?><span class="field-error"><?= e($errors['document_type_ids']) ?></span><?php endif; ?>
-            </div>
+            </section>
 
-            <div class="form-section">
-                <h3><i class="fas fa-sticky-note"></i> Additional Notes</h3>
+            <section class="form-section request-form-step">
+                <h3><span class="request-step-num">3</span> Notes <span class="request-optional-tag">optional</span></h3>
                 <div class="form-group">
-                    <textarea id="notes" name="notes" rows="3" placeholder="Any special instructions..."><?= e($_POST['notes'] ?? '') ?></textarea>
+                    <textarea id="notes" name="notes" rows="2" placeholder="Any special instructions for the Registrar..."><?= e($_POST['notes'] ?? '') ?></textarea>
                 </div>
-            </div>
+            </section>
 
-            <div class="form-section payment-breakdown-section">
-                <h3><i class="fas fa-receipt"></i> Payment Breakdown</h3>
+            <section class="request-form-footer">
                 <div class="fee-summary payment-breakdown-panel">
-                    <p class="payment-breakdown-empty" id="paymentBreakdownEmpty">Select one or more documents to view the estimated fees.</p>
+                    <p class="payment-breakdown-empty" id="paymentBreakdownEmpty">Select documents to estimate fees.</p>
                     <div class="payment-breakdown-list" id="paymentBreakdownList" hidden></div>
                     <div class="payment-breakdown-total">
                         <div>
-                            <span class="payment-breakdown-total-label">Estimated Total</span>
+                            <span class="payment-breakdown-total-label">Estimated total</span>
                             <small class="text-muted" id="selectedDocCount">No documents selected</small>
                         </div>
                         <strong id="totalFee">₱ 0.00</strong>
                     </div>
                 </div>
-            </div>
-
-            <button type="submit" class="btn btn-primary btn-lg"><i class="fas fa-paper-plane"></i> Submit Request</button>
+                <button type="submit" class="btn btn-primary btn-lg request-submit-btn">
+                    <i class="fas fa-paper-plane"></i> Submit Request
+                </button>
+            </section>
         </form>
-        <?php endif; ?>
         <?php endif; ?>
     </div>
 </div>
@@ -621,6 +736,110 @@ function initDocumentChecklistToggles() {
     });
 }
 
+function reindexTermLines(container) {
+    if (!container) return;
+    const docId = container.getAttribute('data-doc-id');
+    const lines = container.querySelectorAll('[data-term-line]');
+    lines.forEach(function (line, index) {
+        const header = line.querySelector('.document-term-line-header strong');
+        if (header) header.textContent = 'Term ' + (index + 1);
+
+        const removeBtn = line.querySelector('[data-remove-term-line]');
+        if (removeBtn) removeBtn.hidden = lines.length <= 1;
+
+        line.querySelectorAll('select, input').forEach(function (field) {
+            const name = field.getAttribute('name') || '';
+            if (!name) return;
+            field.name = name.replace(
+                /document_term_lines\[\d+\]\[\d+\]/,
+                'document_term_lines[' + docId + '][' + index + ']'
+            );
+        });
+    });
+}
+
+function addTermLine(container) {
+    if (!container) return;
+    const first = container.querySelector('[data-term-line]');
+    if (!first) return;
+
+    const clone = first.cloneNode(true);
+    clone.querySelectorAll('select').forEach(function (select) {
+        select.selectedIndex = 0;
+        select.required = true;
+    });
+    clone.querySelectorAll('input[data-term-copies]').forEach(function (input) {
+        input.value = 1;
+    });
+    clone.querySelectorAll('.field-error').forEach(function (el) {
+        el.remove();
+    });
+    clone.querySelectorAll('[data-bound]').forEach(function (el) {
+        delete el.dataset.bound;
+    });
+
+    container.appendChild(clone);
+    reindexTermLines(container);
+    bindTermLineControls(clone);
+    updateFee();
+}
+
+function bindTermLineControls(scope) {
+    const root = scope || document;
+    root.querySelectorAll('[data-add-term-line]').forEach(function (button) {
+        if (button.dataset.bound === '1') return;
+        button.dataset.bound = '1';
+        button.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const block = button.closest('[data-term-block]');
+            const container = block ? block.querySelector('[data-term-lines]') : null;
+            addTermLine(container);
+        });
+    });
+
+    root.querySelectorAll('[data-remove-term-line]').forEach(function (button) {
+        if (button.dataset.bound === '1') return;
+        button.dataset.bound = '1';
+        button.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const line = button.closest('[data-term-line]');
+            const container = button.closest('[data-term-lines]');
+            if (!line || !container) return;
+            if (container.querySelectorAll('[data-term-line]').length <= 1) return;
+            line.remove();
+            reindexTermLines(container);
+            updateFee();
+        });
+    });
+
+    root.querySelectorAll('[data-term-copies]').forEach(function (input) {
+        if (input.dataset.bound === '1') return;
+        input.dataset.bound = '1';
+        input.addEventListener('change', updateFee);
+        input.addEventListener('input', updateFee);
+    });
+}
+
+function resetTermLines(item) {
+    const container = item ? item.querySelector('[data-term-lines]') : null;
+    if (!container) return;
+    const lines = container.querySelectorAll('[data-term-line]');
+    lines.forEach(function (line, index) {
+        if (index === 0) {
+            line.querySelectorAll('select').forEach(function (select) {
+                select.selectedIndex = 0;
+            });
+            const copies = line.querySelector('[data-term-copies]');
+            if (copies) copies.value = 1;
+            return;
+        }
+        line.remove();
+    });
+    reindexTermLines(container);
+}
+
 function toggleDocumentExtraFields() {
     document.querySelectorAll('.document-checklist-checkbox').forEach(function (checkbox) {
         const item = checkbox.closest('.document-checklist-item');
@@ -632,9 +851,6 @@ function toggleDocumentExtraFields() {
             block.hidden = !show;
             block.querySelectorAll('select').forEach(function (select) {
                 select.required = show;
-                if (!show) {
-                    select.selectedIndex = 0;
-                }
             });
             block.querySelectorAll('textarea').forEach(function (textarea) {
                 if (!show) {
@@ -648,6 +864,9 @@ function toggleDocumentExtraFields() {
                 authCheckbox.checked = false;
                 syncAuthDocOption(authCheckbox);
             });
+            if (checkbox.dataset.requiresTerm === '1') {
+                resetTermLines(item);
+            }
         }
     });
 }
@@ -756,21 +975,57 @@ function updateFee() {
     const emptyEl = document.getElementById('paymentBreakdownEmpty');
     let total = 0;
     let html = '';
+    let requestLineCount = 0;
 
     checked.forEach(function (checkbox) {
         const item = checkbox.closest('.document-checklist-item');
         const name = checkbox.dataset.docName || 'Document';
         const requiresAuth = checkbox.dataset.requiresAuthType === '1';
+        const requiresTerm = checkbox.dataset.requiresTerm === '1';
         const copiesInput = item ? item.querySelector('.document-checklist-copies input') : null;
         const maxCopies = parseInt(checkbox.dataset.maxCopies, 10) || 10;
+        const base = parseFloat(checkbox.dataset.base) || 0;
+        const stampFee = checkbox.dataset.stamp === '1' ? (parseFloat(checkbox.dataset.stampFee) || 30) : 0;
+        const feePerSet = checkbox.dataset.feePerSet === '1';
+
+        if (requiresTerm) {
+            const termLines = item ? item.querySelectorAll('[data-term-line]') : [];
+            termLines.forEach(function (termLine, index) {
+                const termCopiesInput = termLine.querySelector('[data-term-copies]');
+                let copies = parseInt(termCopiesInput ? termCopiesInput.value : '1', 10) || 1;
+                copies = Math.max(1, Math.min(maxCopies, copies));
+                if (termCopiesInput) termCopiesInput.value = copies;
+
+                const sySelect = termLine.querySelector('select[name*="[school_year]"]');
+                const semSelect = termLine.querySelector('select[name*="[semester]"]');
+                const syText = sySelect && sySelect.selectedOptions[0] ? sySelect.selectedOptions[0].textContent : '';
+                const semText = semSelect && semSelect.selectedOptions[0] ? semSelect.selectedOptions[0].textContent : '';
+                const termLabel = (sySelect && sySelect.value && semSelect && semSelect.value)
+                    ? (syText + ' · ' + semText)
+                    : ('Term ' + (index + 1));
+
+                const lineTotal = feePerSet ? base + stampFee : (base * copies) + stampFee;
+                total += lineTotal;
+                requestLineCount += 1;
+
+                html += '<div class="payment-breakdown-item">' +
+                    '<div class="payment-breakdown-item-main">' +
+                        '<strong>' + escapeHtml(name) + '</strong>' +
+                        '<span class="payment-breakdown-detail">' + escapeHtml(termLabel) + ' · ' +
+                            buildBreakdownDetail(copies, base, stampFee, feePerSet, null) + '</span>' +
+                    '</div>' +
+                    '<span class="payment-breakdown-amount">' + formatPeso(lineTotal) + '</span>' +
+                '</div>';
+            });
+            return;
+        }
+
         let copies = parseInt(copiesInput?.value, 10) || 1;
         copies = Math.max(1, Math.min(maxCopies, copies));
         if (copiesInput && !requiresAuth) {
             copiesInput.value = copies;
         }
-        const base = parseFloat(checkbox.dataset.base) || 0;
-        const stampFee = checkbox.dataset.stamp === '1' ? (parseFloat(checkbox.dataset.stampFee) || 30) : 0;
-        const feePerSet = checkbox.dataset.feePerSet === '1';
+
         let lineTotal = 0;
         let detailText = '';
 
@@ -793,6 +1048,7 @@ function updateFee() {
         }
 
         total += lineTotal;
+        requestLineCount += 1;
 
         html += '<div class="payment-breakdown-item">' +
             '<div class="payment-breakdown-item-main">' +
@@ -803,7 +1059,7 @@ function updateFee() {
         '</div>';
     });
 
-    if (checked.length) {
+    if (requestLineCount) {
         emptyEl.hidden = true;
         listEl.hidden = false;
         listEl.innerHTML = html;
@@ -817,10 +1073,9 @@ function updateFee() {
 
     const countEl = document.getElementById('selectedDocCount');
     if (countEl) {
-        const count = checked.length;
-        countEl.textContent = count === 0
+        countEl.textContent = requestLineCount === 0
             ? 'No documents selected'
-            : count + ' document request' + (count === 1 ? '' : 's');
+            : requestLineCount + ' document request' + (requestLineCount === 1 ? '' : 's');
     }
 }
 document.querySelectorAll('.document-checklist-copies input').forEach(function (input) {
@@ -849,6 +1104,10 @@ document.getElementById('requestForm')?.addEventListener('submit', function (eve
         event.preventDefault();
         alert('Please select at least one document to request.');
     }
+});
+bindTermLineControls(document);
+document.querySelectorAll('[data-term-lines]').forEach(function (container) {
+    reindexTermLines(container);
 });
 updateFee();
 toggleDocumentExtraFields();

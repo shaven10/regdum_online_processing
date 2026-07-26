@@ -1,7 +1,45 @@
 <?php
 
+function ensureRequestCopyTypeSchema(): void {
+    $db = getDB();
+    $column = $db->query("SHOW COLUMNS FROM requests LIKE 'copy_request_type'")->fetch();
+    if (!$column) {
+        $db->exec("ALTER TABLE requests
+            ADD COLUMN copy_request_type ENUM('first_request','second_copy') NOT NULL DEFAULT 'first_request'
+            AFTER purpose_other");
+    }
+}
+
+function copyRequestTypeOptions(): array {
+    return [
+        'first_request' => 'First Request',
+        'second_copy'   => 'Second Copy',
+    ];
+}
+
+function copyRequestTypeLabel(?string $type): string {
+    $options = copyRequestTypeOptions();
+    return $options[$type ?? ''] ?? 'First Request';
+}
+
+function isValidCopyRequestType(?string $type): bool {
+    return array_key_exists((string) $type, copyRequestTypeOptions());
+}
+
+function isSecondCopyRequest(array|int $requestOrId): bool {
+    if (is_array($requestOrId)) {
+        return ($requestOrId['copy_request_type'] ?? '') === 'second_copy';
+    }
+
+    ensureRequestCopyTypeSchema();
+    $stmt = getDB()->prepare('SELECT copy_request_type FROM requests WHERE id = ?');
+    $stmt->execute([(int) $requestOrId]);
+    return $stmt->fetchColumn() === 'second_copy';
+}
+
 function ensureDeliveryMethods(): void {
     $db = getDB();
+    ensureRequestCopyTypeSchema();
 
     $column = $db->query("SHOW COLUMNS FROM requests LIKE 'delivery_method'")->fetch();
     if ($column) {

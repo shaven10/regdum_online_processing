@@ -13,6 +13,7 @@ $user = currentUser();
 ensureComplianceSchema();
 ensureRequestItemsSchema();
 ensureRequestStatuses();
+ensureRequestCopyTypeSchema();
 
 $db = getDB();
 $requestId = (int)($_GET['id'] ?? 0);
@@ -37,7 +38,8 @@ if (!$request) {
 
 $requestItems = getRequestItems($requestId);
 $primaryDocTypeId = (int) ($request['document_type_id'] ?? ($requestItems[0]['document_type_id'] ?? 0));
-$requirementsRequired = documentTypeRequiresRequirements($primaryDocTypeId);
+$copyRequestType = normalizeRequirementCopyType($request['copy_request_type'] ?? 'first_request');
+$requirementsRequired = documentTypeRequiresRequirements($primaryDocTypeId, $copyRequestType);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
@@ -218,7 +220,7 @@ $summary = getComplianceSummary($requestId);
 $requirementChecklist = registrarRequirementChecklist();
 $assignedCodes = assignedRequirementCodes($requestId);
 $assignedSubcodes = assignedRequirementSubcodes($requestId);
-$defaultCodes = getDocumentTypeRequirementDefaults($primaryDocTypeId);
+$defaultCodes = getDocumentTypeRequirementDefaults($primaryDocTypeId, $copyRequestType);
 
 if (hasAssignedRequirement($requestId, 'online_clearance')) {
     initRequestClearance($requestId);
@@ -317,6 +319,7 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
 
                 <div class="detail-item"><label>Purpose</label><span><?= purposeLabel($request['purpose']) ?></span></div>
+                <div class="detail-item"><label>Request Type</label><span><?= e(copyRequestTypeLabel($request['copy_request_type'] ?? null)) ?><?= ($request['copy_request_type'] ?? '') === 'second_copy' ? ' <span class="badge badge-processing">Affidavit may be required</span>' : '' ?></span></div>
 
                 <div class="detail-item"><label>Amount</label><span><?= formatMoney((float)$request['total_amount']) ?></span></div>
 

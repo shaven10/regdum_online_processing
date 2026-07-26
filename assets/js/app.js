@@ -483,11 +483,13 @@ function initAdminFormModal() {
 
             if (field.type === 'checkbox') {
                 if (field.name.endsWith('[]')) {
-                    const values = record && Array.isArray(record[baseName]) ? record[baseName] : [];
-                    field.checked = values.includes(field.value);
-                } else if (record) {
+                    const values = record && Array.isArray(record[baseName])
+                        ? record[baseName].map(function (value) { return String(value); })
+                        : [];
+                    field.checked = values.includes(String(field.value));
+                } else if (record && Object.prototype.hasOwnProperty.call(record, baseName)) {
                     field.checked = record[baseName] === true || record[baseName] === 1 || record[baseName] === '1';
-                } else {
+                } else if (!record) {
                     field.checked = field.hasAttribute('data-default-checked');
                 }
                 return;
@@ -545,8 +547,19 @@ function initAdminFormModal() {
         if (actionInput) actionInput.value = isUpdate ? updateAction : createAction;
 
         if (formType === 'requirements' && record) {
+            const firstCodes = Array.isArray(record.req_codes_first)
+                ? record.req_codes_first
+                : (Array.isArray(record.req_codes) ? record.req_codes : (Array.isArray(record.codes) ? record.codes : []));
+            const secondCodes = Array.isArray(record.req_codes_second)
+                ? record.req_codes_second
+                : firstCodes;
             populateForm({
-                req_codes: record.req_codes || record.codes || [],
+                document_type_id: record.document_type_id || record.id || '',
+                name: record.name || '',
+                req_codes_first: firstCodes.map(function (code) { return String(code); }),
+                req_codes_second: secondCodes.map(function (code) { return String(code); }),
+                requirements_required_first: record.requirements_required_first ?? record.requirements_required ?? 1,
+                requirements_required_second: record.requirements_required_second ?? record.requirements_required ?? 1,
             });
             if (idInput) idInput.value = record.document_type_id || record.id || '';
             if (titleEl && record.name) {

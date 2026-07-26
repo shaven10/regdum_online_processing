@@ -588,16 +588,20 @@ function validateActiveDocumentTypeIdsForEnrollment(array $docTypeIds, string $e
     return $valid;
 }
 
-function purposeSuggestedDocumentCodes(): array {
-    return getPurposeSuggestedDocumentCodesMap();
+function purposeSuggestedDocumentCodes(?string $enrollmentStatus = null): array {
+    return getPurposeSuggestedDocumentCodesMap($enrollmentStatus);
 }
 
-function purposeSuggestionHint(string $purpose): string {
-    return getRequestPurposeHint($purpose);
+function purposeSuggestionHint(string $purpose, ?string $enrollmentStatus = null): string {
+    return getRequestPurposeHint($purpose, $enrollmentStatus);
 }
 
-function getSuggestedDocumentIdsForPurpose(string $purpose, array $availableDocTypes): array {
-    $suggestedIds = getSuggestedDocumentTypeIdsForPurposeCode($purpose);
+function getSuggestedDocumentIdsForPurpose(
+    string $purpose,
+    array $availableDocTypes,
+    ?string $enrollmentStatus = null
+): array {
+    $suggestedIds = getSuggestedDocumentTypeIdsForPurposeCode($purpose, $enrollmentStatus);
     if (empty($suggestedIds)) {
         return [];
     }
