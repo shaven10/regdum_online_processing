@@ -37,6 +37,10 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css">
+    <?php
+    require_once __DIR__ . '/theme.php';
+    renderThemeStyleTag();
+    ?>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
 <body<?= $user ? '' : ' class="auth-page"' ?>>
@@ -67,10 +71,12 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/clearance/documents.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-file-signature"></i> Assigned Documents</a>
             <?php elseif (hasRole('registrar')): ?>
                 <a href="<?= APP_URL ?>/registrar/dashboard.php" class="<?= $activeNav === 'dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+                <a href="<?= APP_URL ?>/registrar/new-onsite-request.php" class="<?= $activeNav === 'onsite-request' ? 'active' : '' ?>"><i class="fas fa-store"></i> Onsite Request</a>
                 <a href="<?= APP_URL ?>/registrar/compliance.php" class="<?= $activeNav === 'compliance' ? 'active' : '' ?>"><i class="fas fa-clipboard-check"></i> Compliance Review</a>
                 <a href="<?= APP_URL ?>/registrar/compliance.php?filter=pending" class="<?= $activeNav === 'pending' ? 'active' : '' ?>"><i class="fas fa-clock"></i> Pending</a>
                 <a href="<?= APP_URL ?>/registrar/compliance.php?filter=needs_revision" class="<?= $activeNav === 'revision' ? 'active' : '' ?>"><i class="fas fa-exclamation-triangle"></i> Needs Revision</a>
                 <a href="<?= APP_URL ?>/registrar/assignments.php" class="<?= $activeNav === 'assignments' ? 'active' : '' ?>"><i class="fas fa-user-tag"></i> Staff Assignment</a>
+                <a href="<?= APP_URL ?>/registrar/documents.php" class="<?= $activeNav === 'my-assignments' ? 'active' : '' ?>"><i class="fas fa-tasks"></i> My Assignments</a>
                 <a href="<?= APP_URL ?>/registrar/attachments.php" class="<?= $activeNav === 'attachments' ? 'active' : '' ?>"><i class="fas fa-paperclip"></i> Attachments</a>
                 <a href="<?= APP_URL ?>/registrar/students.php" class="<?= $activeNav === 'students' ? 'active' : '' ?>"><i class="fas fa-user-check"></i> Verify Students</a>
             <?php elseif (hasRole('cashier')): ?>
@@ -79,8 +85,9 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/cashier/payments.php?status=pending" class="<?= $activeNav === 'pending' ? 'active' : '' ?>"><i class="fas fa-clock"></i> Pending</a>
                 <a href="<?= APP_URL ?>/cashier/documents.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-file-invoice"></i> Assigned Documents</a>
                 <a href="<?= APP_URL ?>/cashier/reports.php" class="<?= $activeNav === 'reports' ? 'active' : '' ?>"><i class="fas fa-receipt"></i> Payment Reports</a>
+                <a href="<?= APP_URL ?>/cashier/bank-settings.php" class="<?= $activeNav === 'bank-settings' ? 'active' : '' ?>"><i class="fas fa-university"></i> Bank Settings</a>
             <?php elseif (hasRole('admin')): ?>
-                <?php $adminSettingsNav = ['users', 'documents', 'release-rules', 'programs', 'campuses', 'requirement-types', 'requirements', 'purpose-suggestions', 'audit']; ?>
+                <?php $adminSettingsNav = ['users', 'documents', 'release-rules', 'programs', 'campuses', 'requirement-types', 'requirements', 'purpose-suggestions', 'theme', 'audit']; ?>
                 <?php $settingsMenuOpen = in_array($activeNav, $adminSettingsNav, true); ?>
                 <a href="<?= APP_URL ?>/admin/dashboard.php" class="<?= $activeNav === 'dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
                 <a href="<?= APP_URL ?>/admin/requests.php" class="<?= $activeNav === 'requests' ? 'active' : '' ?>"><i class="fas fa-file-alt"></i> Requests</a>
@@ -101,6 +108,7 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                         <a href="<?= APP_URL ?>/admin/requirement-types.php" class="<?= $activeNav === 'requirement-types' ? 'active' : '' ?>"><i class="fas fa-list-check"></i> Requirement Types</a>
                         <a href="<?= APP_URL ?>/admin/requirement-settings.php" class="<?= $activeNav === 'requirements' ? 'active' : '' ?>"><i class="fas fa-sliders-h"></i> Requirement Settings</a>
                         <a href="<?= APP_URL ?>/admin/purpose-suggestions.php" class="<?= $activeNav === 'purpose-suggestions' ? 'active' : '' ?>"><i class="fas fa-bullseye"></i> Purpose & Suggestions</a>
+                        <a href="<?= APP_URL ?>/admin/theme-settings.php" class="<?= $activeNav === 'theme' ? 'active' : '' ?>"><i class="fas fa-palette"></i> Theme Manager</a>
                         <a href="<?= APP_URL ?>/admin/audit-logs.php" class="<?= $activeNav === 'audit' ? 'active' : '' ?>"><i class="fas fa-shield-alt"></i> Audit Logs</a>
                     </div>
                 </div>

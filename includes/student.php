@@ -271,6 +271,15 @@ function enrollmentStatusOptions(): array {
     ];
 }
 
+function yearLevelOptions(): array {
+    return [
+        '1st Year' => '1st Year',
+        '2nd Year' => '2nd Year',
+        '3rd Year' => '3rd Year',
+        '4th Year' => '4th Year',
+    ];
+}
+
 function semesterOptions(): array {
     return [
         '1st_semester' => '1st Semester',
@@ -698,10 +707,6 @@ function studentProfileFieldRequirements(): array {
         'phone'             => 'Phone number',
         'birth_date'        => 'Birth date',
         'valid_id_path'     => 'Valid ID upload',
-        'address'           => 'Street address',
-        'city'              => 'City',
-        'province'          => 'Province',
-        'postal_code'       => 'Postal code',
         'emergency_contact' => 'Emergency contact name',
         'emergency_phone'   => 'Emergency contact phone',
         'enrollment_status' => 'Enrollment status',

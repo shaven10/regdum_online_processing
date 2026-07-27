@@ -34,6 +34,7 @@ renderDashboardActions([
     ['url' => 'payments.php?status=verified', 'label' => 'Verified', 'icon' => 'fa-check-circle'],
     ['url' => 'payments.php?status=rejected', 'label' => 'Rejected', 'icon' => 'fa-times-circle'],
     ['url' => 'reports.php', 'label' => 'Reports', 'icon' => 'fa-receipt'],
+    ['url' => 'bank-settings.php', 'label' => 'Bank Settings', 'icon' => 'fa-university'],
 ]);
 ?>
 

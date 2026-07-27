@@ -22,7 +22,8 @@ require_once __DIR__ . '/../includes/header.php';
 
 renderDashboardWelcome($user, 'Review requests, verify requirements, assign documents to staff, and manage processing across the workflow.');
 renderDashboardActions([
-    ['url' => 'compliance.php?filter=pending', 'label' => 'New Requests', 'icon' => 'fa-inbox', 'class' => 'btn-primary'],
+    ['url' => 'new-onsite-request.php', 'label' => 'Onsite Request', 'icon' => 'fa-store', 'class' => 'btn-primary'],
+    ['url' => 'compliance.php?filter=pending', 'label' => 'New Requests', 'icon' => 'fa-inbox'],
     ['url' => 'assignments.php', 'label' => 'Staff Assignment', 'icon' => 'fa-user-tag'],
     ['url' => 'compliance.php?filter=awaiting_student', 'label' => 'Awaiting Student', 'icon' => 'fa-list-check'],
     ['url' => 'compliance.php?filter=re_evaluation', 'label' => 'Re-evaluation', 'icon' => 'fa-search'],

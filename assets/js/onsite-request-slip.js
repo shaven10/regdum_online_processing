@@ -1,13 +1,13 @@
 (function () {
-    const sheet = document.getElementById('claimStubSheet');
+    const sheet = document.getElementById('onsiteRequestSlipSheet');
     if (!sheet) {
         return;
     }
 
-    const requestNumber = sheet.dataset.requestNumber || 'claim-stub';
+    const requestNumber = sheet.dataset.requestNumber || 'onsite-request-slip';
     const safeName = requestNumber.replace(/[^\w\-]+/g, '_');
 
-    // Online claim stub document size: 4.25in x 6.5in
+    // Slip size: 4.25in x 6.5in
     const SLIP_WIDTH_IN = parseFloat(sheet.dataset.slipWidth || '4.25') || 4.25;
     const SLIP_HEIGHT_IN = parseFloat(sheet.dataset.slipHeight || '6.5') || 6.5;
     const SLIP_WIDTH_MM = SLIP_WIDTH_IN * 25.4;
@@ -44,7 +44,7 @@
                     }
                     const link = document.createElement('a');
                     link.href = URL.createObjectURL(blob);
-                    link.download = safeName + '-claim-stub.png';
+                    link.download = safeName + '-onsite-slip.png';
                     link.click();
                     URL.revokeObjectURL(link.href);
                 }, 'image/png');
@@ -73,7 +73,7 @@
                 });
 
                 pdf.addImage(imgData, 'PNG', 0, 0, SLIP_WIDTH_MM, SLIP_HEIGHT_MM);
-                pdf.save(safeName + '-claim-stub.pdf');
+                pdf.save(safeName + '-onsite-slip.pdf');
             })
             .catch(function (error) {
                 alert(error.message || 'Unable to download PDF.');
@@ -83,9 +83,9 @@
             });
     }
 
-    document.querySelectorAll('[data-claim-download]').forEach(function (button) {
+    document.querySelectorAll('[data-onsite-slip-download]').forEach(function (button) {
         button.addEventListener('click', function () {
-            const type = button.getAttribute('data-claim-download');
+            const type = button.getAttribute('data-onsite-slip-download');
             if (type === 'pdf') {
                 downloadPdf(button);
             } else if (type === 'png') {
@@ -93,16 +93,6 @@
             }
         });
     });
-
-    const autoDownload = sheet.dataset.autoDownload;
-    if (autoDownload === 'pdf' || autoDownload === 'png') {
-        window.addEventListener('load', function () {
-            const button = document.querySelector('[data-claim-download="' + autoDownload + '"]');
-            if (button) {
-                button.click();
-            }
-        });
-    }
 
     if (document.body.classList.contains('auto-print')) {
         window.addEventListener('load', function () {

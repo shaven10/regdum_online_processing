@@ -2,7 +2,7 @@
 
 function assignmentOfficeOptions(): array {
     return [
-        'registrar' => 'Registrar Staff',
+        'registrar' => 'Registrar Office',
         'cashier' => 'Cashier',
         'guidance' => 'Guidance Office',
     ];
@@ -15,7 +15,7 @@ function normalizeAssignmentOffice(?string $office): string {
 
 function assignmentOfficeLabel(?string $office): string {
     $office = normalizeAssignmentOffice($office);
-    return assignmentOfficeOptions()[$office] ?? 'Registrar Staff';
+    return assignmentOfficeOptions()[$office] ?? 'Registrar Office';
 }
 
 function ensureDocumentAssignmentOfficeSchema(): void {
@@ -73,6 +73,23 @@ function getAssignableProcessors(): array {
 
     $db = getDB();
     $processors = [];
+
+    $registrars = $db->query("SELECT u.id, u.first_name, u.last_name, u.email, r.name as role_name
+        FROM users u
+        JOIN roles r ON u.role_id = r.id
+        WHERE r.name = 'registrar' AND u.is_active = 1
+        ORDER BY u.last_name, u.first_name")->fetchAll();
+    foreach ($registrars as $row) {
+        $processors[] = [
+            'id' => (int) $row['id'],
+            'first_name' => $row['first_name'],
+            'last_name' => $row['last_name'],
+            'email' => $row['email'],
+            'office' => 'registrar',
+            'office_label' => 'Registrar',
+            'role' => 'registrar',
+        ];
+    }
 
     $staff = $db->query("SELECT u.id, u.first_name, u.last_name, u.email, r.name as role_name
         FROM users u
@@ -166,6 +183,7 @@ function assignmentProcessUrlForUser(int $userId, int $itemId): string {
     return match ($role) {
         'cashier' => APP_URL . '/cashier/process-document.php?item_id=' . $itemId,
         'clearance_officer' => APP_URL . '/clearance/process-document.php?item_id=' . $itemId,
+        'registrar' => APP_URL . '/registrar/process-document.php?item_id=' . $itemId,
         default => APP_URL . '/staff/process-request.php?item_id=' . $itemId,
     };
 }
@@ -190,7 +208,8 @@ function renderAssigneeSelectHtml(
         $html .= '<optgroup label="' . e($group['label']) . '">';
         foreach ($group['users'] as $user) {
             $selected = ($preferredOffice && $office === $preferredOffice && count($group['users']) === 1) ? ' selected' : '';
-            $label = $user['first_name'] . ' ' . $user['last_name'] . ' (' . $group['label'] . ')';
+            $roleLabel = trim((string) ($user['office_label'] ?? $group['label']));
+            $label = $user['first_name'] . ' ' . $user['last_name'] . ' (' . $roleLabel . ')';
             $html .= '<option value="' . (int) $user['id'] . '"' . $selected . '>' . e($label) . '</option>';
         }
         $html .= '</optgroup>';

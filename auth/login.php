@@ -62,7 +62,7 @@ require_once __DIR__ . '/../includes/header.php';
             <button type="submit" class="btn btn-primary btn-block">Sign In</button>
         </form>
 
-        <p class="auth-footer">Don't have an account? <a href="register.php">Register here</a></p>
+        <p class="auth-footer">Don't have an account? <a href="register.php">Register here</a><br><a href="<?= APP_URL ?>/index.php">Back to Home</a></p>
     </div>
 </div>
 

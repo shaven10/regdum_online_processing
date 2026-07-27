@@ -512,6 +512,33 @@ function getAvailableDocumentTypesForEnrollment(string $enrollmentStatus): array
     return $stmt->fetchAll();
 }
 
+function getPubliclyAvailableDocumentTypes(): array {
+    ensureDocumentEnrollmentRulesSchema();
+    $db = getDB();
+    return $db->query('SELECT DISTINCT dt.*
+        FROM document_types dt
+        INNER JOIN document_type_enrollment_rules r ON r.document_type_id = dt.id
+        WHERE dt.is_active = 1 AND r.is_allowed = 1
+        ORDER BY dt.name')->fetchAll();
+}
+
+function renderLandingDocumentCard(array $documentType): string {
+    $processingDays = max(1, (int) ($documentType['processing_days'] ?? 1));
+    $html = '<div class="doc-item">';
+    $html .= '<h4>' . e($documentType['name']) . '</h4>';
+
+    if (!empty($documentType['description'])) {
+        $html .= '<p class="doc-item-desc">' . e($documentType['description']) . '</p>';
+    }
+
+    $html .= '<div class="doc-item-meta">';
+    $html .= '<span class="doc-fee">' . e(formatDocumentTypeUnitFee($documentType)) . '</span>';
+    $html .= '<span class="doc-days">' . $processingDays . ' day' . ($processingDays === 1 ? '' : 's') . '</span>';
+    $html .= '</div></div>';
+
+    return $html;
+}
+
 function getDocumentReleaseRulesMatrix(): array {
     ensureDocumentEnrollmentRulesSchema();
     $db = getDB();

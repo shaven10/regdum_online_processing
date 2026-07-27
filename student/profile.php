@@ -36,9 +36,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     }
 
     $fields = [
-        'first_name'        => trim($_POST['first_name'] ?? ''),
-        'last_name'         => trim($_POST['last_name'] ?? ''),
-        'middle_name'       => trim($_POST['middle_name'] ?? ''),
+        'first_name'        => normalizePersonName($_POST['first_name'] ?? ''),
+        'last_name'         => normalizePersonName($_POST['last_name'] ?? ''),
+        'middle_name'       => normalizePersonName($_POST['middle_name'] ?? ''),
         'phone'             => trim($_POST['phone'] ?? ''),
         'course_id'         => (int) ($_POST['course_id'] ?? 0),
         'year_level'            => trim($_POST['year_level'] ?? ''),
@@ -48,10 +48,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         'origin_campus_id'  => (int) ($_POST['origin_campus_id'] ?? 0),
         'last_school_year'  => trim($_POST['last_school_year'] ?? ''),
         'birth_date'        => trim($_POST['birth_date'] ?? ''),
-        'address'           => trim($_POST['address'] ?? ''),
-        'city'              => trim($_POST['city'] ?? ''),
-        'province'          => trim($_POST['province'] ?? ''),
-        'postal_code'       => trim($_POST['postal_code'] ?? ''),
         'emergency_contact' => trim($_POST['emergency_contact'] ?? ''),
         'emergency_phone'   => trim($_POST['emergency_phone'] ?? ''),
         'enrollment_status' => trim($_POST['enrollment_status'] ?? ''),
@@ -102,8 +98,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                $fields['birth_date'] ?: null,
                $validIdPath ?: null,
                $validIdOriginalName ?: null,
-               $fields['address'], $fields['city'],
-               $fields['province'], $fields['postal_code'], $fields['emergency_contact'],
+               null, null, null, null,
+               $fields['emergency_contact'],
                $fields['emergency_phone'], $fields['enrollment_status'] ?: 'enrolled',
                isGraduatedEnrollment($fields['enrollment_status']) && $fields['year_graduated']
                    ? $fields['year_graduated'] . '-06-01' : null,
@@ -164,15 +160,15 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="form-row">
                     <div class="form-group">
                         <label for="first_name">First Name *</label>
-                        <input type="text" id="first_name" name="first_name" value="<?= e($user['first_name']) ?>" required>
+                        <input type="text" id="first_name" name="first_name" class="input-uppercase" autocapitalize="characters" value="<?= e(normalizePersonName($user['first_name'] ?? '')) ?>" required>
                     </div>
                     <div class="form-group">
                         <label for="middle_name">Middle Name</label>
-                        <input type="text" id="middle_name" name="middle_name" value="<?= e($user['middle_name'] ?? '') ?>">
+                        <input type="text" id="middle_name" name="middle_name" class="input-uppercase" autocapitalize="characters" value="<?= e(normalizePersonName($user['middle_name'] ?? '')) ?>">
                     </div>
                     <div class="form-group">
                         <label for="last_name">Last Name *</label>
-                        <input type="text" id="last_name" name="last_name" value="<?= e($user['last_name']) ?>" required>
+                        <input type="text" id="last_name" name="last_name" class="input-uppercase" autocapitalize="characters" value="<?= e(normalizePersonName($user['last_name'] ?? '')) ?>" required>
                     </div>
                 </div>
                 <div class="form-row">
@@ -385,28 +381,6 @@ require_once __DIR__ . '/../includes/header.php';
                             <label for="employer_address">Employer Address</label>
                             <input type="text" id="employer_address" name="employer_address" value="<?= e($profileData['employer_address'] ?? '') ?>" placeholder="Office location (optional)">
                         </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="form-section">
-                <h3>Address</h3>
-                <div class="form-group">
-                    <label for="address">Street Address *</label>
-                    <textarea id="address" name="address" rows="2" required><?= e($profileData['address'] ?? '') ?></textarea>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="city">City *</label>
-                        <input type="text" id="city" name="city" value="<?= e($profileData['city'] ?? '') ?>" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="province">Province *</label>
-                        <input type="text" id="province" name="province" value="<?= e($profileData['province'] ?? '') ?>" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="postal_code">Postal Code *</label>
-                        <input type="text" id="postal_code" name="postal_code" value="<?= e($profileData['postal_code'] ?? '') ?>" required>
                     </div>
                 </div>
             </div>

@@ -76,8 +76,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         $email = trim($_POST['email'] ?? '');
         $password = $_POST['password'] ?? '';
         $roleId = (int) ($_POST['role_id'] ?? 2);
-        $firstName = trim($_POST['first_name'] ?? '');
-        $lastName = trim($_POST['last_name'] ?? '');
+        $firstName = normalizePersonName($_POST['first_name'] ?? '');
+        $lastName = normalizePersonName($_POST['last_name'] ?? '');
         $isActive = !empty($_POST['is_active']) ? 1 : 0;
         $clearanceDeptId = (int) ($_POST['clearance_department_id'] ?? 0) ?: null;
 
@@ -324,11 +324,11 @@ require_once __DIR__ . '/../includes/header.php';
     <div class="form-row">
         <div class="form-group">
             <label for="first_name">First Name *</label>
-            <input type="text" id="first_name" name="first_name" required maxlength="100">
+            <input type="text" id="first_name" name="first_name" class="input-uppercase" autocapitalize="characters" required maxlength="100">
         </div>
         <div class="form-group">
             <label for="last_name">Last Name *</label>
-            <input type="text" id="last_name" name="last_name" required maxlength="100">
+            <input type="text" id="last_name" name="last_name" class="input-uppercase" autocapitalize="characters" required maxlength="100">
         </div>
     </div>
 

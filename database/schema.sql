@@ -197,12 +197,15 @@ CREATE TABLE requests (
     pdf_path VARCHAR(255),
     digital_signature VARCHAR(255),
     notes TEXT,
+    request_channel ENUM('online','onsite') NOT NULL DEFAULT 'online',
+    created_by INT UNSIGNED NULL,
     completed_at DATETIME,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (document_type_id) REFERENCES document_types(id),
-    FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
+    FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE TABLE request_items (
@@ -348,7 +351,7 @@ CREATE TABLE faqs (
 
 INSERT INTO faqs (category, question, answer, sort_order) VALUES
 ('General', 'How long does it take to process my request?', 'Processing time varies by document type. TOR takes 5 business days, while Certificate of Enrollment takes 2 business days.', 1),
-('General', 'What payment methods are accepted?', 'We accept GCash, bank transfer, and on-site payment at the cashier. For on-site payment, the app generates a 6-digit reference code for the cashier to locate your request.', 2),
+('General', 'What payment methods are accepted?', 'We accept bank transfer and on-site payment at the cashier. For on-site payment, the app generates a 6-digit reference code for the cashier to locate your request.', 2),
 ('Documents', 'What documents do I need to upload?', 'For TOR and Diploma requests, you need to upload a valid ID and authorization letter if applicable.', 3),
 ('Pickup', 'How do I schedule a pickup appointment?', 'Once your request status is "Ready for Pickup", you can schedule an appointment from your request details page.', 4);
 
@@ -473,7 +476,8 @@ CREATE TABLE app_settings (
 );
 
 INSERT INTO app_settings (setting_key, setting_value) VALUES
-('auto_apply_requirement_defaults', '1');
+('auto_apply_requirement_defaults', '1'),
+('theme_preset', 'green');
 
 -- Per-request compliance checklist
 CREATE TABLE request_compliance (

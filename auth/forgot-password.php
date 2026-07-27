@@ -51,7 +51,7 @@ require_once __DIR__ . '/../includes/header.php';
             </form>
         <?php endif; ?>
 
-        <p class="auth-footer"><a href="login.php">Back to login</a></p>
+        <p class="auth-footer"><a href="login.php">Back to login</a><br><a href="<?= APP_URL ?>/index.php">Back to Home</a></p>
     </div>
 </div>
 

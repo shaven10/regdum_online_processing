@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/config/app.php';
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/ui.php';
 
 if (isLoggedIn()) {
     redirect(dashboardUrl());
@@ -14,52 +15,100 @@ if (isLoggedIn()) {
     <title><?= e(APP_NAME) ?></title>
     <link rel="icon" type="image/png" href="<?= e(APP_LOGO) ?>">
     <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css">
+    <?php
+    require_once __DIR__ . '/includes/theme.php';
+    renderThemeStyleTag();
+    ?>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
 <body class="landing-page">
-    <nav class="landing-nav">
-        <div class="nav-brand">
-            <img src="<?= e(APP_LOGO) ?>" alt="<?= e(APP_NAME) ?>" class="app-logo app-logo-nav">
-            <span><?= e(APP_NAME) ?></span>
-        </div>
-        <div class="nav-links">
-            <a href="faq.php">FAQ</a>
-            <a href="verify.php">Verify Document</a>
-            <a href="auth/login.php" class="btn btn-outline">Sign In</a>
-            <a href="auth/register.php" class="btn btn-primary">Register</a>
-        </div>
-    </nav>
+    <?php renderLandingNav('home'); ?>
 
-    <section class="hero">
-        <div class="hero-content">
-            <h1>Online Credential Request System</h1>
-            <p>Request official documents, track your application, and receive credentials — all online.</p>
-            <div class="hero-actions">
-                <a href="auth/register.php" class="btn btn-primary btn-lg">Get Started</a>
-                <a href="auth/login.php" class="btn btn-outline btn-lg">Sign In</a>
+    <section class="landing-hero-carousel" id="landingHeroCarousel" tabindex="0" aria-roledescription="carousel" aria-label="Welcome highlights">
+        <div class="landing-hero-carousel-viewport">
+            <div class="landing-hero-carousel-track" id="landingHeroCarouselTrack">
+                <article class="landing-hero-carousel-slide is-active" aria-hidden="false">
+                    <div class="landing-hero-carousel-slide-inner tone-primary">
+                        <div class="landing-hero-carousel-content">
+                            <p class="landing-hero-carousel-eyebrow"><?= e(APP_TAGLINE) ?></p>
+                            <h1>Online Credential Request System</h1>
+                            <p>Request official documents, track your application, and receive credentials — all online.</p>
+                            <div class="landing-hero-carousel-actions">
+                                <a href="auth/register.php" class="btn btn-primary btn-lg">Get Started</a>
+                                <a href="auth/login.php" class="btn btn-outline btn-lg btn-on-dark">Sign In</a>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+                <article class="landing-hero-carousel-slide" aria-hidden="true">
+                    <div class="landing-hero-carousel-slide-inner tone-accent">
+                        <div class="landing-hero-carousel-content">
+                            <p class="landing-hero-carousel-eyebrow">Fast &amp; Convenient</p>
+                            <h1>Request Documents Online</h1>
+                            <p>Submit requests for TOR, diploma, certificates, and other registrar records from anywhere.</p>
+                            <div class="landing-hero-carousel-actions">
+                                <a href="auth/register.php" class="btn btn-primary btn-lg">Register Now</a>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+                <article class="landing-hero-carousel-slide" aria-hidden="true">
+                    <div class="landing-hero-carousel-slide-inner tone-violet">
+                        <div class="landing-hero-carousel-content">
+                            <p class="landing-hero-carousel-eyebrow">Secure Payments</p>
+                            <h1>Pay Online or On-Site</h1>
+                            <p>Use bank transfer after review or pay at the cashier when you visit the office.</p>
+                            <div class="landing-hero-carousel-actions">
+                                <a href="auth/login.php" class="btn btn-primary btn-lg">Sign In to Pay</a>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+                <article class="landing-hero-carousel-slide" aria-hidden="true">
+                    <div class="landing-hero-carousel-slide-inner tone-info">
+                        <div class="landing-hero-carousel-content">
+                            <p class="landing-hero-carousel-eyebrow">Authenticity Check</p>
+                            <h1>Digital Verification</h1>
+                            <p>Verify issued credentials instantly using the verification code or request number.</p>
+                            <div class="landing-hero-carousel-actions">
+                                <a href="verify.php" class="btn btn-primary btn-lg">Verify Document</a>
+                            </div>
+                        </div>
+                    </div>
+                </article>
             </div>
         </div>
+        <button type="button" class="landing-hero-carousel-control landing-hero-carousel-prev" id="landingHeroCarouselPrev" aria-label="Previous slide">
+            <i class="fas fa-chevron-left" aria-hidden="true"></i>
+        </button>
+        <button type="button" class="landing-hero-carousel-control landing-hero-carousel-next" id="landingHeroCarouselNext" aria-label="Next slide">
+            <i class="fas fa-chevron-right" aria-hidden="true"></i>
+        </button>
+        <div class="landing-hero-carousel-dots" id="landingHeroCarouselDots" role="tablist" aria-label="Choose slide">
+            <button type="button" class="is-active" role="tab" aria-selected="true" aria-label="Slide 1" data-slide="0"></button>
+            <button type="button" role="tab" aria-selected="false" aria-label="Slide 2" data-slide="1"></button>
+            <button type="button" role="tab" aria-selected="false" aria-label="Slide 3" data-slide="2"></button>
+            <button type="button" role="tab" aria-selected="false" aria-label="Slide 4" data-slide="3"></button>
+        </div>
+    </section>
+
+    <section class="landing-features">
         <div class="hero-features">
-            <div class="feature-card">
+            <a href="auth/register.php" class="feature-card feature-card-link">
                 <i class="fas fa-file-alt"></i>
                 <h3>Request Documents</h3>
                 <p>TOR, Diploma, Certificates, and more</p>
-            </div>
+            </a>
             <div class="feature-card">
                 <i class="fas fa-credit-card"></i>
                 <h3>Online Payment</h3>
-                <p>Pay via card, e-wallet, or bank transfer</p>
+                <p>Pay via bank transfer or on-site at the cashier</p>
             </div>
-            <div class="feature-card">
-                <i class="fas fa-truck"></i>
-                <h3>Track & Deliver</h3>
-                <p>Real-time status updates and delivery options</p>
-            </div>
-            <div class="feature-card">
+            <a href="verify.php" class="feature-card feature-card-link">
                 <i class="fas fa-qrcode"></i>
                 <h3>Digital Verification</h3>
                 <p>QR codes and digital signatures for authenticity</p>
-            </div>
+            </a>
         </div>
     </section>
 
@@ -68,16 +117,14 @@ if (isLoggedIn()) {
         <div class="doc-grid">
             <?php
             try {
-                $db = getDB();
-                $docs = $db->query('SELECT * FROM document_types WHERE is_active = 1 ORDER BY name')->fetchAll();
-                foreach ($docs as $doc): ?>
-                    <div class="doc-item">
-                        <h4><?= e($doc['name']) ?></h4>
-                        <p><?= e($doc['description']) ?></p>
-                        <span class="doc-fee"><?= formatDocumentTypeUnitFee($doc) ?></span>
-                        <span class="doc-days"><?= (int)$doc['processing_days'] ?> days processing</span>
-                    </div>
-                <?php endforeach;
+                $docs = getPubliclyAvailableDocumentTypes();
+                if ($docs === []): ?>
+                    <p class="text-muted">No documents are currently available for request.</p>
+                <?php else:
+                    foreach ($docs as $doc) {
+                        echo renderLandingDocumentCard($doc);
+                    }
+                endif;
             } catch (Exception $e) {
                 echo '<p class="text-muted">Database not configured. Please import database/schema.sql</p>';
             }
@@ -85,8 +132,6 @@ if (isLoggedIn()) {
         </div>
     </section>
 
-    <footer class="landing-footer">
-        <p>&copy; <?= date('Y') ?> <?= e(APP_NAME) ?>. All rights reserved.</p>
-    </footer>
+    <?php renderPublicPageFooter(); ?>
 </body>
 </html>

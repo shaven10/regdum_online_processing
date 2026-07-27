@@ -39,7 +39,7 @@ if (!$request) {
 $requestItems = getRequestItems($requestId);
 $primaryDocTypeId = (int) ($request['document_type_id'] ?? ($requestItems[0]['document_type_id'] ?? 0));
 $copyRequestType = normalizeRequirementCopyType($request['copy_request_type'] ?? 'first_request');
-$requirementsRequired = documentTypeRequiresRequirements($primaryDocTypeId, $copyRequestType);
+$requirementsRequired = requestRequiresRequirementsForCopyType($requestId, $copyRequestType);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
@@ -52,6 +52,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
 
     if ($action === 'confirm_request') {
+        $completeRequirements = !empty($_POST['complete_requirements']);
+
+        if ($completeRequirements) {
+            $ok = processComplianceAction($requestId, [], 'confirm_request', $user['id'], $remarks, [
+                'complete_requirements' => true,
+            ]);
+            $instructionCount = 0;
+            if ($ok && !empty($_FILES['instruction_attachments'])) {
+                $instructionCount = saveRegistrarInstructionAttachments($requestId, $_FILES['instruction_attachments']);
+            }
+            $successMessage = 'Request confirmed. Student requirements are already complete and may proceed to payment.';
+            if ($ok && $instructionCount > 0) {
+                $successMessage .= ' ' . $instructionCount . ' instruction attachment'
+                    . ($instructionCount === 1 ? '' : 's') . ' sent.';
+            }
+            setFlash($ok ? 'success' : 'error', $ok
+                ? $successMessage
+                : 'Unable to confirm this request.', $ok ? [
+                'title' => 'Requirements Complete',
+                'context' => [
+                    'Request' => $request['request_number'],
+                    'Student' => $request['first_name'] . ' ' . $request['last_name'],
+                    'Document' => $request['document_name'],
+                ],
+                'next_step' => 'The student may proceed directly to payment.',
+                'action_url' => APP_URL . '/registrar/compliance.php?filter=verified',
+                'action_label' => 'View awaiting payment',
+            ] : [
+                'title' => 'Confirmation Failed',
+            ]);
+        } else {
         $selectedCodes = array_values(array_filter(array_map(
             static fn($code): string => normalizeRequirementCode((string) $code),
             (array) ($_POST['req_codes'] ?? [])
@@ -103,6 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             ] : [
                 'title' => 'Assignment Incomplete',
             ]);
+        }
 
     } elseif ($action === 'approve_for_payment') {
 
@@ -220,7 +252,7 @@ $summary = getComplianceSummary($requestId);
 $requirementChecklist = registrarRequirementChecklist();
 $assignedCodes = assignedRequirementCodes($requestId);
 $assignedSubcodes = assignedRequirementSubcodes($requestId);
-$defaultCodes = getDocumentTypeRequirementDefaults($primaryDocTypeId, $copyRequestType);
+$defaultCodes = getRegistrarSuggestedRequirementCodes($requestId, $copyRequestType);
 
 if (hasAssignedRequirement($requestId, 'online_clearance')) {
     initRequestClearance($requestId);
@@ -304,6 +336,10 @@ require_once __DIR__ . '/../includes/header.php';
 
                 <div class="detail-item"><label>Request #</label><span><?= e($request['request_number']) ?></span></div>
 
+                <?php if (($request['request_channel'] ?? 'online') === 'onsite'): ?>
+                <div class="detail-item"><label>Channel</label><span><span class="badge badge-processing">Onsite Walk-in</span></span></div>
+                <?php endif; ?>
+
                 <div class="detail-item full">
                     <label>Documents (<?= count($requestItems) ?>)</label>
                     <div class="request-items-summary-list">
@@ -385,6 +421,17 @@ require_once __DIR__ . '/../includes/header.php';
                 <h4 style="margin-top:1rem">Payment</h4>
 
                 <p><?= statusBadge($paymentData['status']) ?> — <?= formatMoney((float)$paymentData['amount']) ?></p>
+                <?php if (($paymentData['payment_method'] ?? '') === 'onsite_payment' && !empty($paymentData['reference_number'])): ?>
+                    <p class="onsite-payment-code-alert alert alert-info">
+                        Cashier payment code:
+                        <span class="onsite-payment-code"><?= e($paymentData['reference_number']) ?></span>
+                    </p>
+                    <?php if (($request['request_channel'] ?? '') === 'onsite'): ?>
+                        <a href="onsite-request-slip.php?id=<?= (int) $requestId ?>&print=1" target="_blank" class="btn btn-outline btn-sm">
+                            <i class="fas fa-print"></i> Print Request Slip
+                        </a>
+                    <?php endif; ?>
+                <?php endif; ?>
 
             <?php endif; ?>
 
@@ -466,6 +513,19 @@ require_once __DIR__ . '/../includes/header.php';
 
                     <?php if ($requirementsRequired): ?>
 
+                    <label class="complete-requirements-option" for="completeRequirementsCheck">
+                        <input
+                            type="checkbox"
+                            id="completeRequirementsCheck"
+                            name="complete_requirements"
+                            value="1"
+                        >
+                        <div>
+                            <strong>Complete requirements</strong>
+                            <p class="text-muted">Check this if the student already completed all requirements on file. This clears the pre-selected checklist from admin settings and sends the student directly to payment.</p>
+                        </div>
+                    </label>
+
                     <div class="compliance-checklist registrar-checklist" id="registrarRequirementChecklist">
                         <?php foreach ($requirementChecklist as $code => $item): ?>
                             <?php
@@ -483,6 +543,7 @@ require_once __DIR__ . '/../includes/header.php';
                                         value="<?= e($code) ?>"
                                         class="req-parent-check"
                                         data-req-parent="<?= e($code) ?>"
+                                        data-default-checked="<?= $checked ? '1' : '0' ?>"
                                         <?= $checked ? 'checked' : '' ?>
                                     >
                                     <div>
@@ -514,6 +575,7 @@ require_once __DIR__ . '/../includes/header.php';
                                                     value="<?= e($sub['code']) ?>"
                                                     class="req-sub-check"
                                                     data-req-parent="<?= e($code) ?>"
+                                                    data-default-checked="<?= $subChecked ? '1' : '0' ?>"
                                                     <?= $subChecked ? 'checked' : '' ?>
                                                 >
                                                 <div>
@@ -561,9 +623,9 @@ require_once __DIR__ . '/../includes/header.php';
 
                     <div class="action-buttons">
 
-                        <button type="submit" class="btn btn-primary" onclick="return confirm('<?= $requirementsRequired ? 'Confirm request and send requirements to the student?' : 'Confirm request and send the student to payment?' ?>')">
+                        <button type="submit" class="btn btn-primary" id="confirmRequirementsBtn" data-default-confirm="<?= $requirementsRequired ? 'Confirm request and send requirements to the student?' : 'Confirm request and send the student to payment?' ?>" data-complete-confirm="Confirm request and mark requirements as already complete? The student will proceed directly to payment.">
                             <i class="fas fa-check"></i>
-                            <?= $requirementsRequired ? 'Confirm Request & Set Requirements' : 'Confirm Request & Send to Payment' ?>
+                            <span id="confirmRequirementsBtnLabel"><?= $requirementsRequired ? 'Confirm Request & Set Requirements' : 'Confirm Request & Send to Payment' ?></span>
                         </button>
                     </div>
                 </form>
@@ -572,6 +634,9 @@ require_once __DIR__ . '/../includes/header.php';
                 <script>
                 (function () {
                     const root = document.getElementById('registrarRequirementChecklist');
+                    const completeCheck = document.getElementById('completeRequirementsCheck');
+                    const confirmBtn = document.getElementById('confirmRequirementsBtn');
+                    const confirmBtnLabel = document.getElementById('confirmRequirementsBtnLabel');
                     if (!root) return;
 
                     function panelFor(parentCode) {
@@ -598,6 +663,52 @@ require_once __DIR__ . '/../includes/header.php';
                         if (!anyChecked) {
                             subs.forEach(function (sub) { sub.checked = true; });
                         }
+                    }
+
+                    function clearAllRequirements() {
+                        root.querySelectorAll('.req-parent-check, .req-sub-check').forEach(function (input) {
+                            input.checked = false;
+                        });
+                        root.querySelectorAll('[data-subchecklist]').forEach(function (panel) {
+                            panel.hidden = true;
+                        });
+                    }
+
+                    function restoreDefaultRequirements() {
+                        root.querySelectorAll('.req-sub-check').forEach(function (sub) {
+                            sub.checked = sub.getAttribute('data-default-checked') === '1';
+                        });
+                        root.querySelectorAll('.req-parent-check').forEach(function (parent) {
+                            parent.checked = parent.getAttribute('data-default-checked') === '1';
+                            syncParent(parent.getAttribute('data-req-parent'));
+                        });
+                    }
+
+                    function setChecklistDisabled(disabled) {
+                        root.classList.toggle('is-disabled', disabled);
+                        root.querySelectorAll('input[type="checkbox"]').forEach(function (input) {
+                            input.disabled = disabled;
+                        });
+                    }
+
+                    function syncCompleteRequirementsState() {
+                        const complete = !!(completeCheck && completeCheck.checked);
+                        setChecklistDisabled(complete);
+                        if (complete) {
+                            clearAllRequirements();
+                            if (confirmBtnLabel) {
+                                confirmBtnLabel.textContent = 'Confirm Request & Send to Payment';
+                            }
+                        } else {
+                            restoreDefaultRequirements();
+                            if (confirmBtnLabel) {
+                                confirmBtnLabel.textContent = 'Confirm Request & Set Requirements';
+                            }
+                        }
+                    }
+
+                    if (completeCheck) {
+                        completeCheck.addEventListener('change', syncCompleteRequirementsState);
                     }
 
                     root.querySelectorAll('.req-parent-check').forEach(function (parent) {
@@ -628,6 +739,19 @@ require_once __DIR__ . '/../includes/header.php';
                     const form = document.getElementById('requirementsForm');
                     if (form) {
                         form.addEventListener('submit', function (event) {
+                            const complete = !!(completeCheck && completeCheck.checked);
+                            const confirmMessage = complete
+                                ? (confirmBtn ? confirmBtn.getAttribute('data-complete-confirm') : '')
+                                : (confirmBtn ? confirmBtn.getAttribute('data-default-confirm') : '');
+                            if (confirmMessage && !window.confirm(confirmMessage)) {
+                                event.preventDefault();
+                                return;
+                            }
+
+                            if (complete) {
+                                return;
+                            }
+
                             const openParents = root.querySelectorAll('.req-parent-check:checked');
                             for (let i = 0; i < openParents.length; i++) {
                                 const parentCode = openParents[i].getAttribute('data-req-parent');
@@ -850,7 +974,7 @@ require_once __DIR__ . '/../includes/header.php';
 
                     <i class="fas fa-user-check"></i>
 
-                    <strong>Step 5:</strong> Assign processing personnel per document. You can assign to Registrar Staff, Cashier, or Guidance Office (e.g. SOA → Cashier, Good Moral → Guidance).
+                    <strong>Step 5:</strong> Assign processing personnel per document. You can assign to a Registrar, Registrar Staff, Cashier, or Guidance Office account (e.g. SOA → Cashier, Good Moral → Guidance).
 
                 </div>
 

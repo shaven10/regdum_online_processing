@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/config/app.php';
 require_once __DIR__ . '/includes/functions.php';
+require_once __DIR__ . '/includes/ui.php';
 
 $db = getDB();
 $faqs = $db->query('SELECT * FROM faqs WHERE is_active = 1 ORDER BY sort_order, category')->fetchAll();
@@ -19,21 +20,14 @@ $pageTitle = 'FAQ';
     <title>FAQ - <?= e(APP_NAME) ?></title>
     <link rel="icon" type="image/png" href="<?= e(APP_LOGO) ?>">
     <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css">
+    <?php
+    require_once __DIR__ . '/includes/theme.php';
+    renderThemeStyleTag();
+    ?>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
-<body>
-<nav class="landing-nav">
-    <div class="nav-brand">
-        <a href="index.php">
-            <img src="<?= e(APP_LOGO) ?>" alt="<?= e(APP_NAME) ?>" class="app-logo app-logo-nav">
-            <span><?= e(APP_NAME) ?></span>
-        </a>
-    </div>
-    <div class="nav-links">
-        <a href="verify.php">Verify Document</a>
-        <a href="auth/login.php">Sign In</a>
-    </div>
-</nav>
+<body class="landing-page">
+<?php renderLandingNav('faq'); ?>
 
 <div class="container page-container">
     <h1>Frequently Asked Questions</h1>
@@ -50,5 +44,6 @@ $pageTitle = 'FAQ';
         </div>
     <?php endforeach; ?>
 </div>
+<?php renderPublicPageFooter(); ?>
 </body>
 </html>

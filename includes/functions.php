@@ -690,6 +690,22 @@ function fullName(array $user): string {
     return $name;
 }
 
+/**
+ * Normalize a person name field to uppercase for consistent storage/display.
+ */
+function normalizePersonName(?string $name): string {
+    $name = trim((string) $name);
+    if ($name === '') {
+        return '';
+    }
+
+    if (function_exists('mb_strtoupper')) {
+        return mb_strtoupper($name, 'UTF-8');
+    }
+
+    return strtoupper($name);
+}
+
 function statCardLink(string $url, string $iconClass, string $icon, string $value, string $label): string {
     return '<a href="' . e($url) . '" class="stat-card stat-card-link">'
         . '<div class="stat-icon ' . e($iconClass) . '"><i class="fas ' . e($icon) . '"></i></div>'

@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/config/app.php';
 require_once __DIR__ . '/includes/functions.php';
+require_once __DIR__ . '/includes/ui.php';
 
 $code = trim($_GET['code'] ?? '');
 $ref = trim($_GET['ref'] ?? '');
@@ -33,18 +34,14 @@ if ($code || $ref) {
     <title>Verify Document - <?= e(APP_NAME) ?></title>
     <link rel="icon" type="image/png" href="<?= e(APP_LOGO) ?>">
     <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css">
+    <?php
+    require_once __DIR__ . '/includes/theme.php';
+    renderThemeStyleTag();
+    ?>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
-<body>
-<nav class="landing-nav">
-    <div class="nav-brand">
-        <a href="index.php">
-            <img src="<?= e(APP_LOGO) ?>" alt="<?= e(APP_NAME) ?>" class="app-logo app-logo-nav">
-            <span><?= e(APP_NAME) ?></span>
-        </a>
-    </div>
-    <div class="nav-links"><a href="faq.php">FAQ</a><a href="auth/login.php">Sign In</a></div>
-</nav>
+<body class="landing-page">
+<?php renderLandingNav('verify'); ?>
 
 <div class="container page-container">
     <h1><i class="fas fa-shield-alt"></i> Document Verification</h1>
@@ -98,5 +95,6 @@ if ($code || $ref) {
         <?php endif; ?>
     <?php endif; ?>
 </div>
+<?php renderPublicPageFooter(); ?>
 </body>
 </html>

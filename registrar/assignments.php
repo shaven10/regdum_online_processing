@@ -142,12 +142,12 @@ require_once __DIR__ . '/../includes/header.php';
         <?php if (empty($processors)): ?>
             <div class="alert alert-warning">
                 <i class="fas fa-exclamation-triangle"></i>
-                No active assignees found. Add registrar staff, cashier, or guidance officer accounts first.
+                No active assignees found. Add registrar, registrar staff, cashier, or guidance officer accounts first.
             </div>
         <?php else: ?>
             <div class="alert alert-info">
                 <i class="fas fa-user-tag"></i>
-                Assign each document to Registrar Staff, Cashier, or Guidance Office. Suggested offices:
+                Assign each document to a Registrar, Registrar Staff, Cashier, or Guidance Office account. Suggested offices:
                 SOA → Cashier, Good Moral → Guidance.
             </div>
 

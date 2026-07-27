@@ -1,5 +1,16 @@
-/* Claim stub — simple A4 layout */
-.claim-stub-page {
+/* Shared slip document settings */
+:root {
+    --regdum-slip-width: 4.25in;
+    --regdum-slip-pad-y: .28in;
+    --regdum-slip-pad-x: .3in;
+    --claim-stub-height: 6.5in;
+    --onsite-slip-height: 6.5in;
+    --regdum-slip-height: var(--onsite-slip-height);
+}
+
+.regdum-slip-page,
+.claim-stub-page,
+.onsite-slip-page {
     background: #eef1f5;
     min-height: 100vh;
     padding: 1.25rem;
@@ -7,8 +18,10 @@
     color: #111827;
 }
 
-.claim-stub-toolbar {
-    width: min(210mm, 100%);
+.regdum-slip-toolbar,
+.claim-stub-toolbar,
+.onsite-slip-toolbar {
+    width: min(var(--regdum-slip-width), 100%);
     margin: 0 auto 1rem;
     display: flex;
     flex-wrap: wrap;
@@ -16,230 +29,294 @@
     gap: .75rem;
 }
 
-.claim-stub-toolbar-actions {
+.regdum-slip-toolbar-actions,
+.claim-stub-toolbar-actions,
+.onsite-slip-toolbar-actions {
     display: flex;
     flex-wrap: wrap;
     gap: .5rem;
 }
 
-.claim-stub-toolbar .btn.is-busy {
+.regdum-slip-toolbar .btn.is-busy,
+.claim-stub-toolbar .btn.is-busy,
+.onsite-slip-toolbar .btn.is-busy {
     opacity: .7;
     pointer-events: none;
 }
 
-.claim-stub-sheet {
-    width: 210mm;
+.regdum-slip-sheet,
+.claim-stub-sheet,
+.onsite-slip-sheet {
+    width: var(--regdum-slip-width);
+    height: var(--regdum-slip-height);
     max-width: 100%;
-    min-height: 260mm;
     margin: 0 auto;
     background: #fff;
     border: 1px solid #cbd5e1;
     box-shadow: 0 8px 24px rgba(15, 23, 42, .08);
-    padding: 14mm 16mm;
+    padding: var(--regdum-slip-pad-y) var(--regdum-slip-pad-x);
     box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
-.claim-stub-top {
+.claim-stub-page,
+.claim-stub-sheet {
+    --regdum-slip-height: var(--claim-stub-height);
+}
+
+.onsite-slip-page,
+.onsite-slip-sheet {
+    --regdum-slip-height: var(--onsite-slip-height);
+}
+
+.regdum-slip-top,
+.claim-stub-top,
+.onsite-slip-top {
     text-align: center;
-    padding-bottom: 8mm;
-    border-bottom: 2px solid #111827;
-    margin-bottom: 8mm;
+    padding-bottom: .12in;
+    border-bottom: 1.5px solid #111827;
+    margin-bottom: .12in;
 }
 
-.claim-stub-office {
+.regdum-slip-logo,
+.claim-stub-top .app-logo-claim,
+.onsite-slip-logo {
+    width: .42in;
+    height: .42in;
+    object-fit: contain;
+    margin: 0 auto .06in;
+    display: block;
+}
+
+.regdum-slip-office,
+.claim-stub-office,
+.onsite-slip-office {
     margin: 0;
-    font-size: 11pt;
+    font-size: 7.5pt;
     font-weight: 700;
-    letter-spacing: .08em;
+    letter-spacing: .06em;
     text-transform: uppercase;
-}
-
-.claim-stub-subtitle {
-    margin: 2mm 0 0;
-    font-size: 9pt;
-    color: #64748b;
-}
-
-.claim-stub-heading {
-    margin: 5mm 0 0;
-    font-size: 16pt;
-    font-weight: 800;
-    letter-spacing: .04em;
-    text-transform: uppercase;
-}
-
-.claim-stub-code-block {
-    text-align: center;
-    padding: 8mm 6mm;
-    margin-bottom: 8mm;
-    border: 2px solid #111827;
-    background: #f8fafc;
-}
-
-.claim-stub-code-label {
-    display: block;
-    font-size: 8pt;
-    letter-spacing: .12em;
-    text-transform: uppercase;
-    color: #64748b;
-    margin-bottom: 3mm;
-}
-
-.claim-stub-code-value {
-    display: block;
-    font-family: Consolas, "Courier New", monospace;
-    font-size: 24pt;
-    font-weight: 700;
-    letter-spacing: .16em;
     line-height: 1.2;
 }
 
-.claim-stub-request-no {
-    display: block;
-    margin-top: 4mm;
-    font-size: 10pt;
-    color: #334155;
+.regdum-slip-subtitle,
+.claim-stub-subtitle,
+.onsite-slip-subtitle {
+    margin: .03in 0 0;
+    font-size: 6.5pt;
+    color: #64748b;
+    line-height: 1.2;
 }
 
-.claim-stub-table {
+.regdum-slip-heading,
+.claim-stub-heading,
+.onsite-slip-heading {
+    margin: .08in 0 0;
+    font-size: 10pt;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    line-height: 1.15;
+}
+
+.regdum-slip-code-block,
+.claim-stub-code-block,
+.onsite-slip-code-block {
+    text-align: center;
+    padding: .14in .1in;
+    margin-bottom: .12in;
+    border: 1.5px solid #111827;
+    background: #f8fafc;
+}
+
+.regdum-slip-code-label,
+.claim-stub-code-label,
+.onsite-slip-code-label {
+    display: block;
+    font-size: 6.5pt;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: #64748b;
+    margin-bottom: .05in;
+}
+
+.regdum-slip-code-value,
+.claim-stub-code-value,
+.onsite-slip-code-value {
+    display: block;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 16pt;
+    font-weight: 700;
+    letter-spacing: .14em;
+    line-height: 1.1;
+}
+
+.onsite-slip-code-value {
+    font-size: 18pt;
+    letter-spacing: .22em;
+}
+
+.regdum-slip-request-no,
+.claim-stub-request-no,
+.onsite-slip-request-no {
+    display: block;
+    margin-top: .06in;
+    font-size: 7.5pt;
+    color: #334155;
+    font-weight: 600;
+}
+
+.regdum-slip-table,
+.claim-stub-table,
+.onsite-slip-table {
     width: 100%;
     border-collapse: collapse;
-    margin-bottom: 8mm;
-    font-size: 10pt;
+    margin-bottom: .1in;
+    font-size: 7pt;
 }
 
+.regdum-slip-table th,
+.regdum-slip-table td,
 .claim-stub-table th,
-.claim-stub-table td {
+.claim-stub-table td,
+.onsite-slip-table th,
+.onsite-slip-table td {
     border: 1px solid #dbe3ee;
-    padding: 3.5mm 4mm;
+    padding: .05in .07in;
     vertical-align: top;
 }
 
-.claim-stub-table th {
-    width: 34%;
+.regdum-slip-table th,
+.claim-stub-table th,
+.onsite-slip-table th {
+    width: 32%;
     text-align: left;
     background: #f8fafc;
-    font-size: 8pt;
-    letter-spacing: .06em;
+    font-size: 6pt;
+    letter-spacing: .04em;
     text-transform: uppercase;
     color: #64748b;
     font-weight: 700;
 }
 
-.claim-stub-table td {
+.regdum-slip-table td,
+.claim-stub-table td,
+.onsite-slip-table td {
     font-weight: 600;
     color: #111827;
+    line-height: 1.25;
+}
+
+.regdum-slip-note,
+.claim-stub-note,
+.onsite-slip-note {
+    margin: 0 0 .08in;
+    padding: .07in .08in;
+    border-left: 2px solid #0f766e;
+    background: #ecfeff;
+    font-size: 6.5pt;
+    line-height: 1.35;
+    color: #134e4a;
 }
 
 .claim-stub-note {
-    margin: 0 0 8mm;
-    padding: 4mm 5mm;
-    border-left: 3px solid #2563eb;
-    background: #eff6ff;
-    font-size: 9.5pt;
-    line-height: 1.5;
-    color: #1e3a8a;
+    border-left-color: #059669;
+    background: #ecfdf5;
+    color: #064e3b;
 }
 
-.claim-stub-instructions {
-    margin-bottom: 10mm;
-}
-
-.claim-stub-instructions h2 {
-    margin: 0 0 3mm;
-    font-size: 9pt;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-    color: #475569;
-}
-
-.claim-stub-instructions ol {
-    margin: 0;
-    padding-left: 5mm;
-    font-size: 9.5pt;
-    line-height: 1.55;
-    color: #334155;
-}
-
-.claim-stub-instructions li + li {
-    margin-top: 1.5mm;
-}
-
-.claim-stub-signatures {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10mm;
-    margin-bottom: 8mm;
-}
-
-.claim-stub-sign-line {
-    border-top: 1px solid #111827;
-    padding-top: 2mm;
-    text-align: center;
-    font-size: 8.5pt;
-    color: #64748b;
-}
-
-.claim-stub-footer {
+.regdum-slip-footer,
+.claim-stub-footer,
+.onsite-slip-footer {
+    margin-top: auto;
     border-top: 1px solid #e2e8f0;
-    padding-top: 4mm;
+    padding-top: .06in;
     text-align: center;
-    font-size: 8pt;
+    font-size: 5.5pt;
     color: #94a3b8;
-    line-height: 1.5;
+    line-height: 1.3;
     word-break: break-word;
 }
 
-@media screen and (max-width: 820px) {
-    .claim-stub-page {
+@media screen and (max-width: 520px) {
+    .regdum-slip-page,
+    .claim-stub-page,
+    .onsite-slip-page {
         padding: .75rem;
     }
 
     .claim-stub-sheet {
-        min-height: auto;
-        padding: 10mm 8mm;
+        height: auto;
+        min-height: var(--claim-stub-height);
     }
 
-    .claim-stub-code-value {
-        font-size: 18pt;
-        letter-spacing: .1em;
-    }
-
-    .claim-stub-signatures {
-        grid-template-columns: 1fr;
+    .onsite-slip-sheet {
+        height: auto;
+        min-height: var(--onsite-slip-height);
     }
 }
 
 @media print {
-    @page {
-        size: A4 portrait;
-        margin: 10mm;
-    }
-
-    html,
-    body {
-        width: 210mm;
-        height: 297mm;
+    body.claim-stub-page,
+    body.onsite-slip-page {
+        background: #fff !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        width: var(--regdum-slip-width) !important;
+        overflow: hidden;
     }
 
     body.claim-stub-page {
-        background: #fff;
-        padding: 0;
-        margin: 0;
+        height: var(--claim-stub-height) !important;
     }
 
-    .no-print,
-    .claim-stub-toolbar {
+    body.onsite-slip-page {
+        height: var(--onsite-slip-height) !important;
+    }
+
+    body.claim-stub-page .no-print,
+    body.claim-stub-page .claim-stub-toolbar,
+    body.onsite-slip-page .no-print,
+    body.onsite-slip-page .onsite-slip-toolbar {
         display: none !important;
     }
 
-    .claim-stub-sheet {
-        width: 100%;
-        min-height: auto;
+    body.claim-stub-page .claim-stub-sheet,
+    body.onsite-slip-page .onsite-slip-sheet {
+        width: var(--regdum-slip-width) !important;
         max-width: none;
         border: none;
         box-shadow: none;
-        padding: 0;
         margin: 0;
+        padding: var(--regdum-slip-pad-y) var(--regdum-slip-pad-x);
+        page-break-inside: avoid;
     }
+
+    body.claim-stub-page .claim-stub-sheet {
+        height: var(--claim-stub-height) !important;
+    }
+
+    body.onsite-slip-page .onsite-slip-sheet {
+        height: var(--onsite-slip-height) !important;
+    }
+}
+
+@page claim-stub-page {
+    size: 4.25in 6.5in;
+    margin: 0;
+}
+
+@page onsite-request-slip {
+    size: 4.25in 6.5in;
+    margin: 0;
+}
+
+body.claim-stub-page {
+    page: claim-stub-page;
+}
+
+body.onsite-slip-page {
+    page: onsite-request-slip;
 }

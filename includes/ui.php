@@ -277,3 +277,56 @@ function renderAdminCredentialSettingsNav(string $activeKey): void {
     </nav>
     <?php
 }
+
+function landingNavLinks(): array
+{
+    return [
+        'home' => ['href' => 'index.php', 'label' => 'Home'],
+        'faq' => ['href' => 'faq.php', 'label' => 'FAQ'],
+        'verify' => ['href' => 'verify.php', 'label' => 'Verify Document'],
+        'login' => ['href' => 'auth/login.php', 'label' => 'Sign In', 'class' => 'btn btn-outline'],
+        'register' => ['href' => 'auth/register.php', 'label' => 'Register', 'class' => 'btn btn-primary'],
+    ];
+}
+
+function renderLandingNav(string $active = ''): void
+{
+    $links = landingNavLinks();
+    ?>
+    <nav class="landing-nav" id="landingNav">
+        <div class="nav-brand">
+            <a href="index.php">
+                <?= renderAppLogo('nav') ?>
+                <div class="nav-brand-text">
+                    <span class="nav-brand-name"><?= e(APP_NAME) ?></span>
+                    <span class="nav-brand-tagline"><?= e(APP_SYSTEM_NAME) ?></span>
+                </div>
+            </a>
+        </div>
+        <button type="button" class="landing-nav-toggle" id="landingNavToggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="landingNavLinks">
+            <i class="fas fa-bars"></i>
+        </button>
+        <div class="nav-links" id="landingNavLinks">
+            <?php foreach ($links as $key => $link): ?>
+                <?php
+                $isActive = $active === $key;
+                $classes = trim(($link['class'] ?? '') . ($isActive ? ' is-active' : ''));
+                ?>
+                <a href="<?= e($link['href']) ?>"
+                   <?= $classes !== '' ? 'class="' . e($classes) . '"' : '' ?>
+                   <?= $isActive ? 'aria-current="page"' : '' ?>><?= e($link['label']) ?></a>
+            <?php endforeach; ?>
+        </div>
+    </nav>
+    <?php
+}
+
+function renderPublicPageFooter(): void
+{
+    ?>
+    <footer class="landing-footer">
+        <p>&copy; <?= date('Y') ?> <?= e(APP_NAME) ?>. All rights reserved.</p>
+    </footer>
+    <script src="<?= APP_URL ?>/assets/js/app.js"></script>
+    <?php
+}

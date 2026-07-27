@@ -14,9 +14,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $data = [
             'email'       => trim($_POST['email'] ?? ''),
             'password'    => $_POST['password'] ?? '',
-            'first_name'  => trim($_POST['first_name'] ?? ''),
-            'last_name'   => trim($_POST['last_name'] ?? ''),
-            'middle_name' => trim($_POST['middle_name'] ?? ''),
+            'first_name'  => normalizePersonName($_POST['first_name'] ?? ''),
+            'last_name'   => normalizePersonName($_POST['last_name'] ?? ''),
+            'middle_name' => normalizePersonName($_POST['middle_name'] ?? ''),
             'student_id'  => trim($_POST['student_id'] ?? ''),
             'phone'       => trim($_POST['phone'] ?? ''),
         ];
@@ -74,18 +74,18 @@ require_once __DIR__ . '/../includes/header.php';
             <div class="form-row">
                 <div class="form-group">
                     <label for="first_name">First Name *</label>
-                    <input type="text" id="first_name" name="first_name" value="<?= e($_POST['first_name'] ?? '') ?>" required>
+                    <input type="text" id="first_name" name="first_name" class="input-uppercase" autocapitalize="characters" value="<?= e(normalizePersonName($_POST['first_name'] ?? '')) ?>" required>
                     <?php if (!empty($errors['first_name'])): ?><span class="field-error"><?= e($errors['first_name']) ?></span><?php endif; ?>
                 </div>
                 <div class="form-group">
                     <label for="last_name">Last Name *</label>
-                    <input type="text" id="last_name" name="last_name" value="<?= e($_POST['last_name'] ?? '') ?>" required>
+                    <input type="text" id="last_name" name="last_name" class="input-uppercase" autocapitalize="characters" value="<?= e(normalizePersonName($_POST['last_name'] ?? '')) ?>" required>
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
                     <label for="middle_name">Middle Name</label>
-                    <input type="text" id="middle_name" name="middle_name" value="<?= e($_POST['middle_name'] ?? '') ?>">
+                    <input type="text" id="middle_name" name="middle_name" class="input-uppercase" autocapitalize="characters" value="<?= e(normalizePersonName($_POST['middle_name'] ?? '')) ?>">
                 </div>
                 <div class="form-group">
                     <label for="student_id">Student ID *</label>
@@ -130,7 +130,7 @@ require_once __DIR__ . '/../includes/header.php';
             <button type="submit" class="btn btn-primary btn-block" id="registerSubmitBtn">Create Account</button>
         </form>
 
-        <p class="auth-footer">Already have an account? <a href="login.php">Sign in</a></p>
+        <p class="auth-footer">Already have an account? <a href="login.php">Sign in</a><br><a href="<?= APP_URL ?>/index.php">Back to Home</a></p>
     </div>
 </div>
 

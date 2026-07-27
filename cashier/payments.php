@@ -2,11 +2,13 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/payments.php';
 require_once __DIR__ . '/../includes/attachments.php';
+require_once __DIR__ . '/../includes/onsite-request.php';
 requireRole('cashier');
 
 $user = currentUser();
 ensureCashierRole();
 ensurePaymentVerificationSchema();
+ensureOnsiteRequestSchema();
 
 $status = $_GET['status'] ?? '';
 $search = trim($_GET['search'] ?? '');
@@ -41,6 +43,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                 'next_step' => 'Enter the OR number and date of payment before verifying.',
             ]);
             redirect($redirectUrl . ($search ? '&search=' . urlencode($search) : '') . '#payment-' . $paymentId);
+        }
+
+        $payLookup = getDB()->prepare('SELECT request_id FROM payments WHERE id = ?');
+        $payLookup->execute([$paymentId]);
+        $requestIdForGate = (int) ($payLookup->fetchColumn() ?: 0);
+        if ($requestIdForGate > 0) {
+            $clearanceBlock = paymentVerificationBlockedByClearance($requestIdForGate);
+            if ($clearanceBlock !== null) {
+                setFlash('error', $clearanceBlock, [
+                    'title' => 'Online Clearance Incomplete',
+                    'next_step' => 'Wait until all clearance offices have signed before verifying this payment.',
+                ]);
+                redirect($redirectUrl . ($search ? '&search=' . urlencode($search) : '') . '#payment-' . $paymentId);
+            }
         }
     }
 
@@ -84,7 +100,8 @@ $activeNav = $status === 'pending' ? 'pending' : 'payments';
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
-<div class="stats-grid">
+<div class="cashier-payments-page">
+<div class="stats-grid cashier-payments-stats">
     <?= statCardLink('payments.php?status=pending', 'orange', 'fa-clock', (string)$stats['pending'], 'Pending') ?>
     <?= statCardLink('payments.php?status=verified', 'green', 'fa-check', (string)$stats['verified'], 'Verified') ?>
     <?= statCardLink('payments.php?status=rejected', 'orange', 'fa-times', (string)$stats['rejected'], 'Rejected') ?>
@@ -99,6 +116,9 @@ require_once __DIR__ . '/../includes/header.php';
             <?php if ($status): ?>
                 <input type="hidden" name="status" value="<?= e($status) ?>">
             <?php endif; ?>
+            <?php if ($search): ?>
+                <input type="hidden" name="search" value="<?= e($search) ?>">
+            <?php endif; ?>
             <label for="onsite_code">Enter the student's 6-digit payment code</label>
             <div class="onsite-payment-lookup-row">
                 <input type="text"
@@ -109,29 +129,37 @@ require_once __DIR__ . '/../includes/header.php';
                     maxlength="6"
                     placeholder="000000"
                     value="<?= e($onsiteCode) ?>"
-                    autocomplete="off">
-                <button type="submit" class="btn btn-primary">Find Request</button>
+                    autocomplete="one-time-code"
+                    aria-describedby="onsiteCodeHelp">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-search"></i> Find Request
+                </button>
             </div>
-            <small class="text-muted">Students receive this code when they choose on-site payment.</small>
+            <small id="onsiteCodeHelp" class="text-muted">Students receive this code when they choose on-site payment.</small>
         </form>
 
         <?php if ($onsiteLookupError): ?>
-            <div class="alert alert-warning" style="margin-top:1rem">
+            <div class="alert alert-warning onsite-payment-lookup-alert">
                 <i class="fas fa-exclamation-triangle"></i> <?= e($onsiteLookupError) ?>
             </div>
         <?php elseif ($onsiteLookupPayment): ?>
-            <div class="alert alert-success onsite-payment-lookup-result" style="margin-top:1rem">
-                <i class="fas fa-check-circle"></i>
+            <?php $lookupGate = getPaymentClearanceGate((int) $onsiteLookupPayment['request_id']); ?>
+            <div class="alert <?= !empty($lookupGate['blocked']) ? 'alert-warning' : 'alert-success' ?> onsite-payment-lookup-result onsite-payment-lookup-alert">
+                <i class="fas <?= !empty($lookupGate['blocked']) ? 'fa-exclamation-triangle' : 'fa-check-circle' ?>"></i>
                 Found pending payment for <strong><?= e($onsiteLookupPayment['request_number']) ?></strong>
                 — <?= e($onsiteLookupPayment['first_name'] . ' ' . $onsiteLookupPayment['last_name']) ?>
                 (<?= formatMoney((float) $onsiteLookupPayment['amount']) ?>).
-                The review window will open automatically.
+                <?php if (!empty($lookupGate['blocked'])): ?>
+                    Online clearance is incomplete (<?= (int) $lookupGate['cleared'] ?>/<?= (int) $lookupGate['total'] ?>). Verification is blocked until clearance is complete.
+                <?php else: ?>
+                    The review window will open automatically.
+                <?php endif; ?>
             </div>
         <?php endif; ?>
     </div>
 </div>
 
-<div class="card">
+<div class="card cashier-payments-list-card">
     <div class="card-header payment-page-header">
         <div>
             <h2>Payment Verification</h2>
@@ -139,42 +167,41 @@ require_once __DIR__ . '/../includes/header.php';
                 <p class="text-muted payment-page-subtitle"><?= count($payments) ?> payment<?= count($payments) === 1 ? '' : 's' ?> awaiting your review</p>
             <?php elseif ($status === 'rejected'): ?>
                 <p class="text-muted payment-page-subtitle">Review rejection feedback sent to students</p>
+            <?php else: ?>
+                <p class="text-muted payment-page-subtitle">Search and verify student payments</p>
             <?php endif; ?>
         </div>
     </div>
     <div class="card-body">
-        <form method="GET" class="filter-bar">
-            <input type="text" name="search" placeholder="Search request #, student, or reference..." value="<?= e($search) ?>">
-            <select name="status">
+        <form method="GET" class="filter-bar payments-filter-bar">
+            <input type="text" name="search" placeholder="Search request #, student, or reference..." value="<?= e($search) ?>" aria-label="Search payments">
+            <select name="status" aria-label="Filter by status">
                 <option value="">All Statuses</option>
                 <option value="pending" <?= $status === 'pending' ? 'selected' : '' ?>>Pending</option>
                 <option value="verified" <?= $status === 'verified' ? 'selected' : '' ?>>Verified</option>
                 <option value="rejected" <?= $status === 'rejected' ? 'selected' : '' ?>>Rejected</option>
             </select>
-            <button type="submit" class="btn btn-outline btn-sm">Filter</button>
-            <?php if ($status || $search): ?>
-                <a href="payments.php" class="btn btn-outline btn-sm">Clear</a>
-            <?php endif; ?>
+            <div class="payments-filter-actions">
+                <button type="submit" class="btn btn-outline btn-sm">Filter</button>
+                <?php if ($status || $search): ?>
+                    <a href="payments.php" class="btn btn-outline btn-sm">Clear</a>
+                <?php endif; ?>
+            </div>
         </form>
 
         <?php if (empty($payments)): ?>
             <div class="empty-state"><i class="fas fa-receipt"></i><p>No payments found.</p></div>
         <?php else: ?>
-            <div class="table-wrap">
+            <div class="table-wrap payments-table-wrap">
                 <table class="data-table payments-table data-table-responsive">
                     <thead>
                         <tr>
                             <th>Request #</th>
                             <th>Student</th>
                             <th>Method</th>
-                            <th>Amount</th>
                             <th>Reference</th>
-                            <th>OR #</th>
-                            <th>Payment Date</th>
                             <th>Status</th>
                             <th>Submitted</th>
-                            <th>Verified By</th>
-                            <th>Feedback</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -183,40 +210,34 @@ require_once __DIR__ . '/../includes/header.php';
                         <?php
                             $receiptExt = $p['receipt_path'] ? attachmentFileExt($p['receipt_path']) : '';
                             $receiptIsImage = $receiptExt && attachmentIsImage($receiptExt);
+                            $clearanceGate = $p['status'] === 'pending'
+                                ? getPaymentClearanceGate((int) $p['request_id'])
+                                : ['required' => false, 'complete' => true, 'blocked' => false, 'cleared' => 0, 'total' => 0, 'message' => null];
                         ?>
-                        <tr id="payment-<?= $p['id'] ?>" class="<?= $p['status'] === 'pending' ? 'payment-row-pending' : ($p['status'] === 'rejected' ? 'payment-row-rejected' : '') ?><?= $onsiteLookupPayment && (int) $onsiteLookupPayment['id'] === (int) $p['id'] ? ' payment-row-highlight' : '' ?>">
+                        <tr id="payment-<?= $p['id'] ?>" class="<?= $p['status'] === 'pending' ? 'payment-row-pending' : ($p['status'] === 'rejected' ? 'payment-row-rejected' : '') ?><?= $onsiteLookupPayment && (int) $onsiteLookupPayment['id'] === (int) $p['id'] ? ' payment-row-highlight' : '' ?><?= !empty($clearanceGate['blocked']) ? ' payment-row-clearance-blocked' : '' ?>">
                             <td data-label="Request #"><strong><?= e($p['request_number']) ?></strong></td>
                             <td data-label="Student">
                                 <?= e($p['first_name'] . ' ' . $p['last_name']) ?>
                                 <br><small class="text-muted"><?= e($p['student_id'] ?? '') ?></small>
                             </td>
-                            <td data-label="Method"><?= e(paymentMethodLabel($p['payment_method'])) ?></td>
-                            <td data-label="Amount"><strong><?= formatMoney((float)$p['amount']) ?></strong></td>
+                            <td data-label="Method">
+                                <?= e(paymentMethodLabel($p['payment_method'])) ?>
+                                <?php if (!empty($clearanceGate['required'])): ?>
+                                    <br>
+                                    <?php if (!empty($clearanceGate['blocked'])): ?>
+                                        <small class="payment-clearance-pill is-pending">
+                                            Clearance <?= (int) $clearanceGate['cleared'] ?>/<?= (int) $clearanceGate['total'] ?>
+                                        </small>
+                                    <?php else: ?>
+                                        <small class="payment-clearance-pill is-complete">Clearance complete</small>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                            </td>
                             <td data-label="<?= isOnsitePaymentMethod($p['payment_method']) ? 'Payment Code' : 'Reference' ?>"><?= e($p['reference_number'] ?? '—') ?></td>
-                            <td data-label="OR #"><?= e($p['or_number'] ?? '—') ?></td>
-                            <td data-label="Payment Date"><?= !empty($p['payment_date']) ? formatDate($p['payment_date']) : '—' ?></td>
                             <td data-label="Status"><?= statusBadge($p['status']) ?></td>
                             <td data-label="Submitted"><?= formatDateTime($p['created_at']) ?></td>
-                            <td data-label="Verified By">
-                                <?php if ($p['verifier_first']): ?>
-                                    <?= e($p['verifier_first'] . ' ' . $p['verifier_last']) ?>
-                                    <br><small class="text-muted"><?= formatDateTime($p['verified_at']) ?></small>
-                                <?php else: ?>
-                                    —
-                                <?php endif; ?>
-                            </td>
-                            <td data-label="Feedback">
-                                <?php if ($p['status'] === 'rejected' && !empty($p['notes'])): ?>
-                                    <div class="payment-feedback-card">
-                                        <i class="fas fa-comment-dots"></i>
-                                        <p><?= e($p['notes']) ?></p>
-                                    </div>
-                                <?php else: ?>
-                                    <span class="text-muted">—</span>
-                                <?php endif; ?>
-                            </td>
                             <td data-label="Actions" class="payment-actions-cell">
-                                <?php if ($p['receipt_path']): ?>
+                                <?php if ($p['receipt_path'] && !isOnsitePaymentMethod($p['payment_method'])): ?>
                                     <a href="<?= UPLOAD_URL ?>/<?= e($p['receipt_path']) ?>" target="_blank" class="btn btn-sm btn-outline">
                                         <i class="fas fa-file-invoice"></i> Receipt
                                     </a>
@@ -232,9 +253,13 @@ require_once __DIR__ . '/../includes/header.php';
                                         data-amount="<?= e(formatMoney((float)$p['amount'])) ?>"
                                         data-reference="<?= e($p['reference_number'] ?? '—') ?>"
                                         data-is-onsite="<?= isOnsitePaymentMethod($p['payment_method']) ? '1' : '0' ?>"
+                                        data-clearance-required="<?= !empty($clearanceGate['required']) ? '1' : '0' ?>"
+                                        data-clearance-blocked="<?= !empty($clearanceGate['blocked']) ? '1' : '0' ?>"
+                                        data-clearance-progress="<?= !empty($clearanceGate['required']) ? ((int) $clearanceGate['cleared'] . '/' . (int) $clearanceGate['total']) : '' ?>"
+                                        data-clearance-message="<?= e($clearanceGate['message'] ?? '') ?>"
                                         data-submitted="<?= e(formatDateTime($p['created_at'])) ?>"
-                                        data-receipt-url="<?= $p['receipt_path'] ? e(UPLOAD_URL . '/' . $p['receipt_path']) : '' ?>"
-                                        data-receipt-is-image="<?= $receiptIsImage ? '1' : '0' ?>">
+                                        data-receipt-url="<?= (!isOnsitePaymentMethod($p['payment_method']) && $p['receipt_path']) ? e(UPLOAD_URL . '/' . $p['receipt_path']) : '' ?>"
+                                        data-receipt-is-image="<?= (!isOnsitePaymentMethod($p['payment_method']) && $receiptIsImage) ? '1' : '0' ?>">
                                         <i class="fas fa-search"></i> Review
                                     </button>
                                 <?php endif; ?>
@@ -246,6 +271,7 @@ require_once __DIR__ . '/../includes/header.php';
             </div>
         <?php endif; ?>
     </div>
+</div>
 </div>
 
 <div class="payment-modal" id="paymentReviewModal" aria-hidden="true">
@@ -263,7 +289,7 @@ require_once __DIR__ . '/../includes/header.php';
             </div>
 
             <div class="payment-modal-body">
-                <div class="payment-review-grid">
+                <div class="payment-review-grid" data-payment-review-grid>
                     <div class="payment-review-details">
                         <div class="payment-review-item">
                             <span>Request #</span>
@@ -292,7 +318,7 @@ require_once __DIR__ . '/../includes/header.php';
                         </div>
                     </div>
 
-                    <div class="payment-receipt-panel">
+                    <div class="payment-receipt-panel" data-receipt-panel>
                         <div class="payment-receipt-panel-header">
                             <h4><i class="fas fa-receipt"></i> Payment Receipt</h4>
                             <a href="#" target="_blank" class="btn btn-sm btn-outline payment-receipt-open" hidden>
@@ -308,9 +334,19 @@ require_once __DIR__ . '/../includes/header.php';
                     </div>
                 </div>
 
-                <div class="payment-verify-fields">
+                <div class="payment-clearance-alert" data-clearance-alert hidden>
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <div>
+                        <strong>Online clearance incomplete</strong>
+                        <p data-clearance-alert-message>Payment verification is blocked until all offices clear this request.</p>
+                    </div>
+                </div>
+
+                <div class="payment-verify-fields" data-verify-panel>
                     <h4><i class="fas fa-file-invoice-dollar"></i> Verification Details</h4>
-                    <p class="text-muted payment-verify-fields-note">Enter the official receipt details before verifying this payment.</p>
+                    <p class="text-muted payment-verify-fields-note" data-verify-fields-note>
+                        Enter the OR number and date of payment before verifying.
+                    </p>
                     <div class="payment-verify-fields-grid">
                         <div class="form-group">
                             <label for="paymentOrNumber">OR Number *</label>
@@ -333,77 +369,58 @@ require_once __DIR__ . '/../includes/header.php';
                         </div>
                     </div>
                 </div>
+
+                <div class="payment-reject-panel" data-reject-panel hidden>
+                    <div class="payment-reject-panel-header">
+                        <h4><i class="fas fa-times-circle"></i> Rejection Feedback</h4>
+                        <p class="text-muted">This feedback will be sent to the student so they can correct and resubmit.</p>
+                    </div>
+
+                    <form method="POST" id="paymentRejectForm" class="payment-reject-form-modal">
+                        <?= csrfField() ?>
+                        <input type="hidden" name="payment_id" value="" data-payment-id-input>
+                        <input type="hidden" name="action" value="reject">
+
+                        <div class="form-group">
+                            <label>Quick reasons</label>
+                            <div class="reject-reason-chips">
+                                <?php foreach ($rejectReasons as $reason): ?>
+                                    <button type="button" class="reject-reason-chip" data-reason="<?= e($reason) ?>">
+                                        <?= e($reason) ?>
+                                    </button>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="paymentRejectNotes">Feedback for student *</label>
+                            <textarea id="paymentRejectNotes" name="notes" rows="4" maxlength="500" required
+                                placeholder="Explain clearly what the student needs to fix before resubmitting payment..."></textarea>
+                            <div class="reject-notes-meta">
+                                <small class="text-muted">Be specific so the student knows exactly what to correct.</small>
+                                <small class="reject-char-count"><span data-char-count>0</span>/500</small>
+                            </div>
+                        </div>
+                    </form>
+                </div>
             </div>
 
             <div class="payment-modal-footer">
                 <button type="button" class="btn btn-outline" data-close-payment-modal>Cancel</button>
-                <button type="button" class="btn btn-danger" data-goto-reject-step>
-                    <i class="fas fa-times-circle"></i> Reject Payment
+                <button type="button" class="btn btn-outline" data-cancel-reject hidden>
+                    <i class="fas fa-arrow-left"></i> Back to Verify
                 </button>
-                <form method="POST" id="paymentVerifyForm" class="payment-verify-form">
+                <button type="button" class="btn btn-danger" data-reject-action>
+                    <i class="fas fa-times-circle"></i>
+                    <span data-reject-action-label>Reject Payment</span>
+                </button>
+                <form method="POST" id="paymentVerifyForm" class="payment-verify-form" data-verify-form>
                     <?= csrfField() ?>
                     <input type="hidden" name="payment_id" value="" data-payment-id-input>
                     <button type="submit" name="action" value="verify" class="btn btn-primary">
                         <i class="fas fa-check-circle"></i> Verify Payment
                     </button>
                 </form>
-            </div>
-        </div>
-
-        <div class="payment-modal-step" data-step="reject" hidden>
-            <div class="payment-modal-header payment-modal-header-danger">
-                <div>
-                    <span class="payment-modal-eyebrow">Rejection Feedback</span>
-                    <h3>Reject Payment</h3>
-                    <p class="payment-modal-subtitle">This feedback will be sent to the student so they can correct and resubmit.</p>
-                </div>
-                <button type="button" class="payment-modal-close" data-close-payment-modal aria-label="Close">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-
-            <div class="payment-modal-body">
-                <div class="payment-reject-summary">
-                    <strong data-field="reject-request-number">—</strong>
-                    <span data-field="reject-student-name">—</span>
-                    <span class="payment-reject-summary-amount" data-field="reject-amount">—</span>
-                </div>
-
-                <form method="POST" id="paymentRejectForm" class="payment-reject-form-modal">
-                    <?= csrfField() ?>
-                    <input type="hidden" name="payment_id" value="" data-payment-id-input>
-                    <input type="hidden" name="action" value="reject">
-
-                    <div class="form-group">
-                        <label>Quick reasons</label>
-                        <div class="reject-reason-chips">
-                            <?php foreach ($rejectReasons as $reason): ?>
-                                <button type="button" class="reject-reason-chip" data-reason="<?= e($reason) ?>">
-                                    <?= e($reason) ?>
-                                </button>
-                            <?php endforeach; ?>
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="paymentRejectNotes">Feedback for student *</label>
-                        <textarea id="paymentRejectNotes" name="notes" rows="4" maxlength="500" required
-                            placeholder="Explain clearly what the student needs to fix before resubmitting payment..."></textarea>
-                        <div class="reject-notes-meta">
-                            <small class="text-muted">Be specific so the student knows exactly what to correct.</small>
-                            <small class="reject-char-count"><span data-char-count>0</span>/500</small>
-                        </div>
-                    </div>
-                </form>
-            </div>
-
-            <div class="payment-modal-footer">
-                <button type="button" class="btn btn-outline" data-goto-review-step>
-                    <i class="fas fa-arrow-left"></i> Back to Review
-                </button>
-                <button type="submit" form="paymentRejectForm" class="btn btn-danger">
-                    <i class="fas fa-paper-plane"></i> Send Rejection
-                </button>
             </div>
         </div>
     </div>

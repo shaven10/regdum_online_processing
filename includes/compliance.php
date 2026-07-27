@@ -64,7 +64,7 @@ function ensureComplianceSchema(): void {
     ensureWorkflowSchema();
     ensureRequirementDefaultsSchema();
     removeRetiredRequirementCodes();
-    ensureAdditionalRequirementDefaults(['final_clearance', 'other_enrollment_requirements']);
+    ensureAdditionalRequirementDefaults(['final_clearance']);
 }
 
 function ensureRequirementDefaultsSchema(): void {
@@ -109,6 +109,18 @@ function ensureRequirementDefaultsSchema(): void {
 
     ensureRequirementDefinitionsSchema();
     seedDocumentTypeRequirementDefaults();
+    migrateOtherEnrollmentRequirementsToOptIn();
+}
+
+function migrateOtherEnrollmentRequirementsToOptIn(): void {
+    if (getAppSetting('other_enrollment_requirements_opt_in_migrated', '0') === '1') {
+        return;
+    }
+
+    $db = getDB();
+    $db->prepare('DELETE FROM document_type_requirement_defaults WHERE requirement_code = ?')
+       ->execute(['other_enrollment_requirements']);
+    setAppSetting('other_enrollment_requirements_opt_in_migrated', '1');
 }
 
 function migrateRequirementDefaultsCopyTypeColumn(): void {
@@ -538,11 +550,11 @@ function maybeAutoApplyOnRequestSubmission(int $requestId, array $documentTypeId
 }
 
 function standardDefaultRequirementCodes(): array {
-    return ['online_clearance', 'final_clearance', 'other_enrollment_requirements'];
+    return ['online_clearance', 'final_clearance'];
 }
 
 function baseDocumentRequirementCodes(?string $documentTypeCode = null): array {
-    $codes = ['online_clearance', 'final_clearance', 'other_enrollment_requirements'];
+    $codes = ['online_clearance', 'final_clearance'];
     $thesisRelated = ['TOR', 'DIPLOMA', 'OTHER'];
 
     if ($documentTypeCode !== null && in_array($documentTypeCode, $thesisRelated, true)) {
@@ -663,6 +675,74 @@ function getDocumentTypeRequirementDefaults(int $documentTypeId, ?string $copyRe
     return $fallback;
 }
 
+function getRequestDocumentTypeIds(int $requestId): array {
+    $db = getDB();
+    $documentTypeIds = [];
+
+    if (function_exists('getRequestItems')) {
+        foreach (getRequestItems($requestId) as $item) {
+            $documentTypeId = (int) ($item['document_type_id'] ?? 0);
+            if ($documentTypeId > 0) {
+                $documentTypeIds[] = $documentTypeId;
+            }
+        }
+    }
+
+    if ($documentTypeIds === []) {
+        $stmt = $db->prepare('SELECT document_type_id FROM requests WHERE id = ?');
+        $stmt->execute([$requestId]);
+        $documentTypeId = (int) $stmt->fetchColumn();
+        if ($documentTypeId > 0) {
+            $documentTypeIds[] = $documentTypeId;
+        }
+    }
+
+    return array_values(array_unique($documentTypeIds));
+}
+
+function getRegistrarSuggestedRequirementCodes(int $requestId, ?string $copyRequestType = 'first_request'): array {
+    ensureRequirementDefaultsSchema();
+    $copyRequestType = normalizeRequirementCopyType($copyRequestType);
+    $checklist = registrarRequirementChecklist();
+    $codes = [];
+
+    foreach (getRequestDocumentTypeIds($requestId) as $documentTypeId) {
+        if (!documentTypeRequiresRequirements($documentTypeId, $copyRequestType)) {
+            continue;
+        }
+
+        foreach (getSavedDocumentTypeRequirementDefaults($documentTypeId, $copyRequestType) as $code) {
+            if (isset($checklist[$code]) && !in_array($code, $codes, true)) {
+                $codes[] = $code;
+            }
+        }
+    }
+
+    usort($codes, static function (string $a, string $b) use ($checklist): int {
+        $orderA = (int) ($checklist[$a]['sort_order'] ?? 999);
+        $orderB = (int) ($checklist[$b]['sort_order'] ?? 999);
+        if ($orderA !== $orderB) {
+            return $orderA <=> $orderB;
+        }
+
+        return strcmp($a, $b);
+    });
+
+    return $codes;
+}
+
+function requestRequiresRequirementsForCopyType(int $requestId, ?string $copyRequestType = 'first_request'): bool {
+    $copyRequestType = normalizeRequirementCopyType($copyRequestType);
+
+    foreach (getRequestDocumentTypeIds($requestId) as $documentTypeId) {
+        if (documentTypeRequiresRequirements($documentTypeId, $copyRequestType)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function saveDocumentTypeRequirementDefaultsForCopyType(
     int $documentTypeId,
     string $copyRequestType,
@@ -747,7 +827,13 @@ function getAllDocumentTypeRequirementSettings(): array {
     return $settings;
 }
 
-function applyNoRequirementsToRequest(int $requestId, int $documentTypeId, bool $changeStatus, ?string $remarks = null): bool {
+function applyNoRequirementsToRequest(
+    int $requestId,
+    int $documentTypeId,
+    bool $changeStatus,
+    ?string $remarks = null,
+    bool $requirementsAlreadyComplete = false
+): bool {
     saveAssignedRequirements($requestId, []);
 
     $db = getDB();
@@ -767,15 +853,30 @@ function applyNoRequirementsToRequest(int $requestId, int $documentTypeId, bool 
         return false;
     }
 
-    updateRequestStatus($requestId, 'requirements_verified', 'No requirements required for this credential');
-    sendNotification(
-        (int) $request['user_id'],
-        'Ready for Payment',
-        'Your request ' . $request['request_number'] . ' does not require additional documents. You may proceed to payment.',
-        'success',
-        APP_URL . '/student/payment.php?request_id=' . $requestId
-    );
-    auditLog('requirements_skipped', 'requests', $requestId, null, ['document_type_id' => $documentTypeId]);
+    $statusNote = $requirementsAlreadyComplete
+        ? 'Registrar confirmed student requirements already complete'
+        : 'No requirements required for this credential';
+    updateRequestStatus($requestId, 'requirements_verified', $statusNote);
+
+    if ($requirementsAlreadyComplete) {
+        sendNotification(
+            (int) $request['user_id'],
+            'Requirements Complete',
+            'Your request ' . $request['request_number'] . ' has been confirmed. Your requirements are already on file and you may proceed to payment.',
+            'success',
+            APP_URL . '/student/payment.php?request_id=' . $requestId
+        );
+        auditLog('requirements_already_complete', 'requests', $requestId, null, ['document_type_id' => $documentTypeId]);
+    } else {
+        sendNotification(
+            (int) $request['user_id'],
+            'Ready for Payment',
+            'Your request ' . $request['request_number'] . ' does not require additional documents. You may proceed to payment.',
+            'success',
+            APP_URL . '/student/payment.php?request_id=' . $requestId
+        );
+        auditLog('requirements_skipped', 'requests', $requestId, null, ['document_type_id' => $documentTypeId]);
+    }
 
     return true;
 }
@@ -790,7 +891,7 @@ function applyRequirementDefaultsToRequest(int $requestId, int $documentTypeId, 
         return applyNoRequirementsToRequest($requestId, $documentTypeId, $changeStatus);
     }
 
-    $codes = getDocumentTypeRequirementDefaults($documentTypeId, $copyRequestType);
+    $codes = getSavedDocumentTypeRequirementDefaults($documentTypeId, $copyRequestType);
     if (empty($codes)) {
         return false;
     }
@@ -1165,7 +1266,7 @@ function advanceToRequirementsSubmitted(int $requestId): bool {
 
 function maybeAdvanceToRequirementsSubmitted(int $requestId): bool {
     $db = getDB();
-    $stmt = $db->prepare('SELECT status, request_number FROM requests WHERE id = ?');
+    $stmt = $db->prepare('SELECT status, request_number, request_channel FROM requests WHERE id = ?');
     $stmt->execute([$requestId]);
     $request = $stmt->fetch();
     if (!$request || !in_array($request['status'], ['awaiting_requirements', 'needs_revision'], true)) {
@@ -1174,6 +1275,12 @@ function maybeAdvanceToRequirementsSubmitted(int $requestId): bool {
 
     if (!studentRequirementsComplete($requestId)) {
         return false;
+    }
+
+    // Onsite walk-ins were already verified in person — skip registrar re-evaluation.
+    require_once __DIR__ . '/onsite-request.php';
+    if (isOnsiteRequestChannel($request['request_channel'] ?? null)) {
+        return advanceOnsiteRequestAfterClearance($requestId);
     }
 
     return advanceToRequirementsSubmitted($requestId);
@@ -1676,7 +1783,7 @@ function getRequestsForCompliance(string $filter = ''): array {
 
 function getStaffUsers(): array {
     require_once __DIR__ . '/assignment-offices.php';
-    // Backward-compatible: registrar staff only.
+    // Registrar office assignees: registrar role accounts and registrar staff.
     return array_values(array_filter(
         getAssignableProcessors(),
         static fn(array $user): bool => ($user['office'] ?? '') === 'registrar'
@@ -1920,6 +2027,16 @@ function processComplianceAction(int $requestId, array $checks, string $action, 
     if ($action === 'confirm_request') {
         if (!in_array($request['status'], ['submitted', 'under_review', 'needs_revision'], true)) {
             return false;
+        }
+
+        if (!empty($extra['complete_requirements'])) {
+            return applyNoRequirementsToRequest(
+                $requestId,
+                (int) $request['document_type_id'],
+                true,
+                $remarks ?: null,
+                true
+            );
         }
 
         $requirements = $extra['requirements'] ?? [];

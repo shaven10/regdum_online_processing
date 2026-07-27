@@ -1,5 +1,7 @@
 document.addEventListener('DOMContentLoaded', function () {
     initNotificationToasts();
+    initLandingNav();
+    initLandingHeroCarousel();
 
     const toggle = document.getElementById('sidebarToggle');
     const sidebar = document.getElementById('sidebar');
@@ -67,7 +69,191 @@ document.addEventListener('DOMContentLoaded', function () {
     initReleaseScheduleForm();
     initStatusModal();
     initAdminFormModal();
+    initUppercaseNameFields();
 });
+
+function initUppercaseNameFields() {
+    const selector = [
+        'input[name="first_name"]',
+        'input[name="last_name"]',
+        'input[name="middle_name"]',
+        'input.input-name-uppercase',
+    ].join(', ');
+
+    document.querySelectorAll(selector).forEach(function (input) {
+        if (input.dataset.uppercaseBound === '1') {
+            return;
+        }
+        input.dataset.uppercaseBound = '1';
+        input.classList.add('input-uppercase');
+        if (!input.getAttribute('autocapitalize')) {
+            input.setAttribute('autocapitalize', 'characters');
+        }
+
+        function forceUppercase() {
+            const start = input.selectionStart;
+            const end = input.selectionEnd;
+            const upper = (input.value || '').toLocaleUpperCase('en-US');
+            if (input.value === upper) {
+                return;
+            }
+            input.value = upper;
+            if (typeof start === 'number' && typeof end === 'number' && input.type === 'text') {
+                try {
+                    input.setSelectionRange(start, end);
+                } catch (err) {
+                    // Some input types may not support selection ranges.
+                }
+            }
+        }
+
+        input.addEventListener('input', forceUppercase);
+        input.addEventListener('blur', forceUppercase);
+        forceUppercase();
+    });
+}
+
+function initLandingNav() {
+    const nav = document.getElementById('landingNav');
+    const toggle = document.getElementById('landingNavToggle');
+    const links = document.getElementById('landingNavLinks');
+
+    if (!nav || !toggle || !links) return;
+
+    const icon = toggle.querySelector('i');
+
+    function setOpen(open) {
+        nav.classList.toggle('open', open);
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (icon) {
+            icon.className = open ? 'fas fa-times' : 'fas fa-bars';
+        }
+    }
+
+    toggle.addEventListener('click', function () {
+        setOpen(!nav.classList.contains('open'));
+    });
+
+    links.querySelectorAll('a').forEach(function (link) {
+        link.addEventListener('click', function () {
+            if (window.innerWidth <= 768) {
+                setOpen(false);
+            }
+        });
+    });
+
+    document.addEventListener('click', function (e) {
+        if (window.innerWidth <= 768 && nav.classList.contains('open') &&
+            !nav.contains(e.target)) {
+            setOpen(false);
+        }
+    });
+
+    window.addEventListener('resize', function () {
+        if (window.innerWidth > 768) {
+            setOpen(false);
+        }
+    });
+}
+
+function initLandingHeroCarousel() {
+    const carousel = document.getElementById('landingHeroCarousel');
+    const track = document.getElementById('landingHeroCarouselTrack');
+    const prevBtn = document.getElementById('landingHeroCarouselPrev');
+    const nextBtn = document.getElementById('landingHeroCarouselNext');
+    const dotsWrap = document.getElementById('landingHeroCarouselDots');
+
+    if (!carousel || !track || !prevBtn || !nextBtn || !dotsWrap) return;
+
+    const slides = Array.from(track.querySelectorAll('.landing-hero-carousel-slide'));
+    const dots = Array.from(dotsWrap.querySelectorAll('button'));
+    const total = slides.length;
+    let index = 0;
+    let timer = null;
+    let touchStartX = 0;
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const autoplayMs = prefersReducedMotion ? 0 : 6500;
+
+    function goTo(nextIndex) {
+        index = (nextIndex + total) % total;
+        track.style.transform = 'translateX(-' + (index * 100) + '%)';
+
+        slides.forEach(function (slide, slideIndex) {
+            const active = slideIndex === index;
+            slide.classList.toggle('is-active', active);
+            slide.setAttribute('aria-hidden', active ? 'false' : 'true');
+        });
+
+        dots.forEach(function (dot, dotIndex) {
+            const active = dotIndex === index;
+            dot.classList.toggle('is-active', active);
+            dot.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+    }
+
+    function stopAutoplay() {
+        if (timer) {
+            clearInterval(timer);
+            timer = null;
+        }
+    }
+
+    function startAutoplay() {
+        stopAutoplay();
+        if (!autoplayMs) return;
+        timer = setInterval(function () {
+            goTo(index + 1);
+        }, autoplayMs);
+    }
+
+    prevBtn.addEventListener('click', function () {
+        goTo(index - 1);
+        startAutoplay();
+    });
+
+    nextBtn.addEventListener('click', function () {
+        goTo(index + 1);
+        startAutoplay();
+    });
+
+    dots.forEach(function (dot) {
+        dot.addEventListener('click', function () {
+            goTo(parseInt(dot.getAttribute('data-slide') || '0', 10));
+            startAutoplay();
+        });
+    });
+
+    carousel.addEventListener('mouseenter', stopAutoplay);
+    carousel.addEventListener('mouseleave', startAutoplay);
+    carousel.addEventListener('focusin', stopAutoplay);
+    carousel.addEventListener('focusout', startAutoplay);
+
+    carousel.addEventListener('keydown', function (e) {
+        if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            goTo(index - 1);
+            startAutoplay();
+        } else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            goTo(index + 1);
+            startAutoplay();
+        }
+    });
+
+    carousel.addEventListener('touchstart', function (e) {
+        touchStartX = e.changedTouches[0].clientX;
+    }, { passive: true });
+
+    carousel.addEventListener('touchend', function (e) {
+        const delta = e.changedTouches[0].clientX - touchStartX;
+        if (Math.abs(delta) < 40) return;
+        goTo(delta > 0 ? index - 1 : index + 1);
+        startAutoplay();
+    }, { passive: true });
+
+    goTo(0);
+    startAutoplay();
+}
 
 function initStatusModal() {
     const modal = document.getElementById('statusModal');
@@ -257,19 +443,91 @@ function initPaymentReviewModal() {
     const modal = document.getElementById('paymentReviewModal');
     if (!modal) return;
 
-    const reviewStep = modal.querySelector('[data-step="review"]');
-    const rejectStep = modal.querySelector('[data-step="reject"]');
     const rejectForm = document.getElementById('paymentRejectForm');
     const rejectNotes = document.getElementById('paymentRejectNotes');
+    const rejectPanel = modal.querySelector('[data-reject-panel]');
+    const verifyPanel = modal.querySelector('[data-verify-panel]');
+    const verifyForm = modal.querySelector('[data-verify-form]');
+    const rejectActionBtn = modal.querySelector('[data-reject-action]');
+    const rejectActionLabel = modal.querySelector('[data-reject-action-label]');
+    const cancelRejectBtn = modal.querySelector('[data-cancel-reject]');
     const charCount = modal.querySelector('[data-char-count]');
     const receiptPreview = modal.querySelector('[data-receipt-preview]');
     const receiptOpen = modal.querySelector('.payment-receipt-open');
+    const receiptPanel = modal.querySelector('[data-receipt-panel]');
+    const reviewGrid = modal.querySelector('[data-payment-review-grid]');
+    const verifyNote = modal.querySelector('[data-verify-fields-note]');
+    const clearanceAlert = modal.querySelector('[data-clearance-alert]');
+    const clearanceAlertMessage = modal.querySelector('[data-clearance-alert-message]');
+    const verifySubmitBtn = modal.querySelector('#paymentVerifyForm button[type="submit"]');
     let activePaymentId = null;
+    let activeIsOnsite = false;
+    let rejectMode = false;
+    let clearanceBlocked = false;
 
-    function setStep(step) {
-        const showReview = step === 'review';
-        reviewStep.hidden = !showReview;
-        rejectStep.hidden = showReview;
+    function setClearanceGate(blocked, message, progress) {
+        clearanceBlocked = blocked === true || blocked === 1 || blocked === '1';
+        modal.classList.toggle('is-clearance-blocked', clearanceBlocked);
+
+        if (clearanceAlert) {
+            clearanceAlert.hidden = !clearanceBlocked;
+            clearanceAlert.style.display = clearanceBlocked ? '' : 'none';
+        }
+        if (clearanceAlertMessage) {
+            clearanceAlertMessage.textContent = clearanceBlocked
+                ? (message || 'Payment verification is blocked until all offices clear this request.')
+                : '';
+        }
+        if (verifySubmitBtn) {
+            verifySubmitBtn.disabled = clearanceBlocked;
+            verifySubmitBtn.title = clearanceBlocked
+                ? 'Online clearance must be completed before verifying payment'
+                : '';
+        }
+        if (verifyForm && !rejectMode) {
+            verifyForm.hidden = clearanceBlocked;
+        }
+        if (verifyPanel && !rejectMode) {
+            verifyPanel.hidden = clearanceBlocked;
+        }
+    }
+
+    function setRejectMode(enabled) {
+        rejectMode = !!enabled;
+        modal.classList.toggle('is-reject-mode', rejectMode);
+
+        if (rejectPanel) rejectPanel.hidden = !rejectMode;
+        if (verifyPanel) verifyPanel.hidden = rejectMode || clearanceBlocked;
+        if (verifyForm) verifyForm.hidden = rejectMode || clearanceBlocked;
+        if (cancelRejectBtn) cancelRejectBtn.hidden = !rejectMode;
+        if (clearanceAlert) {
+            clearanceAlert.hidden = rejectMode || !clearanceBlocked;
+            clearanceAlert.style.display = (!rejectMode && clearanceBlocked) ? '' : 'none';
+        }
+
+        const titleEl = document.getElementById('paymentModalTitle');
+        const eyebrowEl = modal.querySelector('.payment-modal-eyebrow');
+        if (titleEl) {
+            titleEl.textContent = rejectMode ? 'Reject Payment' : 'Review Payment';
+        }
+        if (eyebrowEl) {
+            eyebrowEl.textContent = rejectMode ? 'Rejection Feedback' : 'Payment Review';
+        }
+
+        if (rejectActionLabel) {
+            rejectActionLabel.textContent = rejectMode ? 'Send Rejection' : 'Reject Payment';
+        }
+        if (rejectActionBtn) {
+            const icon = rejectActionBtn.querySelector('i');
+            if (icon) {
+                icon.className = rejectMode ? 'fas fa-paper-plane' : 'fas fa-times-circle';
+            }
+        }
+
+        const orInput = document.getElementById('paymentOrNumber');
+        const dateInput = document.getElementById('paymentDatePaid');
+        if (orInput) orInput.required = !rejectMode && !clearanceBlocked;
+        if (dateInput) dateInput.required = !rejectMode && !clearanceBlocked;
     }
 
     function setField(name, value) {
@@ -285,16 +543,38 @@ function initPaymentReviewModal() {
         });
     }
 
+    function setOnsiteMode(isOnsite) {
+        activeIsOnsite = !!isOnsite;
+        modal.classList.toggle('is-onsite-payment', activeIsOnsite);
+        if (receiptPanel) {
+            receiptPanel.hidden = activeIsOnsite;
+        }
+        if (reviewGrid) {
+            reviewGrid.classList.toggle('payment-review-grid-onsite', activeIsOnsite);
+        }
+        if (verifyNote) {
+            verifyNote.textContent = activeIsOnsite
+                ? 'Enter the OR number and date of payment collected at the cashier before verifying this on-site payment.'
+                : 'Enter the OR number and date of payment before verifying.';
+        }
+    }
+
     function renderReceipt(url, isImage) {
-        receiptPreview.innerHTML = '';
-        if (!url) {
-            receiptPreview.innerHTML = '<div class="payment-receipt-empty"><i class="fas fa-file-image"></i><p>No receipt uploaded</p></div>';
-            receiptOpen.hidden = true;
+        if (!receiptPreview) {
             return;
         }
 
-        receiptOpen.href = url;
-        receiptOpen.hidden = false;
+        receiptPreview.innerHTML = '';
+        if (!url) {
+            receiptPreview.innerHTML = '<div class="payment-receipt-empty"><i class="fas fa-file-image"></i><p>No receipt uploaded</p></div>';
+            if (receiptOpen) receiptOpen.hidden = true;
+            return;
+        }
+
+        if (receiptOpen) {
+            receiptOpen.href = url;
+            receiptOpen.hidden = false;
+        }
 
         if (isImage) {
             const img = document.createElement('img');
@@ -314,6 +594,7 @@ function initPaymentReviewModal() {
 
     function openModal(button) {
         const data = button.dataset;
+        const isOnsite = data.isOnsite === '1';
 
         setField('request-number', data.requestNumber);
         setField('student-name', data.studentName);
@@ -325,13 +606,15 @@ function initPaymentReviewModal() {
 
         const referenceLabel = modal.querySelector('[data-reference-label]');
         if (referenceLabel) {
-            referenceLabel.textContent = data.isOnsite === '1' ? 'Payment Code' : 'Reference';
+            referenceLabel.textContent = isOnsite ? 'Payment Code' : 'Reference';
         }
-        setField('reject-request-number', data.requestNumber);
-        setField('reject-student-name', data.studentName);
-        setField('reject-amount', data.amount);
 
-        renderReceipt(data.receiptUrl || '', data.receiptIsImage === '1');
+        setOnsiteMode(isOnsite);
+        if (!isOnsite) {
+            renderReceipt(data.receiptUrl || '', data.receiptIsImage === '1');
+        } else if (receiptOpen) {
+            receiptOpen.hidden = true;
+        }
 
         if (rejectForm) {
             rejectForm.reset();
@@ -344,14 +627,25 @@ function initPaymentReviewModal() {
         const orInput = document.getElementById('paymentOrNumber');
         const dateInput = document.getElementById('paymentDatePaid');
         if (orInput) orInput.value = '';
-        if (dateInput) dateInput.value = '';
+        if (dateInput) dateInput.value = new Date().toISOString().slice(0, 10);
 
         setPaymentId(data.paymentId);
+        setClearanceGate(
+            data.clearanceRequired === '1' && data.clearanceBlocked === '1',
+            data.clearanceMessage || '',
+            data.clearanceProgress || ''
+        );
+        setRejectMode(false);
 
-        setStep('review');
         modal.classList.add('is-open');
         modal.setAttribute('aria-hidden', 'false');
         document.body.style.overflow = 'hidden';
+
+        if (!clearanceBlocked && orInput) {
+            window.setTimeout(function () {
+                orInput.focus();
+            }, 50);
+        }
     }
 
     function closeModal() {
@@ -359,7 +653,8 @@ function initPaymentReviewModal() {
         modal.setAttribute('aria-hidden', 'true');
         document.body.style.overflow = '';
         setPaymentId(null);
-        setStep('review');
+        setClearanceGate(false, '', '');
+        setRejectMode(false);
     }
 
     document.querySelectorAll('.payment-review-btn').forEach(function (btn) {
@@ -372,13 +667,31 @@ function initPaymentReviewModal() {
         el.addEventListener('click', closeModal);
     });
 
-    modal.querySelector('[data-goto-reject-step]')?.addEventListener('click', function () {
-        setStep('reject');
-        rejectNotes?.focus();
+    rejectActionBtn?.addEventListener('click', function () {
+        if (!rejectMode) {
+            setRejectMode(true);
+            window.setTimeout(function () {
+                rejectNotes?.focus();
+            }, 50);
+            return;
+        }
+
+        if (!rejectForm || !rejectNotes) return;
+        if (!rejectNotes.value.trim()) {
+            rejectNotes.focus();
+            return;
+        }
+        if (typeof rejectForm.requestSubmit === 'function') {
+            rejectForm.requestSubmit();
+        } else {
+            rejectForm.submit();
+        }
     });
 
-    modal.querySelector('[data-goto-review-step]')?.addEventListener('click', function () {
-        setStep('review');
+    cancelRejectBtn?.addEventListener('click', function () {
+        setRejectMode(false);
+        const orInput = document.getElementById('paymentOrNumber');
+        orInput?.focus();
     });
 
     modal.querySelectorAll('.reject-reason-chip').forEach(function (chip) {
@@ -409,6 +722,14 @@ function initPaymentReviewModal() {
     });
 
     modal.querySelector('#paymentVerifyForm')?.addEventListener('submit', function (e) {
+        if (rejectMode || clearanceBlocked) {
+            e.preventDefault();
+            if (clearanceBlocked) {
+                alert('Online clearance must be completed by all offices before verifying this payment.');
+            }
+            return;
+        }
+
         const orInput = document.getElementById('paymentOrNumber');
         const dateInput = document.getElementById('paymentDatePaid');
         const orNumber = orInput?.value.trim() || '';
@@ -416,6 +737,9 @@ function initPaymentReviewModal() {
 
         if (!orNumber || !paymentDate) {
             e.preventDefault();
+            alert(activeIsOnsite
+                ? 'Enter the OR number and date of payment before verifying this on-site payment.'
+                : 'Enter the OR number and date of payment before verifying.');
             if (!orNumber) {
                 orInput?.focus();
             } else {
@@ -431,6 +755,10 @@ function initPaymentReviewModal() {
 
     document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape' && modal.classList.contains('is-open')) {
+            if (rejectMode) {
+                setRejectMode(false);
+                return;
+            }
             closeModal();
         }
     });

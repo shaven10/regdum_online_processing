@@ -87,6 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
 $pageTitle = 'Payment';
 $activeNav = 'requests';
+$bankTransferAvailable = bankTransferDetailsConfigured();
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
@@ -126,7 +127,9 @@ require_once __DIR__ . '/../includes/header.php';
                 After you submit, the app will generate a <strong>6-digit payment code</strong>. Present that code at the cashier so they can locate your request and accept payment on-site. No receipt upload is needed.
             </div>
 
-            <div id="onlinePaymentFields" hidden>
+            <div id="bankTransferFields" hidden>
+                <?= renderStudentBankTransferDetailsHtml() ?>
+
                 <div class="form-group">
                     <label for="reference_number">Reference / Transaction Number *</label>
                     <input type="text" id="reference_number" name="reference_number" placeholder="Enter payment reference number">
@@ -135,13 +138,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="form-group">
                     <label for="receipt">Upload Payment Receipt *</label>
                     <input type="file" id="receipt" name="receipt" accept=".pdf,.jpg,.jpeg,.png">
-                    <small class="text-muted">Required for GCash and bank transfer</small>
-                </div>
-
-                <div class="alert alert-info">
-                    <i class="fas fa-info-circle"></i>
-                    For GCash: Send payment to <strong>09XX-XXX-XXXX</strong> (<?= e(APP_NAME) ?>).
-                    For bank transfer: Account # <strong>1234-5678-9012</strong> (<?= e(APP_NAME) ?>).
+                    <small class="text-muted">Required for bank transfer</small>
                 </div>
             </div>
 
@@ -158,11 +155,12 @@ require_once __DIR__ . '/../includes/header.php';
     if (!form) return;
 
     const methodInputs = form.querySelectorAll('input[name="payment_method"]');
-    const onlineFields = document.getElementById('onlinePaymentFields');
+    const bankTransferFields = document.getElementById('bankTransferFields');
     const onsiteInfo = document.getElementById('onsitePaymentInfo');
     const referenceInput = document.getElementById('reference_number');
     const receiptInput = document.getElementById('receipt');
     const submitBtn = document.getElementById('submitPaymentBtn');
+    const bankTransferAvailable = <?= $bankTransferAvailable ? 'true' : 'false' ?>;
 
     function selectedMethod() {
         const checked = form.querySelector('input[name="payment_method"]:checked');
@@ -172,9 +170,12 @@ require_once __DIR__ . '/../includes/header.php';
     function syncPaymentFields() {
         const method = selectedMethod();
         const isOnsite = method === 'onsite_payment';
+        const isBankTransfer = method === 'bank_transfer';
 
         onsiteInfo.hidden = !isOnsite;
-        onlineFields.hidden = isOnsite;
+        if (bankTransferFields) {
+            bankTransferFields.hidden = !isBankTransfer;
+        }
 
         if (referenceInput) {
             referenceInput.required = !isOnsite;
@@ -185,7 +186,7 @@ require_once __DIR__ . '/../includes/header.php';
             if (isOnsite) receiptInput.value = '';
         }
 
-        submitBtn.disabled = method === '';
+        submitBtn.disabled = method === '' || (isBankTransfer && !bankTransferAvailable);
         submitBtn.innerHTML = isOnsite
             ? '<i class="fas fa-barcode"></i> Generate Payment Code'
             : '<i class="fas fa-check"></i> Submit Payment';

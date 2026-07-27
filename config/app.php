@@ -2,7 +2,7 @@
 define('APP_NAME', 'Office of the Registrar');
 define('APP_TAGLINE', 'J.H. Cerilles State College');
 define('APP_SYSTEM_NAME', 'Online Document Request');
-define('APP_URL', 'http://localhost/regdum_ol_docs_prcsng');
+define('APP_URL', 'http://localhost/regdum_online_processing');
 define('APP_ROOT', dirname(__DIR__));
 define('APP_LOGO', APP_URL . '/assets/images/logo.png');
 define('UPLOAD_PATH', APP_ROOT . '/uploads');

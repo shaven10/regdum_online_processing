@@ -22,22 +22,174 @@ function ensurePaymentMethodSchema(): void {
     if ($column && stripos((string) $column['Type'], 'enum') !== false) {
         $db->exec("ALTER TABLE payments MODIFY payment_method VARCHAR(30) NOT NULL");
     }
+
+    migratePaymentMethodsFaqText();
+}
+
+function migratePaymentMethodsFaqText(): void {
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+
+    $db = getDB();
+    $table = $db->query("SHOW TABLES LIKE 'faqs'")->fetch();
+    if (!$table) {
+        return;
+    }
+
+    $db->prepare("UPDATE faqs
+        SET answer = ?
+        WHERE question = ?
+          AND answer LIKE ?")
+       ->execute([
+           'We accept bank transfer and on-site payment at the cashier. For on-site payment, the app generates a 6-digit reference code for the cashier to locate your request.',
+           'What payment methods are accepted?',
+           '%GCash%',
+       ]);
 }
 
 function paymentMethodOptions(): array {
     return [
-        'gcash'          => 'GCash',
         'bank_transfer'  => 'Bank Transfer',
         'onsite_payment' => 'On-Site Payment',
     ];
 }
 
 function paymentMethodLabel(?string $method): string {
-    return paymentMethodOptions()[$method ?? ''] ?? ucwords(str_replace('_', ' ', (string) $method));
+    $legacyLabels = [
+        'gcash' => 'GCash',
+    ];
+
+    return paymentMethodOptions()[$method ?? '']
+        ?? $legacyLabels[$method ?? '']
+        ?? ucwords(str_replace('_', ' ', (string) $method));
 }
 
 function isOnsitePaymentMethod(?string $method): bool {
     return ($method ?? '') === 'onsite_payment';
+}
+
+function isBankTransferPaymentMethod(?string $method): bool {
+    return ($method ?? '') === 'bank_transfer';
+}
+
+function ensurePaymentSettingsAvailable(): void {
+    if (!function_exists('getAppSetting')) {
+        require_once __DIR__ . '/compliance.php';
+    }
+}
+
+function defaultBankTransferDetails(): array {
+    return [
+        'bank_name' => '',
+        'account_name' => '',
+        'account_number' => '',
+        'branch' => '',
+        'instructions' => '',
+    ];
+}
+
+function getBankTransferDetails(): array {
+    ensurePaymentSettingsAvailable();
+    $raw = getAppSetting('bank_transfer_details', '');
+    if ($raw === '') {
+        return defaultBankTransferDetails();
+    }
+
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        return defaultBankTransferDetails();
+    }
+
+    return array_merge(defaultBankTransferDetails(), array_intersect_key($decoded, defaultBankTransferDetails()));
+}
+
+function bankTransferDetailsConfigured(): bool {
+    $details = getBankTransferDetails();
+
+    return trim((string) ($details['bank_name'] ?? '')) !== ''
+        && trim((string) ($details['account_name'] ?? '')) !== ''
+        && trim((string) ($details['account_number'] ?? '')) !== '';
+}
+
+function validateBankTransferDetailsInput(array $input): array {
+    $details = [
+        'bank_name' => trim((string) ($input['bank_name'] ?? '')),
+        'account_name' => trim((string) ($input['account_name'] ?? '')),
+        'account_number' => trim((string) ($input['account_number'] ?? '')),
+        'branch' => trim((string) ($input['branch'] ?? '')),
+        'instructions' => trim((string) ($input['instructions'] ?? '')),
+    ];
+    $errors = [];
+
+    if ($details['bank_name'] === '') {
+        $errors[] = 'Bank name is required.';
+    }
+    if ($details['account_name'] === '') {
+        $errors[] = 'Account name is required.';
+    }
+    if ($details['account_number'] === '') {
+        $errors[] = 'Account number is required.';
+    }
+    if (strlen($details['bank_name']) > 120) {
+        $errors[] = 'Bank name must be 120 characters or less.';
+    }
+    if (strlen($details['account_name']) > 120) {
+        $errors[] = 'Account name must be 120 characters or less.';
+    }
+    if (strlen($details['account_number']) > 60) {
+        $errors[] = 'Account number must be 60 characters or less.';
+    }
+    if (strlen($details['branch']) > 120) {
+        $errors[] = 'Branch must be 120 characters or less.';
+    }
+    if (strlen($details['instructions']) > 500) {
+        $errors[] = 'Instructions must be 500 characters or less.';
+    }
+
+    return [$details, $errors];
+}
+
+function saveBankTransferDetails(array $details): void {
+    ensurePaymentSettingsAvailable();
+    setAppSetting(
+        'bank_transfer_details',
+        json_encode($details, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+    );
+}
+
+function renderStudentBankTransferDetailsHtml(): string {
+    if (!bankTransferDetailsConfigured()) {
+        return '<div class="alert alert-warning bank-transfer-details-alert">'
+            . '<i class="fas fa-exclamation-triangle"></i> '
+            . 'Bank transfer details are not available yet. Please contact the cashier office before sending payment.'
+            . '</div>';
+    }
+
+    $details = getBankTransferDetails();
+    $html = '<div class="bank-transfer-details">';
+    $html .= '<h4><i class="fas fa-university"></i> Bank Transfer Details</h4>';
+    $html .= '<dl class="bank-transfer-details-list">';
+    $html .= '<div><dt>Bank</dt><dd>' . e($details['bank_name']) . '</dd></div>';
+    $html .= '<div><dt>Account Name</dt><dd>' . e($details['account_name']) . '</dd></div>';
+    $html .= '<div><dt>Account Number</dt><dd><strong>' . e($details['account_number']) . '</strong></dd></div>';
+
+    if ($details['branch'] !== '') {
+        $html .= '<div><dt>Branch</dt><dd>' . e($details['branch']) . '</dd></div>';
+    }
+
+    $html .= '</dl>';
+
+    if ($details['instructions'] !== '') {
+        $html .= '<p class="bank-transfer-details-note">' . nl2br(e($details['instructions'])) . '</p>';
+    }
+
+    $html .= '<p class="text-muted bank-transfer-details-help">Transfer the exact amount shown above, then enter your reference number and upload the receipt.</p>';
+    $html .= '</div>';
+
+    return $html;
 }
 
 function generateOnsitePaymentReference(): string {
@@ -64,6 +216,10 @@ function validateStudentPaymentSubmission(string $method, ?string $referenceNumb
 
     if (isOnsitePaymentMethod($method)) {
         return null;
+    }
+
+    if (isBankTransferPaymentMethod($method) && !bankTransferDetailsConfigured()) {
+        return 'Bank transfer details are not available yet. Please contact the cashier office or choose on-site payment.';
     }
 
     if (trim((string) $referenceNumber) === '') {
@@ -124,6 +280,61 @@ function validatePaymentVerificationFields(?string $orNumber, ?string $paymentDa
     return null;
 }
 
+/**
+ * When online clearance is assigned and incomplete, block cashier payment verification.
+ *
+ * @return array{required:bool,complete:bool,blocked:bool,cleared:int,total:int,message:?string}
+ */
+function getPaymentClearanceGate(int $requestId): array {
+    require_once __DIR__ . '/compliance.php';
+    require_once __DIR__ . '/clearance.php';
+
+    $required = hasAssignedRequirement($requestId, 'online_clearance');
+    if (!$required) {
+        return [
+            'required' => false,
+            'complete' => true,
+            'blocked' => false,
+            'cleared' => 0,
+            'total' => 0,
+            'message' => null,
+        ];
+    }
+
+    $progress = getClearanceProgress($requestId);
+    $complete = isClearanceComplete($requestId);
+    // No clearance office rows means nothing to wait on — do not block payment.
+    if ((int) $progress['total'] <= 0) {
+        return [
+            'required' => false,
+            'complete' => true,
+            'blocked' => false,
+            'cleared' => 0,
+            'total' => 0,
+            'message' => null,
+        ];
+    }
+
+    $message = $complete
+        ? null
+        : 'Online clearance is incomplete (' . (int) $progress['cleared'] . '/' . (int) $progress['total']
+            . ' offices cleared). Payment can be verified only after all offices clear.';
+
+    return [
+        'required' => true,
+        'complete' => $complete,
+        'blocked' => !$complete,
+        'cleared' => (int) $progress['cleared'],
+        'total' => (int) $progress['total'],
+        'message' => $message,
+    ];
+}
+
+function paymentVerificationBlockedByClearance(int $requestId): ?string {
+    $gate = getPaymentClearanceGate($requestId);
+    return $gate['blocked'] ? $gate['message'] : null;
+}
+
 function getPaymentStats(): array {
     $db = getDB();
     return [
@@ -152,6 +363,7 @@ function getPaymentsList(string $status = '', string $search = ''): array {
     }
 
     $sql = 'SELECT p.*, r.request_number, r.total_amount as request_amount, r.status as request_status,
+                   r.request_channel,
                    u.first_name, u.last_name, u.student_id, u.email,
                    v.first_name as verifier_first, v.last_name as verifier_last
             FROM payments p
@@ -184,12 +396,22 @@ function processPaymentAction(int $paymentId, string $action, int $verifierId, s
     }
 
     $db = getDB();
-    $stmt = $db->prepare('SELECT p.*, r.request_number, r.user_id FROM payments p JOIN requests r ON p.request_id = r.id WHERE p.id = ?');
+    $stmt = $db->prepare('SELECT p.*, r.request_number, r.user_id, r.request_channel, r.status as request_status
+        FROM payments p
+        JOIN requests r ON p.request_id = r.id
+        WHERE p.id = ?');
     $stmt->execute([$paymentId]);
     $payment = $stmt->fetch();
 
     if (!$payment || $payment['status'] !== 'pending') {
         return false;
+    }
+
+    if ($action === 'verify') {
+        $clearanceBlock = paymentVerificationBlockedByClearance((int) $payment['request_id']);
+        if ($clearanceBlock !== null) {
+            return false;
+        }
     }
 
     $status = $action === 'verify' ? 'verified' : 'rejected';
