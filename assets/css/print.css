@@ -259,21 +259,16 @@
 }
 
 @media print {
+    html,
     body.claim-stub-page,
     body.onsite-slip-page {
         background: #fff !important;
         padding: 0 !important;
         margin: 0 !important;
-        width: var(--regdum-slip-width) !important;
-        overflow: hidden;
-    }
-
-    body.claim-stub-page {
-        height: var(--claim-stub-height) !important;
-    }
-
-    body.onsite-slip-page {
-        height: var(--onsite-slip-height) !important;
+        width: 100% !important;
+        height: auto !important;
+        min-height: 0 !important;
+        overflow: visible;
     }
 
     body.claim-stub-page .no-print,
@@ -285,11 +280,15 @@
 
     body.claim-stub-page .claim-stub-sheet,
     body.onsite-slip-page .onsite-slip-sheet {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
         width: var(--regdum-slip-width) !important;
         max-width: none;
         border: none;
         box-shadow: none;
-        margin: 0;
+        margin: 0 auto !important;
         padding: var(--regdum-slip-pad-y) var(--regdum-slip-pad-x);
         page-break-inside: avoid;
     }
@@ -304,12 +303,12 @@
 }
 
 @page claim-stub-page {
-    size: 4.25in 6.5in;
+    size: auto;
     margin: 0;
 }
 
 @page onsite-request-slip {
-    size: 4.25in 6.5in;
+    size: auto;
     margin: 0;
 }
 

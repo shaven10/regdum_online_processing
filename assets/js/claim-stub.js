@@ -7,7 +7,7 @@
     const requestNumber = sheet.dataset.requestNumber || 'claim-stub';
     const safeName = requestNumber.replace(/[^\w\-]+/g, '_');
 
-    // Online claim stub document size: 4.25in x 6.5in
+    // Slip document size: 4.25in x 6.5in
     const SLIP_WIDTH_IN = parseFloat(sheet.dataset.slipWidth || '4.25') || 4.25;
     const SLIP_HEIGHT_IN = parseFloat(sheet.dataset.slipHeight || '6.5') || 6.5;
     const SLIP_WIDTH_MM = SLIP_WIDTH_IN * 25.4;
