@@ -41,7 +41,20 @@ if (!array_key_exists($enrollmentStatus, enrollmentStatusOptions())) {
 }
 
 $docTypes = getAvailableDocumentTypesForEnrollment($enrollmentStatus);
-$searchResults = $search !== '' ? searchStudentsForOnsiteRequest($search) : [];
+$searchResults = searchStudentsForOnsiteRequest($search);
+$isFilteredStudentSearch = $search !== '';
+$expandAllOnsiteSections = !empty($errors);
+$onsiteSectionExpanded = static function (string $section) use ($expandAllOnsiteSections, $selectedStudent): bool {
+    if ($expandAllOnsiteSections) {
+        return true;
+    }
+
+    return match ($section) {
+        'students' => !$selectedStudent,
+        'requestor', 'documents' => true,
+        default => false,
+    };
+};
 
 $selectedCourseId = (int) ($selectedStudent['course_id'] ?? 0);
 $programs = getAcademicProgramsForStudent($selectedCourseId);
@@ -49,7 +62,7 @@ $selectedCampusId = (int) ($selectedStudent['origin_campus_id'] ?? 0);
 $campuses = getCampusesForStudent($selectedCampusId);
 $isGraduatedStatus = isGraduatedEnrollment($enrollmentStatus);
 $isInactiveStatus = isInactiveEnrollment($enrollmentStatus);
-$needsCampusFields = $isGraduatedStatus || $isInactiveStatus;
+$isEnrolledStatus = isEnrolledEnrollment($enrollmentStatus);
 
 $requestorDefaults = [
     'student_user_id' => $selectedUserId,
@@ -102,7 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         : 'enrolled';
     $isGraduatedStatus = isGraduatedEnrollment($enrollmentStatus);
     $isInactiveStatus = isInactiveEnrollment($enrollmentStatus);
-    $needsCampusFields = $isGraduatedStatus || $isInactiveStatus;
+    $isEnrolledStatus = isEnrolledEnrollment($enrollmentStatus);
     $docTypes = getAvailableDocumentTypesForEnrollment($enrollmentStatus);
     $docTypesById = [];
     foreach ($docTypes as $docTypeRow) {
@@ -459,52 +472,89 @@ require_once __DIR__ . '/../includes/header.php';
             <div class="alert alert-error"><i class="fas fa-exclamation-circle"></i> <?= e($errors['general']) ?></div>
         <?php endif; ?>
 
-        <form method="GET" class="filter-bar onsite-student-search">
-            <input type="text" name="search" placeholder="Search existing student by name, ID, or email..." value="<?= e($search) ?>" autofocus>
-            <input type="hidden" name="enrollment_status" value="<?= e($enrollmentStatus) ?>">
-            <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-search"></i> Search</button>
-            <?php if ($selectedStudent || $search !== ''): ?>
-                <a href="<?= APP_URL ?>/registrar/new-onsite-request.php" class="btn btn-outline btn-sm">Clear</a>
-            <?php endif; ?>
-        </form>
+        <div class="onsite-student-picker form-section-collapsible request-form-step <?= $onsiteSectionExpanded('students') ? 'is-expanded' : 'is-collapsed' ?>" data-form-section-collapsible>
+            <button type="button"
+                class="form-section-toggle"
+                aria-expanded="<?= $onsiteSectionExpanded('students') ? 'true' : 'false' ?>"
+                aria-controls="onsiteSectionStudents">
+                <span class="form-section-toggle-label">
+                    <span class="request-step-icon" aria-hidden="true"><i class="fas fa-users"></i></span>
+                    <span class="form-section-title">Existing Students</span>
+                </span>
+                <i class="fas fa-chevron-down form-section-chevron" aria-hidden="true"></i>
+            </button>
+            <div class="form-section-body" id="onsiteSectionStudents">
+                <p class="text-muted onsite-student-picker-note">
+                    Select a saved student record, or search below to filter the list.
+                </p>
 
-        <?php if ($search !== ''): ?>
-            <?php if (empty($searchResults)): ?>
+            <form method="GET" class="filter-bar onsite-student-search">
+                <input type="text" name="search" placeholder="Search by name, student ID, email, or course..." value="<?= e($search) ?>" autofocus>
+                <input type="hidden" name="enrollment_status" value="<?= e($enrollmentStatus) ?>">
+                <?php if ($selectedUserId > 0): ?>
+                    <input type="hidden" name="student_user_id" value="<?= $selectedUserId ?>">
+                <?php endif; ?>
+                <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-search"></i> Search</button>
+                <?php if ($selectedStudent || $isFilteredStudentSearch): ?>
+                    <a href="<?= APP_URL ?>/registrar/new-onsite-request.php" class="btn btn-outline btn-sm">Clear</a>
+                <?php endif; ?>
+            </form>
+
+            <?php if ($isFilteredStudentSearch && empty($searchResults)): ?>
                 <div class="alert alert-warning">No matching students found. Enter requestor details below to create a walk-in record.</div>
+            <?php elseif (empty($searchResults)): ?>
+                <div class="empty-state onsite-student-empty">
+                    <i class="fas fa-user-slash"></i>
+                    <p>No student records saved in the system yet.</p>
+                </div>
             <?php else: ?>
-                <div class="card" style="margin-bottom:1rem;box-shadow:none;border:1px solid var(--gray-200)">
-                    <div class="card-body" style="padding:.75rem 1rem">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Student ID</th>
-                                    <th>Name</th>
-                                    <th>Email</th>
-                                    <th>Status</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($searchResults as $row): ?>
-                                    <tr>
-                                        <td><strong><?= e($row['student_id'] ?? '—') ?></strong></td>
-                                        <td><?= e(trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''))) ?></td>
-                                        <td><?= e($row['email'] ?? '—') ?></td>
-                                        <td><?= e(enrollmentStatusLabel($row['enrollment_status'] ?? null)) ?></td>
-                                        <td>
+                <?php if (!$isFilteredStudentSearch): ?>
+                    <p class="text-muted onsite-student-list-note">Showing up to 50 saved students. Search to narrow the list.</p>
+                <?php endif; ?>
+                <div class="table-wrap onsite-student-results">
+                    <table class="data-table data-table-responsive">
+                        <thead>
+                            <tr>
+                                <th>Student ID</th>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Course</th>
+                                <th>Year</th>
+                                <th>Status</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($searchResults as $row): ?>
+                                <?php
+                                    $rowSelected = $selectedUserId > 0 && (int) $row['id'] === $selectedUserId;
+                                    $fullName = trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''));
+                                ?>
+                                <tr class="<?= $rowSelected ? 'is-selected' : '' ?>">
+                                    <td data-label="Student ID"><strong><?= e($row['student_id'] ?? '—') ?></strong></td>
+                                    <td data-label="Name"><?= e($fullName) ?></td>
+                                    <td data-label="Email"><?= e($row['email'] ?? '—') ?></td>
+                                    <td data-label="Course"><?= e($row['course'] ?? '—') ?></td>
+                                    <td data-label="Year"><?= e($row['year_level'] ?? '—') ?></td>
+                                    <td data-label="Status"><?= e(enrollmentStatusLabel($row['enrollment_status'] ?? null)) ?></td>
+                                    <td data-label="Action">
+                                        <?php if ($rowSelected): ?>
+                                            <span class="onsite-student-selected-pill"><i class="fas fa-check"></i> Selected</span>
+                                        <?php else: ?>
                                             <a class="btn btn-sm btn-primary"
-                                               href="?student_user_id=<?= (int) $row['id'] ?>&enrollment_status=<?= urlencode((string) ($row['enrollment_status'] ?? 'enrolled')) ?>">
+                                               href="?student_user_id=<?= (int) $row['id'] ?>&enrollment_status=<?= urlencode((string) ($row['enrollment_status'] ?? 'enrolled')) ?><?= $search !== '' ? '&search=' . urlencode($search) : '' ?>">
                                                 Select
                                             </a>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
                 </div>
             <?php endif; ?>
-        <?php endif; ?>
+            </div>
+        </div>
 
         <?php if ($selectedStudent): ?>
             <div class="alert alert-info" style="margin-bottom:1rem">
@@ -525,8 +575,18 @@ require_once __DIR__ . '/../includes/header.php';
             <?= csrfField() ?>
             <input type="hidden" name="student_user_id" value="<?= (int) ($requestorDefaults['student_user_id'] ?? 0) ?>">
 
-            <section class="form-section request-form-step">
-                <h3><span class="request-step-num">1</span> Requestor</h3>
+            <section class="form-section request-form-step form-section-collapsible <?= $onsiteSectionExpanded('requestor') ? 'is-expanded' : 'is-collapsed' ?>" data-form-section-collapsible>
+                <button type="button"
+                    class="form-section-toggle"
+                    aria-expanded="<?= $onsiteSectionExpanded('requestor') ? 'true' : 'false' ?>"
+                    aria-controls="onsiteSectionRequestor">
+                    <span class="form-section-toggle-label">
+                        <span class="request-step-num">1</span>
+                        <span class="form-section-title">Requestor</span>
+                    </span>
+                    <i class="fas fa-chevron-down form-section-chevron" aria-hidden="true"></i>
+                </button>
+                <div class="form-section-body" id="onsiteSectionRequestor">
                 <div class="form-row">
                     <div class="form-group">
                         <label for="student_id">Student / Requestor ID</label>
@@ -571,94 +631,164 @@ require_once __DIR__ . '/../includes/header.php';
                         <input type="email" id="email" name="email" value="<?= e($requestorDefaults['email'] ?? '') ?>" placeholder="Optional — auto-generated if blank for new walk-ins">
                         <?php if (!empty($errors['email'])): ?><span class="field-error"><?= e($errors['email']) ?></span><?php endif; ?>
                     </div>
-                    <div class="form-group">
-                        <label for="course_id">Course / Program</label>
-                        <select id="course_id" name="course_id">
-                            <option value="">— Select course/program —</option>
-                            <?php foreach ($programs as $program): ?>
-                                <option value="<?= (int) $program['id'] ?>" <?= (int) ($requestorDefaults['course_id'] ?? 0) === (int) $program['id'] ? 'selected' : '' ?>>
-                                    <?= e($program['name']) ?> (<?= e($program['code']) ?>)
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                        <?php if (!empty($errors['course_id'])): ?><span class="field-error"><?= e($errors['course_id']) ?></span><?php endif; ?>
-                    </div>
-                </div>
-                <div class="form-row" id="onsiteYearLevelRow" <?= ($isGraduatedStatus || $isInactiveStatus) ? 'hidden' : '' ?>>
-                    <div class="form-group">
-                        <label for="year_level">Year Level</label>
-                        <select id="year_level" name="year_level" <?= ($isGraduatedStatus || $isInactiveStatus) ? 'disabled' : '' ?>>
-                            <option value="">— Select year level —</option>
-                            <?php foreach (yearLevelOptions() as $yearValue => $yearLabel): ?>
-                                <option value="<?= e($yearValue) ?>" <?= ($requestorDefaults['year_level'] ?? '') === $yearValue ? 'selected' : '' ?>>
-                                    <?= e($yearLabel) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                        <?php if (!empty($errors['year_level'])): ?><span class="field-error"><?= e($errors['year_level']) ?></span><?php endif; ?>
-                    </div>
                 </div>
 
-                <div class="form-row" id="onsiteGraduatedFields" <?= $isGraduatedStatus ? '' : 'hidden' ?>>
-                    <div class="form-group">
-                        <label for="year_graduated">Year of Graduation *</label>
-                        <select id="year_graduated" name="year_graduated" <?= $isGraduatedStatus ? 'required' : 'disabled' ?>>
-                            <option value="">— Select year —</option>
-                            <?php foreach (yearGraduatedOptions() as $yearValue => $yearLabel): ?>
-                                <option value="<?= e($yearValue) ?>" <?= (int) ($requestorDefaults['year_graduated'] ?? 0) === (int) $yearValue ? 'selected' : '' ?>>
-                                    <?= e($yearLabel) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                        <?php if (!empty($errors['year_graduated'])): ?><span class="field-error"><?= e($errors['year_graduated']) ?></span><?php endif; ?>
-                    </div>
-                </div>
+                <input type="hidden" name="course_id" id="course_id" value="<?= (int) ($requestorDefaults['course_id'] ?? 0) ?>">
+                <input type="hidden" name="origin_campus_id" id="origin_campus_id" value="<?= (int) ($requestorDefaults['origin_campus_id'] ?? 0) ?>">
 
-                <div class="form-row" id="onsiteInactiveFields" <?= $isInactiveStatus ? '' : 'hidden' ?>>
-                    <div class="form-group">
-                        <label for="last_school_year">Last School Year Attended *</label>
-                        <select id="last_school_year" name="last_school_year" <?= $isInactiveStatus ? 'required' : 'disabled' ?>>
-                            <option value="">— Select school year —</option>
-                            <?php foreach (schoolYearOptions() as $yearValue => $yearLabel): ?>
-                                <option value="<?= e($yearValue) ?>" <?= ($requestorDefaults['last_school_year'] ?? '') === $yearValue ? 'selected' : '' ?>>
-                                    <?= e($yearLabel) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                        <?php if (!empty($errors['last_school_year'])): ?><span class="field-error"><?= e($errors['last_school_year']) ?></span><?php endif; ?>
+                <div class="onsite-academic-fields">
+                    <div id="onsiteAcademicEnrolled"
+                        class="onsite-academic-panel academic-status-panel"
+                        data-enrollment-panel="enrolled"
+                        style="display: <?= $isEnrolledStatus ? 'block' : 'none' ?>;">
+                        <p class="text-muted academic-panel-note">Provide current enrollment details.</p>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="onsite_course_id_enrolled">Course / Program</label>
+                                <select id="onsite_course_id_enrolled" data-course-select="enrolled" <?= $isEnrolledStatus ? '' : 'disabled' ?>>
+                                    <option value="">— Select course/program —</option>
+                                    <?php foreach ($programs as $program): ?>
+                                        <option value="<?= (int) $program['id'] ?>" <?= (int) ($requestorDefaults['course_id'] ?? 0) === (int) $program['id'] ? 'selected' : '' ?>>
+                                            <?= e($program['name']) ?> (<?= e($program['code']) ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="year_level">Year Level</label>
+                                <select id="year_level" name="year_level" <?= $isEnrolledStatus ? '' : 'disabled' ?>>
+                                    <option value="">— Select year level —</option>
+                                    <?php foreach (yearLevelOptions() as $yearValue => $yearLabel): ?>
+                                        <option value="<?= e($yearValue) ?>" <?= ($requestorDefaults['year_level'] ?? '') === $yearValue ? 'selected' : '' ?>>
+                                            <?= e($yearLabel) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <?php if (!empty($errors['year_level'])): ?><span class="field-error"><?= e($errors['year_level']) ?></span><?php endif; ?>
+                            </div>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label for="last_semester">Semester Attended *</label>
-                        <select id="last_semester" name="last_semester" <?= $isInactiveStatus ? 'required' : 'disabled' ?>>
-                            <option value="">— Select semester —</option>
-                            <?php foreach (semesterOptions() as $semValue => $semLabel): ?>
-                                <option value="<?= e($semValue) ?>" <?= ($requestorDefaults['last_semester'] ?? '') === $semValue ? 'selected' : '' ?>>
-                                    <?= e($semLabel) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                        <?php if (!empty($errors['last_semester'])): ?><span class="field-error"><?= e($errors['last_semester']) ?></span><?php endif; ?>
-                    </div>
-                </div>
 
-                <div class="form-row" id="onsiteCampusRow" <?= $needsCampusFields ? '' : 'hidden' ?>>
-                    <div class="form-group">
-                        <label for="origin_campus_id">Campus *</label>
-                        <select id="origin_campus_id" name="origin_campus_id" <?= $needsCampusFields ? 'required' : 'disabled' ?>>
-                            <option value="">— Select campus —</option>
-                            <?php foreach ($campuses as $campus): ?>
-                                <option value="<?= (int) $campus['id'] ?>" <?= (int) ($requestorDefaults['origin_campus_id'] ?? 0) === (int) $campus['id'] ? 'selected' : '' ?>>
-                                    <?= e($campus['name']) ?> (<?= e($campus['code']) ?>)
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                        <?php if (!empty($errors['origin_campus_id'])): ?><span class="field-error"><?= e($errors['origin_campus_id']) ?></span><?php endif; ?>
+                    <div id="onsiteAcademicGraduated"
+                        class="onsite-academic-panel academic-status-panel"
+                        data-enrollment-panel="graduated"
+                        style="display: <?= $isGraduatedStatus ? 'block' : 'none' ?>;">
+                        <p class="text-muted academic-panel-note">Provide graduation details.</p>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="onsite_course_id_graduated">Course / Program</label>
+                                <select id="onsite_course_id_graduated" data-course-select="graduated" <?= $isGraduatedStatus ? '' : 'disabled' ?>>
+                                    <option value="">— Select course/program —</option>
+                                    <?php foreach ($programs as $program): ?>
+                                        <option value="<?= (int) $program['id'] ?>" <?= (int) ($requestorDefaults['course_id'] ?? 0) === (int) $program['id'] ? 'selected' : '' ?>>
+                                            <?= e($program['name']) ?> (<?= e($program['code']) ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="year_graduated">Year of Graduation *</label>
+                                <select id="year_graduated" name="year_graduated" <?= $isGraduatedStatus ? 'required' : 'disabled' ?>>
+                                    <option value="">— Select year —</option>
+                                    <?php foreach (yearGraduatedOptions() as $yearValue => $yearLabel): ?>
+                                        <option value="<?= e($yearValue) ?>" <?= (int) ($requestorDefaults['year_graduated'] ?? 0) === (int) $yearValue ? 'selected' : '' ?>>
+                                            <?= e($yearLabel) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <?php if (!empty($errors['year_graduated'])): ?><span class="field-error"><?= e($errors['year_graduated']) ?></span><?php endif; ?>
+                            </div>
+                            <div class="form-group">
+                                <label for="onsite_origin_campus_id_graduated">Campus *</label>
+                                <select id="onsite_origin_campus_id_graduated" data-campus-select="graduated" <?= $isGraduatedStatus ? 'required' : 'disabled' ?>>
+                                    <option value="">— Select campus —</option>
+                                    <?php foreach ($campuses as $campus): ?>
+                                        <option value="<?= (int) $campus['id'] ?>" <?= (int) ($requestorDefaults['origin_campus_id'] ?? 0) === (int) $campus['id'] ? 'selected' : '' ?>>
+                                            <?= e($campus['name']) ?> (<?= e($campus['code']) ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
                     </div>
+
+                    <div id="onsiteAcademicInactive"
+                        class="onsite-academic-panel academic-status-panel"
+                        data-enrollment-panel="inactive"
+                        style="display: <?= $isInactiveStatus ? 'block' : 'none' ?>;">
+                        <p class="text-muted academic-panel-note">Provide details from the last active enrollment.</p>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="onsite_course_id_inactive">Last Course / Program Attended</label>
+                                <select id="onsite_course_id_inactive" data-course-select="inactive" <?= $isInactiveStatus ? '' : 'disabled' ?>>
+                                    <option value="">— Select course/program —</option>
+                                    <?php foreach ($programs as $program): ?>
+                                        <option value="<?= (int) $program['id'] ?>" <?= (int) ($requestorDefaults['course_id'] ?? 0) === (int) $program['id'] ? 'selected' : '' ?>>
+                                            <?= e($program['name']) ?> (<?= e($program['code']) ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="last_school_year">Last School Year Attended *</label>
+                                <select id="last_school_year" name="last_school_year" <?= $isInactiveStatus ? 'required' : 'disabled' ?>>
+                                    <option value="">— Select school year —</option>
+                                    <?php foreach (schoolYearOptions() as $yearValue => $yearLabel): ?>
+                                        <option value="<?= e($yearValue) ?>" <?= ($requestorDefaults['last_school_year'] ?? '') === $yearValue ? 'selected' : '' ?>>
+                                            <?= e($yearLabel) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <?php if (!empty($errors['last_school_year'])): ?><span class="field-error"><?= e($errors['last_school_year']) ?></span><?php endif; ?>
+                            </div>
+                            <div class="form-group">
+                                <label for="last_semester">Semester Attended *</label>
+                                <select id="last_semester" name="last_semester" <?= $isInactiveStatus ? 'required' : 'disabled' ?>>
+                                    <option value="">— Select semester —</option>
+                                    <?php foreach (semesterOptions() as $semValue => $semLabel): ?>
+                                        <option value="<?= e($semValue) ?>" <?= ($requestorDefaults['last_semester'] ?? '') === $semValue ? 'selected' : '' ?>>
+                                            <?= e($semLabel) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <?php if (!empty($errors['last_semester'])): ?><span class="field-error"><?= e($errors['last_semester']) ?></span><?php endif; ?>
+                            </div>
+                            <div class="form-group">
+                                <label for="onsite_origin_campus_id_inactive">Campus *</label>
+                                <select id="onsite_origin_campus_id_inactive" data-campus-select="inactive" <?= $isInactiveStatus ? 'required' : 'disabled' ?>>
+                                    <option value="">— Select campus —</option>
+                                    <?php foreach ($campuses as $campus): ?>
+                                        <option value="<?= (int) $campus['id'] ?>" <?= (int) ($requestorDefaults['origin_campus_id'] ?? 0) === (int) $campus['id'] ? 'selected' : '' ?>>
+                                            <?= e($campus['name']) ?> (<?= e($campus['code']) ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <?php if (!empty($errors['course_id'])): ?>
+                        <span class="field-error"><?= e($errors['course_id']) ?></span>
+                    <?php endif; ?>
+                    <?php if (!empty($errors['origin_campus_id'])): ?>
+                        <span class="field-error"><?= e($errors['origin_campus_id']) ?></span>
+                    <?php endif; ?>
+                </div>
                 </div>
             </section>
 
-            <section class="form-section request-form-step">
-                <h3><span class="request-step-num">2</span> Purpose &amp; type</h3>
+            <section class="form-section request-form-step form-section-collapsible <?= $onsiteSectionExpanded('purpose') ? 'is-expanded' : 'is-collapsed' ?>" data-form-section-collapsible>
+                <button type="button"
+                    class="form-section-toggle"
+                    aria-expanded="<?= $onsiteSectionExpanded('purpose') ? 'true' : 'false' ?>"
+                    aria-controls="onsiteSectionPurpose">
+                    <span class="form-section-toggle-label">
+                        <span class="request-step-num">2</span>
+                        <span class="form-section-title">Purpose &amp; type</span>
+                    </span>
+                    <i class="fas fa-chevron-down form-section-chevron" aria-hidden="true"></i>
+                </button>
+                <div class="form-section-body" id="onsiteSectionPurpose">
                 <div class="form-row">
                     <div class="form-group">
                         <label for="purpose">Purpose *</label>
@@ -695,11 +825,22 @@ require_once __DIR__ . '/../includes/header.php';
                     <p class="purpose-suggestion-hint" id="purposeSuggestionHint"></p>
                     <ul class="purpose-suggestion-list" id="purposeSuggestionList"></ul>
                 </div>
+                </div>
             </section>
 
-            <section class="form-section request-form-step">
-                <h3><span class="request-step-num">3</span> Requested documents</h3>
-                <p class="text-muted" style="margin-top:-.35rem;margin-bottom:.75rem">Available for <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> requestors</p>
+            <section class="form-section request-form-step form-section-collapsible <?= $onsiteSectionExpanded('documents') ? 'is-expanded' : 'is-collapsed' ?>" data-form-section-collapsible>
+                <button type="button"
+                    class="form-section-toggle"
+                    aria-expanded="<?= $onsiteSectionExpanded('documents') ? 'true' : 'false' ?>"
+                    aria-controls="onsiteSectionDocuments">
+                    <span class="form-section-toggle-label">
+                        <span class="request-step-num">3</span>
+                        <span class="form-section-title">Requested documents</span>
+                    </span>
+                    <i class="fas fa-chevron-down form-section-chevron" aria-hidden="true"></i>
+                </button>
+                <div class="form-section-body" id="onsiteSectionDocuments">
+                <p class="text-muted document-checklist-note">Available for <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> requestors</p>
                 <div class="document-checklist">
                     <?php foreach ($docTypes as $dt): ?>
                         <?php
@@ -887,10 +1028,21 @@ require_once __DIR__ . '/../includes/header.php';
                     <?php endforeach; ?>
                 </div>
                 <?php if (!empty($errors['document_type_ids'])): ?><span class="field-error"><?= e($errors['document_type_ids']) ?></span><?php endif; ?>
+                </div>
             </section>
 
-            <section class="form-section request-form-step">
-                <h3><span class="request-step-num">4</span> Online Clearance <span class="request-optional-tag">optional</span></h3>
+            <section class="form-section request-form-step form-section-collapsible <?= $onsiteSectionExpanded('clearance') ? 'is-expanded' : 'is-collapsed' ?>" data-form-section-collapsible>
+                <button type="button"
+                    class="form-section-toggle"
+                    aria-expanded="<?= $onsiteSectionExpanded('clearance') ? 'true' : 'false' ?>"
+                    aria-controls="onsiteSectionClearance">
+                    <span class="form-section-toggle-label">
+                        <span class="request-step-num">4</span>
+                        <span class="form-section-title">Online Clearance <span class="request-optional-tag">optional</span></span>
+                    </span>
+                    <i class="fas fa-chevron-down form-section-chevron" aria-hidden="true"></i>
+                </button>
+                <div class="form-section-body" id="onsiteSectionClearance">
                 <label class="checkbox-label onsite-clearance-option">
                     <input type="checkbox"
                         name="require_online_clearance"
@@ -901,12 +1053,24 @@ require_once __DIR__ . '/../includes/header.php';
                         <small class="text-muted">Activate clearance signing for all offices. Cashier verification stays blocked until clearance is complete.</small>
                     </span>
                 </label>
+                </div>
             </section>
 
-            <section class="form-section request-form-step">
-                <h3><span class="request-step-num">5</span> Notes <span class="request-optional-tag">optional</span></h3>
+            <section class="form-section request-form-step form-section-collapsible <?= $onsiteSectionExpanded('notes') ? 'is-expanded' : 'is-collapsed' ?>" data-form-section-collapsible>
+                <button type="button"
+                    class="form-section-toggle"
+                    aria-expanded="<?= $onsiteSectionExpanded('notes') ? 'true' : 'false' ?>"
+                    aria-controls="onsiteSectionNotes">
+                    <span class="form-section-toggle-label">
+                        <span class="request-step-num">5</span>
+                        <span class="form-section-title">Notes <span class="request-optional-tag">optional</span></span>
+                    </span>
+                    <i class="fas fa-chevron-down form-section-chevron" aria-hidden="true"></i>
+                </button>
+                <div class="form-section-body" id="onsiteSectionNotes">
                 <div class="form-group">
                     <textarea id="notes" name="notes" rows="2" placeholder="Any notes for cashier or processing staff..."><?= e($_POST['notes'] ?? '') ?></textarea>
+                </div>
                 </div>
             </section>
 
@@ -936,6 +1100,7 @@ const purposeSuggestions = <?= json_encode($purposeSuggestions, JSON_HEX_TAG | J
 const purposeHints = <?= json_encode($purposeHints, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
 
 document.getElementById('enrollment_status')?.addEventListener('change', function () {
+    toggleOnsiteAcademicPanels();
     const params = new URLSearchParams();
     const studentUserId = document.querySelector('input[name="student_user_id"]')?.value || '';
     if (studentUserId && studentUserId !== '0') {
@@ -943,6 +1108,88 @@ document.getElementById('enrollment_status')?.addEventListener('change', functio
     }
     params.set('enrollment_status', this.value);
     window.location.href = '<?= APP_URL ?>/registrar/new-onsite-request.php?' + params.toString();
+});
+
+function syncOnsiteCourseIdField() {
+    const status = document.getElementById('enrollment_status')?.value || 'enrolled';
+    const map = {
+        enrolled: 'onsite_course_id_enrolled',
+        graduated: 'onsite_course_id_graduated',
+        inactive: 'onsite_course_id_inactive',
+    };
+    const select = document.getElementById(map[status] || map.enrolled);
+    const hidden = document.getElementById('course_id');
+    if (hidden) {
+        hidden.value = select ? select.value : '';
+    }
+}
+
+function syncOnsiteOriginCampusField() {
+    const status = document.getElementById('enrollment_status')?.value || 'enrolled';
+    const map = {
+        graduated: 'onsite_origin_campus_id_graduated',
+        inactive: 'onsite_origin_campus_id_inactive',
+    };
+    const select = document.getElementById(map[status] || '');
+    const hidden = document.getElementById('origin_campus_id');
+    if (!hidden) {
+        return;
+    }
+    hidden.value = select ? select.value : '0';
+}
+
+function toggleOnsiteAcademicPanels() {
+    const status = document.getElementById('enrollment_status')?.value || 'enrolled';
+    const panels = {
+        enrolled: 'onsiteAcademicEnrolled',
+        graduated: 'onsiteAcademicGraduated',
+        inactive: 'onsiteAcademicInactive',
+    };
+
+    Object.keys(panels).forEach(function (key) {
+        const panel = document.getElementById(panels[key]);
+        if (!panel) {
+            return;
+        }
+        const active = key === status;
+        panel.style.display = active ? 'block' : 'none';
+        panel.querySelectorAll('input, select, textarea').forEach(function (field) {
+            field.disabled = !active;
+        });
+    });
+
+    const yearGraduated = document.getElementById('year_graduated');
+    const lastSchoolYear = document.getElementById('last_school_year');
+    const lastSemester = document.getElementById('last_semester');
+    const campusGraduated = document.getElementById('onsite_origin_campus_id_graduated');
+    const campusInactive = document.getElementById('onsite_origin_campus_id_inactive');
+
+    if (yearGraduated) {
+        yearGraduated.required = status === 'graduated';
+    }
+    if (lastSchoolYear) {
+        lastSchoolYear.required = status === 'inactive';
+    }
+    if (lastSemester) {
+        lastSemester.required = status === 'inactive';
+    }
+    if (campusGraduated) {
+        campusGraduated.required = status === 'graduated';
+    }
+    if (campusInactive) {
+        campusInactive.required = status === 'inactive';
+    }
+
+    syncOnsiteCourseIdField();
+    syncOnsiteOriginCampusField();
+}
+
+document.querySelectorAll('[data-course-select]').forEach(function (select) {
+    select.addEventListener('change', syncOnsiteCourseIdField);
+});
+
+document.querySelectorAll('[data-campus-select]').forEach(function (select) {
+    select.addEventListener('change', syncOnsiteOriginCampusField);
 });
 
 function formatPeso(amount) {
@@ -1416,6 +1663,8 @@ document.getElementById('applyPurposeSuggestions')?.addEventListener('click', fu
     applyPurposeSuggestions(true);
 });
 document.getElementById('requestForm')?.addEventListener('submit', function (event) {
+    syncOnsiteCourseIdField();
+    syncOnsiteOriginCampusField();
     const checked = document.querySelectorAll('input[name="document_type_ids[]"]:checked');
     if (!checked.length) {
         event.preventDefault();
@@ -1431,6 +1680,7 @@ toggleDocumentExtraFields();
 togglePurposeOtherField();
 updatePurposeSuggestions(false);
 initDocumentChecklistToggles();
+toggleOnsiteAcademicPanels();
 </script>
 <?php endif; ?>
 

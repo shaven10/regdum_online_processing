@@ -70,7 +70,28 @@ document.addEventListener('DOMContentLoaded', function () {
     initStatusModal();
     initAdminFormModal();
     initUppercaseNameFields();
+    initFormSectionCollapsibles();
 });
+
+function initFormSectionCollapsibles() {
+    document.querySelectorAll('[data-form-section-collapsible]').forEach(function (section) {
+        if (section.dataset.formSectionBound === '1') {
+            return;
+        }
+        section.dataset.formSectionBound = '1';
+
+        const toggle = section.querySelector('.form-section-toggle');
+        if (!toggle) {
+            return;
+        }
+
+        toggle.addEventListener('click', function () {
+            const expanded = section.classList.toggle('is-expanded');
+            section.classList.toggle('is-collapsed', !expanded);
+            toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        });
+    });
+}
 
 function initUppercaseNameFields() {
     const selector = [

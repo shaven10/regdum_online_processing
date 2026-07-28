@@ -77,25 +77,29 @@ function findStudentUserByStudentId(string $studentId): ?array {
     return $row ?: null;
 }
 
-function searchStudentsForOnsiteRequest(string $search, int $limit = 20): array {
+function searchStudentsForOnsiteRequest(string $search = '', int $limit = 50): array {
     $search = trim($search);
-    if ($search === '') {
-        return [];
+    $limit = max(1, min(100, $limit));
+
+    $db = getDB();
+    $where = ['u.role_id = 1'];
+    $params = [];
+
+    if ($search !== '') {
+        $like = '%' . $search . '%';
+        $where[] = '(u.first_name LIKE ? OR u.last_name LIKE ? OR u.middle_name LIKE ? OR u.student_id LIKE ? OR u.email LIKE ?
+            OR CONCAT(u.first_name, \' \', u.last_name) LIKE ? OR sp.course LIKE ?)';
+        array_push($params, $like, $like, $like, $like, $like, $like, $like);
     }
 
-    $limit = max(1, min(50, $limit));
-    $db = getDB();
-    $like = '%' . $search . '%';
     $stmt = $db->prepare('SELECT u.id, u.student_id, u.first_name, u.last_name, u.middle_name, u.email, u.phone,
             sp.course, sp.year_level, sp.enrollment_status
         FROM users u
         LEFT JOIN student_profiles sp ON sp.user_id = u.id
-        WHERE u.role_id = 1
-          AND (u.first_name LIKE ? OR u.last_name LIKE ? OR u.student_id LIKE ? OR u.email LIKE ?
-               OR CONCAT(u.first_name, \' \', u.last_name) LIKE ?)
-        ORDER BY u.last_name, u.first_name
+        WHERE ' . implode(' AND ', $where) . '
+        ORDER BY u.last_name, u.first_name, u.id
         LIMIT ' . $limit);
-    $stmt->execute([$like, $like, $like, $like, $like]);
+    $stmt->execute($params);
 
     return $stmt->fetchAll();
 }
