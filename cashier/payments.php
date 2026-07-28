@@ -86,6 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 }
 
 $payments = getPaymentsList($status, $search);
+$verificationDetailsByPayment = buildPaymentVerificationDetailsForPayments($payments);
 $stats = getPaymentStats();
 $rejectReasons = [
     'Invalid or unreadable receipt uploaded.',
@@ -300,22 +301,6 @@ require_once __DIR__ . '/../includes/header.php';
                             <strong data-field="student-name">—</strong>
                             <small data-field="student-id" class="text-muted"></small>
                         </div>
-                        <div class="payment-review-item">
-                            <span>Method</span>
-                            <strong data-field="method">—</strong>
-                        </div>
-                        <div class="payment-review-item">
-                            <span>Amount</span>
-                            <strong class="payment-review-amount" data-field="amount">—</strong>
-                        </div>
-                        <div class="payment-review-item">
-                            <span data-reference-label>Reference</span>
-                            <strong data-field="reference">—</strong>
-                        </div>
-                        <div class="payment-review-item">
-                            <span>Submitted</span>
-                            <strong data-field="submitted">—</strong>
-                        </div>
                     </div>
 
                     <div class="payment-receipt-panel" data-receipt-panel>
@@ -345,8 +330,9 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="payment-verify-fields" data-verify-panel>
                     <h4><i class="fas fa-file-invoice-dollar"></i> Verification Details</h4>
                     <p class="text-muted payment-verify-fields-note" data-verify-fields-note>
-                        Enter the OR number and date of payment before verifying.
+                        Review the requested documents and payment breakdown, then enter the OR number and date of payment before verifying.
                     </p>
+                    <div class="payment-verification-details" data-verification-details></div>
                     <div class="payment-verify-fields-grid">
                         <div class="form-group">
                             <label for="paymentOrNumber">OR Number *</label>
@@ -424,6 +410,17 @@ require_once __DIR__ . '/../includes/header.php';
             </div>
         </div>
     </div>
+</div>
+
+<div class="payment-verification-details-store" hidden aria-hidden="true">
+    <?php foreach ($payments as $p): ?>
+        <?php if ($p['status'] !== 'pending') {
+            continue;
+        } ?>
+        <div id="paymentVerificationDetails-<?= (int) $p['id'] ?>">
+            <?= $verificationDetailsByPayment[(int) $p['id']] ?? '' ?>
+        </div>
+    <?php endforeach; ?>
 </div>
 
 <?php if ($onsiteLookupPayment): ?>

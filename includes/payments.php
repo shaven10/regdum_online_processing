@@ -335,6 +335,297 @@ function paymentVerificationBlockedByClearance(int $requestId): ?string {
     return $gate['blocked'] ? $gate['message'] : null;
 }
 
+function paymentVerificationItemHasStamp(array $item): bool {
+    return !empty($item['requires_documentary_stamp']);
+}
+
+function paymentVerificationFeeDetail(array $item, array $authItems = [], bool $includeStamp = true): string {
+    if (!function_exists('documentStampFeeAmount')) {
+        require_once __DIR__ . '/document-rules.php';
+    }
+
+    $base = (float) ($item['base_fee'] ?? 0);
+    $copies = max(1, (int) ($item['copies'] ?? 1));
+    $feePerSet = !empty($item['fee_per_set']);
+    $stampFee = paymentVerificationItemHasStamp($item) ? documentStampFeeAmount() : 0.0;
+    $requiresAuth = !empty($item['requires_auth_document_type']);
+
+    if ($requiresAuth && !empty($authItems)) {
+        $parts = [];
+        foreach ($authItems as $authItem) {
+            $sets = max(1, (int) ($authItem['sets'] ?? 1));
+            $label = authenticationDocumentTypeLabel($authItem['auth_document_type'] ?? null);
+            $parts[] = $label . ': ' . $sets . ' set(s) × ' . formatMoney($base);
+        }
+        $detail = implode(' · ', $parts);
+        if ($includeStamp && $stampFee > 0) {
+            $detail .= ' + documentary stamp ' . formatMoney($stampFee);
+        }
+        return $detail;
+    }
+
+    $feeParts = $feePerSet
+        ? ['1 set × ' . formatMoney($base)]
+        : [$copies . ' × ' . formatMoney($base)];
+
+    if ($includeStamp && $stampFee > 0) {
+        $feeParts[] = 'documentary stamp ' . formatMoney($stampFee);
+    }
+
+    return implode(' + ', $feeParts);
+}
+
+function paymentVerificationBreakdownDetail(array $item, array $authItems = [], bool $includeStamp = true): string {
+    if (!function_exists('semesterLabel')) {
+        require_once __DIR__ . '/student.php';
+    }
+
+    $parts = [];
+
+    if (!empty($item['request_school_year']) || !empty($item['request_semester'])) {
+        $term = trim(
+            (string) ($item['request_school_year'] ?? '')
+            . (!empty($item['request_semester']) ? ' · ' . semesterLabel($item['request_semester']) : '')
+        );
+        if ($term !== '') {
+            $parts[] = $term;
+        }
+    }
+
+    $parts[] = paymentVerificationFeeDetail($item, $authItems, $includeStamp);
+    return implode(' · ', $parts);
+}
+
+function loadPaymentVerificationAuthItems(array $requestIds, array $itemIds): array {
+    $authByItemId = [];
+    if (empty($itemIds) && empty($requestIds)) {
+        return $authByItemId;
+    }
+
+    $db = getDB();
+
+    if (!empty($itemIds)) {
+        $itemIds = array_values(array_unique(array_filter(array_map('intval', $itemIds))));
+        $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
+        $stmt = $db->prepare(
+            "SELECT request_item_id, auth_document_type, sets
+             FROM request_authentication_items
+             WHERE request_item_id IN ($placeholders)
+             ORDER BY request_item_id, id"
+        );
+        $stmt->execute($itemIds);
+        foreach ($stmt->fetchAll() as $row) {
+            $itemId = (int) ($row['request_item_id'] ?? 0);
+            if ($itemId > 0) {
+                $authByItemId[$itemId][] = $row;
+            }
+        }
+    }
+
+    if (!empty($requestIds)) {
+        $requestIds = array_values(array_unique(array_filter(array_map('intval', $requestIds))));
+        $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
+        $stmt = $db->prepare(
+            "SELECT request_id, auth_document_type, sets
+             FROM request_authentication_items
+             WHERE request_id IN ($placeholders) AND request_item_id IS NULL
+             ORDER BY request_id, id"
+        );
+        $stmt->execute($requestIds);
+        foreach ($stmt->fetchAll() as $row) {
+            $requestId = (int) ($row['request_id'] ?? 0);
+            if ($requestId > 0) {
+                $authByItemId['request:' . $requestId][] = $row;
+            }
+        }
+    }
+
+    return $authByItemId;
+}
+
+function buildPaymentVerificationDetailsMap(array $requestIds): array {
+    $requestIds = array_values(array_unique(array_filter(array_map('intval', $requestIds))));
+    if (empty($requestIds)) {
+        return [];
+    }
+
+    require_once __DIR__ . '/request-items.php';
+    require_once __DIR__ . '/student.php';
+
+    $db = getDB();
+    $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
+    $requestStmt = $db->prepare(
+        "SELECT r.id, r.purpose, r.purpose_other, r.copy_request_type, r.delivery_method, r.total_amount, r.request_channel,
+                dt.name AS document_name
+         FROM requests r
+         LEFT JOIN document_types dt ON r.document_type_id = dt.id
+         WHERE r.id IN ($placeholders)"
+    );
+    $requestStmt->execute($requestIds);
+    $requests = [];
+    foreach ($requestStmt->fetchAll() as $row) {
+        $requests[(int) $row['id']] = $row;
+    }
+
+    $itemStmt = $db->prepare(
+        "SELECT ri.*, dt.name AS document_name, dt.base_fee, dt.fee_per_set,
+                dt.requires_documentary_stamp, dt.requires_auth_document_type
+         FROM request_items ri
+         JOIN document_types dt ON ri.document_type_id = dt.id
+         WHERE ri.request_id IN ($placeholders)
+         ORDER BY ri.request_id, ri.sort_order, ri.id"
+    );
+    $itemStmt->execute($requestIds);
+    $itemsByRequest = [];
+    $itemIds = [];
+    foreach ($itemStmt->fetchAll() as $row) {
+        $itemsByRequest[(int) $row['request_id']][] = $row;
+        $itemIds[] = (int) $row['id'];
+    }
+
+    $authByItemId = loadPaymentVerificationAuthItems($requestIds, $itemIds);
+
+    $map = [];
+    foreach ($requestIds as $requestId) {
+        $request = $requests[$requestId] ?? null;
+        if (!$request) {
+            continue;
+        }
+
+        $items = $itemsByRequest[$requestId] ?? [];
+        foreach ($items as $index => $item) {
+            $itemId = (int) ($item['id'] ?? 0);
+            $items[$index]['auth_items'] = $authByItemId[$itemId] ?? (
+                count($items) === 1 ? ($authByItemId['request:' . $requestId] ?? []) : []
+            );
+        }
+
+        $map[$requestId] = [
+            'request' => $request,
+            'items' => $items,
+        ];
+    }
+
+    return $map;
+}
+
+function buildPaymentVerificationDetailsForPayments(array $payments): array {
+    $contextMap = buildPaymentVerificationDetailsMap(
+        array_map(static fn(array $payment): int => (int) $payment['request_id'], $payments)
+    );
+
+    $details = [];
+    foreach ($payments as $payment) {
+        $requestId = (int) $payment['request_id'];
+        $context = $contextMap[$requestId] ?? null;
+        if (!$context) {
+            continue;
+        }
+
+        $details[(int) $payment['id']] = renderPaymentVerificationSections(
+            $context['request'],
+            $context['items'],
+            (float) ($payment['amount'] ?? 0)
+        );
+    }
+
+    return $details;
+}
+
+function renderPaymentVerificationSections(array $request, array $items, float $paymentAmount = 0.0): string {
+    require_once __DIR__ . '/student.php';
+    require_once __DIR__ . '/document-rules.php';
+
+    $purposeText = purposeLabel((string) ($request['purpose'] ?? ''));
+    if (!empty($request['purpose_other'])) {
+        $purposeText .= ' — ' . $request['purpose_other'];
+    }
+
+    $requestTotal = (float) ($request['total_amount'] ?? 0);
+    $submittedAmount = $paymentAmount > 0 ? $paymentAmount : $requestTotal;
+    $amountMismatch = $paymentAmount > 0 && abs($paymentAmount - $requestTotal) > 0.009;
+
+    ob_start();
+    ?>
+    <div class="payment-verification-request">
+        <section class="payment-verification-summary">
+            <h5><i class="fas fa-file-invoice"></i> Documents & Payment Breakdown</h5>
+            <div class="detail-grid payment-verification-doc-grid">
+                <div class="detail-item full">
+                    <label>Purpose</label>
+                    <span><?= e($purposeText !== '' ? $purposeText : '—') ?></span>
+                </div>
+                <div class="detail-item">
+                    <label>Request Type</label>
+                    <span><?= e(copyRequestTypeLabel($request['copy_request_type'] ?? null)) ?></span>
+                </div>
+                <?php if (!empty($request['delivery_method'])): ?>
+                <div class="detail-item">
+                    <label>Delivery</label>
+                    <span><?= e(deliveryMethodLabel($request['delivery_method'])) ?></span>
+                </div>
+                <?php endif; ?>
+            </div>
+
+            <div class="payment-breakdown-panel">
+                <?php if (!empty($items)): ?>
+                    <div class="payment-breakdown-list">
+                        <?php foreach ($items as $item): ?>
+                        <?php
+                            $authItems = $item['auth_items'] ?? [];
+                            $hasStamp = paymentVerificationItemHasStamp($item);
+                            $stampFee = $hasStamp ? documentStampFeeAmount() : 0.0;
+                            $lineTotal = (float) ($item['item_amount'] ?? 0);
+                            $documentFee = max(0, $lineTotal - $stampFee);
+                        ?>
+                        <div class="payment-breakdown-item<?= $hasStamp ? ' has-documentary-stamp' : '' ?>">
+                            <div class="payment-breakdown-item-main">
+                                <div class="payment-breakdown-item-title">
+                                    <strong><?= e($item['document_name'] ?? 'Document') ?></strong>
+                                    <?php if ($hasStamp): ?>
+                                        <span class="payment-verification-stamp-badge">Documentary stamp</span>
+                                    <?php endif; ?>
+                                </div>
+                                <span class="payment-breakdown-detail"><?= e(paymentVerificationBreakdownDetail($item, $authItems, !$hasStamp)) ?></span>
+                            </div>
+                            <span class="payment-breakdown-amount"><?= e(formatMoney($hasStamp ? $documentFee : $lineTotal)) ?></span>
+                        </div>
+                        <?php if ($hasStamp): ?>
+                        <div class="payment-breakdown-item payment-breakdown-item-stamp">
+                            <div class="payment-breakdown-item-main">
+                                <strong>Documentary stamp</strong>
+                                <span class="payment-breakdown-detail"><?= e($item['document_name'] ?? 'Document') ?></span>
+                            </div>
+                            <span class="payment-breakdown-amount"><?= e(formatMoney($stampFee)) ?></span>
+                        </div>
+                        <?php endif; ?>
+                        <?php endforeach; ?>
+                    </div>
+                <?php elseif (!empty($request['document_name'])): ?>
+                    <p class="payment-breakdown-empty"><?= e($request['document_name']) ?></p>
+                <?php else: ?>
+                    <p class="payment-breakdown-empty">No document details recorded.</p>
+                <?php endif; ?>
+
+                <div class="payment-breakdown-total">
+                    <div>
+                        <span class="payment-breakdown-total-label">Amount due</span>
+                        <strong><?= e(formatMoney($requestTotal)) ?></strong>
+                    </div>
+                    <?php if ($amountMismatch): ?>
+                    <div class="payment-verification-submitted-amount">
+                        <span class="payment-breakdown-total-label">Submitted amount</span>
+                        <strong class="payment-verification-amount-mismatch"><?= e(formatMoney($submittedAmount)) ?></strong>
+                    </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </section>
+    </div>
+    <?php
+    return (string) ob_get_clean();
+}
+
 function getPaymentStats(): array {
     $db = getDB();
     return [

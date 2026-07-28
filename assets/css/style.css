@@ -3918,6 +3918,78 @@ a.feature-card-link:hover {
     margin: 0;
 }
 
+.payment-verification-details {
+    margin-bottom: 1rem;
+}
+
+.payment-verification-request {
+    display: grid;
+    gap: 1rem;
+}
+
+.payment-verification-summary h5 {
+    margin: 0 0 .65rem;
+    font-size: .88rem;
+    font-weight: 700;
+    color: var(--gray-700);
+}
+
+.payment-verification-summary h5 i {
+    margin-right: .35rem;
+    color: var(--primary);
+}
+
+.payment-verification-doc-grid {
+    margin-bottom: .75rem;
+}
+
+.payment-verification-summary .payment-breakdown-panel {
+    margin: 0;
+}
+
+.payment-breakdown-item-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .4rem;
+}
+
+.payment-verification-stamp-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: .12rem .45rem;
+    border-radius: 999px;
+    background: #fef3c7;
+    color: #92400e;
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .02em;
+    text-transform: uppercase;
+}
+
+.payment-breakdown-item.has-documentary-stamp {
+    border-left: 3px solid #f59e0b;
+}
+
+.payment-breakdown-item-stamp {
+    margin-left: .75rem;
+    padding-left: .65rem;
+    border-left: 2px dashed #fcd34d;
+}
+
+.payment-breakdown-item-stamp .payment-breakdown-item-main strong {
+    font-size: .82rem;
+    color: var(--gray-700);
+}
+
+.payment-verification-submitted-amount {
+    margin-top: .35rem;
+}
+
+.payment-verification-amount-mismatch {
+    color: #b45309;
+}
+
 .payment-review-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;

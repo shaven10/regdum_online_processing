@@ -459,6 +459,7 @@ function initPaymentReviewModal() {
     const verifyNote = modal.querySelector('[data-verify-fields-note]');
     const clearanceAlert = modal.querySelector('[data-clearance-alert]');
     const clearanceAlertMessage = modal.querySelector('[data-clearance-alert-message]');
+    const verificationDetails = modal.querySelector('[data-verification-details]');
     const verifySubmitBtn = modal.querySelector('#paymentVerifyForm button[type="submit"]');
     let activePaymentId = null;
     let activeIsOnsite = false;
@@ -554,9 +555,20 @@ function initPaymentReviewModal() {
         }
         if (verifyNote) {
             verifyNote.textContent = activeIsOnsite
-                ? 'Enter the OR number and date of payment collected at the cashier before verifying this on-site payment.'
-                : 'Enter the OR number and date of payment before verifying.';
+                ? 'Review the requested documents and payment breakdown, then enter the OR number and date of payment collected at the cashier before verifying.'
+                : 'Review the requested documents and payment breakdown, then enter the OR number and date of payment before verifying.';
         }
+    }
+
+    function renderVerificationDetails(paymentId) {
+        if (!verificationDetails) {
+            return;
+        }
+
+        const source = paymentId
+            ? document.getElementById('paymentVerificationDetails-' + paymentId)
+            : null;
+        verificationDetails.innerHTML = source ? source.innerHTML : '';
     }
 
     function renderReceipt(url, isImage) {
@@ -599,15 +611,6 @@ function initPaymentReviewModal() {
         setField('request-number', data.requestNumber);
         setField('student-name', data.studentName);
         setField('student-id', data.studentId || '');
-        setField('method', data.method);
-        setField('amount', data.amount);
-        setField('reference', data.reference);
-        setField('submitted', data.submitted);
-
-        const referenceLabel = modal.querySelector('[data-reference-label]');
-        if (referenceLabel) {
-            referenceLabel.textContent = isOnsite ? 'Payment Code' : 'Reference';
-        }
 
         setOnsiteMode(isOnsite);
         if (!isOnsite) {
@@ -630,6 +633,7 @@ function initPaymentReviewModal() {
         if (dateInput) dateInput.value = new Date().toISOString().slice(0, 10);
 
         setPaymentId(data.paymentId);
+        renderVerificationDetails(data.paymentId);
         setClearanceGate(
             data.clearanceRequired === '1' && data.clearanceBlocked === '1',
             data.clearanceMessage || '',
@@ -653,6 +657,7 @@ function initPaymentReviewModal() {
         modal.setAttribute('aria-hidden', 'true');
         document.body.style.overflow = '';
         setPaymentId(null);
+        renderVerificationDetails(null);
         setClearanceGate(false, '', '');
         setRejectMode(false);
     }
