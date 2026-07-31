@@ -229,6 +229,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
             : 'Unable to update release schedule.');
 
+    } elseif ($action === 'update_tor_amount') {
+        $itemId = (int) ($_POST['item_id'] ?? 0);
+        $baseAmount = (float) ($_POST['item_amount'] ?? 0);
+        $error = updateRequestItemAmount($itemId, $baseAmount, (int) $user['id'], $requestId);
+
+        if ($error) {
+            setFlash('error', $error, [
+                'title' => 'TOR Amount Not Updated',
+            ]);
+        } else {
+            $updatedItem = getRequestItem($itemId);
+            $documentTypeId = (int) ($updatedItem['document_type_id'] ?? 0);
+            $stampAmount = torDocumentStampAmountForType($documentTypeId);
+            $lineTotal = torLineTotalFromBaseAmount($documentTypeId, $baseAmount);
+            $flashContext = [
+                'Request' => $request['request_number'],
+                'Base Amount' => formatMoney($baseAmount),
+            ];
+            if ($stampAmount > 0) {
+                $flashContext['Documentary Stamp'] = formatMoney($stampAmount);
+                $flashContext['Line Total'] = formatMoney($lineTotal);
+            }
+            setFlash('success', 'TOR base amount updated. The request total and any pending payment were refreshed.', [
+                'title' => 'TOR Amount Updated',
+                'context' => $flashContext,
+            ]);
+        }
+
     }
 
 
@@ -288,6 +316,10 @@ $attachmentGroups = getRequestAttachmentsGrouped($requestId);
 $payment = $db->prepare('SELECT * FROM payments WHERE request_id = ? ORDER BY created_at DESC LIMIT 1');
 $payment->execute([$requestId]);
 $paymentData = $payment->fetch();
+
+$canModifyRequestFees = canModifyRequestItemAmounts($request['status'] ?? null)
+    && !($paymentData && ($paymentData['status'] ?? '') === 'verified');
+$torRequestItems = array_values(array_filter($requestItems, 'isTorRequestItem'));
 
 $pageTitle = 'Review ' . $request['request_number'];
 $activeNav = 'compliance';
@@ -357,7 +389,57 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="detail-item"><label>Purpose</label><span><?= purposeLabel($request['purpose']) ?></span></div>
                 <div class="detail-item"><label>Request Type</label><span><?= e(copyRequestTypeLabel($request['copy_request_type'] ?? null)) ?><?= ($request['copy_request_type'] ?? '') === 'second_copy' ? ' <span class="badge badge-processing">Affidavit may be required</span>' : '' ?></span></div>
 
-                <div class="detail-item"><label>Amount</label><span><?= formatMoney((float)$request['total_amount']) ?></span></div>
+                <div class="detail-item"><label>Amount</label><span id="requestTotalAmountDisplay"><?= formatMoney((float)$request['total_amount']) ?></span></div>
+
+                <?php if ($canModifyRequestFees && !empty($torRequestItems)): ?>
+                <div class="detail-item full tor-amount-adjust-panel">
+                    <label>TOR Amount Adjustment</label>
+                    <p class="text-muted tor-amount-adjust-note">Adjust the TOR document fee only. Documentary stamp, when applicable, is added automatically and is not included in this amount.</p>
+                    <?php foreach ($torRequestItems as $torItem): ?>
+                        <?php
+                            $torLabel = (string) ($torItem['document_name'] ?? 'TOR');
+                            if (!empty($torItem['request_school_year']) || !empty($torItem['request_semester'])) {
+                                $torLabel .= ' · ' . trim(
+                                    (string) ($torItem['request_school_year'] ?? '')
+                                    . (!empty($torItem['request_semester']) ? ' ' . ($torItem['request_semester'] ?? '') : '')
+                                );
+                            }
+                            $torDocumentTypeId = (int) ($torItem['document_type_id'] ?? 0);
+                            $torBaseAmount = torItemBaseAmount($torItem);
+                            $torStampAmount = torDocumentStampAmountForType($torDocumentTypeId);
+                            $torLineTotal = (float) ($torItem['item_amount'] ?? 0);
+                        ?>
+                        <form method="POST" class="tor-amount-adjust-form">
+                            <?= csrfField() ?>
+                            <input type="hidden" name="action" value="update_tor_amount">
+                            <input type="hidden" name="item_id" value="<?= (int) $torItem['id'] ?>">
+                            <div class="tor-amount-adjust-row">
+                                <div class="tor-amount-adjust-meta">
+                                    <strong><?= e($torLabel) ?></strong>
+                                    <small class="text-muted"><?= (int) ($torItem['copies'] ?? 1) ?> cop<?= (int) ($torItem['copies'] ?? 1) === 1 ? 'y' : 'ies' ?></small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="tor_amount_<?= (int) $torItem['id'] ?>">Base amount (excl. stamp)</label>
+                                    <input type="number"
+                                        id="tor_amount_<?= (int) $torItem['id'] ?>"
+                                        name="item_amount"
+                                        step="0.01"
+                                        min="0"
+                                        value="<?= e(number_format($torBaseAmount, 2, '.', '')) ?>"
+                                        required>
+                                    <?php if ($torStampAmount > 0): ?>
+                                    <small class="text-muted tor-amount-adjust-hint">
+                                        Documentary stamp <?= formatMoney($torStampAmount) ?> added automatically.
+                                        Line total: <?= formatMoney($torLineTotal) ?>.
+                                    </small>
+                                    <?php endif; ?>
+                                </div>
+                                <button type="submit" class="btn btn-sm btn-outline">Update TOR Amount</button>
+                            </div>
+                        </form>
+                    <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
 
                 <div class="detail-item"><label>Delivery</label><span><?= e(deliveryMethodLabel($request['delivery_method'])) ?></span></div>
 

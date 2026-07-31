@@ -2217,6 +2217,66 @@ a.feature-card-link:hover {
     margin: 0 0 1rem;
 }
 
+.document-checklist-amount-override {
+    margin-top: .75rem;
+    padding: .75rem;
+    border: 1px dashed #bbf7d0;
+    border-radius: var(--radius-sm);
+    background: #f0fdf4;
+}
+
+.document-checklist-amount-override label {
+    display: block;
+    margin-bottom: .35rem;
+    font-weight: 600;
+}
+
+.tor-amount-adjust-panel {
+    padding: .85rem;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: var(--radius-sm);
+    background: #fffbeb;
+}
+
+.tor-amount-adjust-note {
+    margin: 0 0 .75rem;
+    font-size: .85rem;
+}
+
+.tor-amount-adjust-form + .tor-amount-adjust-form {
+    margin-top: .75rem;
+    padding-top: .75rem;
+    border-top: 1px dashed var(--border-color, #e2e8f0);
+}
+
+.tor-amount-adjust-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(140px, 180px) auto;
+    gap: .75rem;
+    align-items: end;
+}
+
+.tor-amount-adjust-meta {
+    display: grid;
+    gap: .15rem;
+}
+
+.tor-amount-adjust-row .form-group {
+    margin: 0;
+}
+
+.tor-amount-adjust-hint {
+    display: block;
+    margin-top: .35rem;
+    line-height: 1.35;
+}
+
+@media (max-width: 768px) {
+    .tor-amount-adjust-row {
+        grid-template-columns: 1fr;
+    }
+}
+
 .purpose-suggestion-panel {
     margin-top: 1rem;
     padding: 1rem 1.1rem;

@@ -272,6 +272,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         try {
             $resolved = resolveOnsiteRequestor($requestorInput);
             $itemDrafts = [];
+            $amountOverrides = $_POST['document_amount_override'] ?? [];
 
             foreach ($validDocTypeIds as $documentTypeId) {
                 $docType = $docTypesById[$documentTypeId] ?? null;
@@ -281,6 +282,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                     $authItems = normalizeAuthenticationItems($postedAuthItems[$documentTypeId] ?? []);
                     $copies = max(1, totalAuthenticationSets($authItems));
                     $itemAmount = calculateRequestFee($documentTypeId, $copies, $authItems ?: null);
+                    $itemAmount = resolveTorItemAmountOverride($documentTypeId, $itemAmount, $amountOverrides);
                     $itemDrafts[] = [
                         'document_type_id' => $documentTypeId,
                         'copies' => $copies,
@@ -298,6 +300,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                     foreach ($validatedTermLinesByDoc[$documentTypeId] ?? [] as $termLine) {
                         $copies = max(1, min($maxCopies, (int) $termLine['copies']));
                         $itemAmount = calculateRequestFee($documentTypeId, $copies, null);
+                        $itemAmount = resolveTorItemAmountOverride($documentTypeId, $itemAmount, $amountOverrides);
                         $itemDrafts[] = [
                             'document_type_id' => $documentTypeId,
                             'copies' => $copies,
@@ -314,6 +317,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
                 $copies = max(1, min($maxCopies, (int) ($postedCopies[$documentTypeId] ?? 1)));
                 $itemAmount = calculateRequestFee($documentTypeId, $copies, null);
+                $itemAmount = resolveTorItemAmountOverride($documentTypeId, $itemAmount, $amountOverrides);
                 $itemDrafts[] = [
                     'document_type_id' => $documentTypeId,
                     'copies' => $copies,
@@ -933,6 +937,23 @@ require_once __DIR__ . '/../includes/header.php';
                                 <?php elseif ($requiresAuthDocumentType): ?>
                                 <input type="hidden" name="document_copies[<?= (int) $dt['id'] ?>]" value="1">
                                 <?php endif; ?>
+                                <?php if (isTorDocumentCode($dt['code'] ?? '')): ?>
+                                <div class="document-checklist-amount-override" data-extra-fields <?= $isSelected ? '' : 'hidden' ?>>
+                                    <label for="tor_amount_override_<?= (int) $dt['id'] ?>">Custom TOR amount (optional)</label>
+                                    <input type="number"
+                                        id="tor_amount_override_<?= (int) $dt['id'] ?>"
+                                        name="document_amount_override[<?= (int) $dt['id'] ?>]"
+                                        data-tor-amount-override
+                                        step="0.01"
+                                        min="0"
+                                        placeholder="Leave blank for standard fee"
+                                        value="<?= e($_POST['document_amount_override'][$dt['id']] ?? '') ?>"
+                                        onchange="updateFee()"
+                                        oninput="updateFee()"
+                                        onclick="event.stopPropagation()">
+                                    <small class="text-muted">Use only when the standard TOR fee needs adjustment.</small>
+                                </div>
+                                <?php endif; ?>
                                 <?php if ($requiresTermInfo): ?>
                                 <div class="document-checklist-term" data-extra-fields data-term-block <?= $isSelected ? '' : 'hidden' ?>>
                                     <p class="document-term-help">Request this document for one or more school years / semesters on the same request.</p>
@@ -1532,6 +1553,22 @@ function applyPurposeSuggestions(scrollToDocs) {
     }
 }
 
+function applyTorOverrideAmount(item, checkbox, computedTotal) {
+    if ((checkbox.dataset.docCode || '').toUpperCase() !== 'TOR') {
+        return computedTotal;
+    }
+    const overrideInput = item ? item.querySelector('[data-tor-amount-override]') : null;
+    if (!overrideInput) {
+        return computedTotal;
+    }
+    const raw = overrideInput.value.trim();
+    if (raw === '') {
+        return computedTotal;
+    }
+    const parsed = parseFloat(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : computedTotal;
+}
+
 function updateFee() {
     const checked = document.querySelectorAll('input[name="document_type_ids[]"]:checked');
     const listEl = document.getElementById('paymentBreakdownList');
@@ -1608,6 +1645,11 @@ function updateFee() {
         } else {
             lineTotal = feePerSet ? base + stampFee : (base * copies) + stampFee;
             detailText = buildBreakdownDetail(copies, base, stampFee, feePerSet, null);
+        }
+
+        lineTotal = applyTorOverrideAmount(item, checkbox, lineTotal);
+        if ((checkbox.dataset.docCode || '').toUpperCase() === 'TOR' && lineTotal !== (feePerSet ? base + stampFee : (base * copies) + stampFee)) {
+            detailText = 'Custom TOR amount';
         }
 
         total += lineTotal;

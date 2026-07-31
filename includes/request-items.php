@@ -195,6 +195,147 @@ function refreshRequestTotalAmount(int $requestId): void {
     $stmt->execute([$requestId]);
     $total = (float) $stmt->fetchColumn();
     $db->prepare('UPDATE requests SET total_amount = ? WHERE id = ?')->execute([$total, $requestId]);
+    syncPendingPaymentAmount($requestId);
+}
+
+function isTorDocumentCode(?string $code): bool {
+    return strtoupper(trim((string) $code)) === 'TOR';
+}
+
+function isTorDocumentTypeId(int $documentTypeId): bool {
+    if ($documentTypeId <= 0) {
+        return false;
+    }
+
+    $db = getDB();
+    $stmt = $db->prepare('SELECT code FROM document_types WHERE id = ? LIMIT 1');
+    $stmt->execute([$documentTypeId]);
+    return isTorDocumentCode($stmt->fetchColumn() ?: null);
+}
+
+function isTorRequestItem(array $item): bool {
+    return isTorDocumentCode($item['document_code'] ?? null);
+}
+
+function torDocumentStampAmountForType(int $documentTypeId): float {
+    if ($documentTypeId <= 0) {
+        return 0.0;
+    }
+
+    $db = getDB();
+    $stmt = $db->prepare('SELECT requires_documentary_stamp FROM document_types WHERE id = ? LIMIT 1');
+    $stmt->execute([$documentTypeId]);
+    $row = $stmt->fetch();
+    if (!$row || empty($row['requires_documentary_stamp'])) {
+        return 0.0;
+    }
+
+    return documentStampFeeAmount();
+}
+
+function torItemBaseAmount(array $item): float {
+    $total = (float) ($item['item_amount'] ?? 0);
+    $stamp = torDocumentStampAmountForType((int) ($item['document_type_id'] ?? 0));
+
+    return max(0, round($total - $stamp, 2));
+}
+
+function torLineTotalFromBaseAmount(int $documentTypeId, float $baseAmount): float {
+    return max(0, round($baseAmount + torDocumentStampAmountForType($documentTypeId), 2));
+}
+
+function canModifyRequestItemAmounts(?string $requestStatus): bool {
+    return in_array((string) $requestStatus, [
+        'submitted',
+        'under_review',
+        'awaiting_requirements',
+        'needs_revision',
+        'requirements_submitted',
+        'requirements_verified',
+    ], true);
+}
+
+function resolveTorItemAmountOverride(int $documentTypeId, float $calculatedAmount, array $overrides): float {
+    if (!isTorDocumentTypeId($documentTypeId)) {
+        return $calculatedAmount;
+    }
+
+    if (!array_key_exists($documentTypeId, $overrides) && !array_key_exists((string) $documentTypeId, $overrides)) {
+        return $calculatedAmount;
+    }
+
+    $raw = $overrides[$documentTypeId] ?? $overrides[(string) $documentTypeId] ?? '';
+    $raw = trim((string) $raw);
+    if ($raw === '') {
+        return $calculatedAmount;
+    }
+
+    if (!is_numeric($raw)) {
+        return $calculatedAmount;
+    }
+
+    return max(0, round((float) $raw, 2));
+}
+
+function syncPendingPaymentAmount(int $requestId): void {
+    $db = getDB();
+    $stmt = $db->prepare('SELECT total_amount FROM requests WHERE id = ?');
+    $stmt->execute([$requestId]);
+    $total = (float) $stmt->fetchColumn();
+
+    $db->prepare("UPDATE payments SET amount = ? WHERE request_id = ? AND status = 'pending'")
+       ->execute([$total, $requestId]);
+}
+
+function updateRequestItemAmount(int $itemId, float $baseAmount, int $updatedBy, int $requestId): ?string {
+    ensureRequestItemsSchema();
+
+    $baseAmount = round($baseAmount, 2);
+    if ($baseAmount < 0) {
+        return 'Enter a valid TOR base amount.';
+    }
+
+    $item = getRequestItem($itemId);
+    if (!$item || (int) ($item['request_id'] ?? 0) !== $requestId) {
+        return 'TOR line item not found for this request.';
+    }
+
+    if (!isTorRequestItem($item)) {
+        return 'Only TOR amounts can be modified from this screen.';
+    }
+
+    if (!canModifyRequestItemAmounts($item['request_status'] ?? null)) {
+        return 'TOR amount can no longer be changed after payment has started.';
+    }
+
+    $db = getDB();
+    $verifiedPayment = $db->prepare("SELECT id FROM payments WHERE request_id = ? AND status = 'verified' LIMIT 1");
+    $verifiedPayment->execute([$requestId]);
+    if ($verifiedPayment->fetch()) {
+        return 'Payment has already been verified for this request.';
+    }
+
+    $documentTypeId = (int) ($item['document_type_id'] ?? 0);
+    $stampAmount = torDocumentStampAmountForType($documentTypeId);
+    $lineTotal = torLineTotalFromBaseAmount($documentTypeId, $baseAmount);
+    $previousAmount = (float) ($item['item_amount'] ?? 0);
+    $db->prepare('UPDATE request_items SET item_amount = ? WHERE id = ?')
+       ->execute([$lineTotal, $itemId]);
+
+    refreshRequestTotalAmount($requestId);
+
+    auditLog('update_tor_item_amount', 'request_items', $itemId, [
+        'previous_amount' => $previousAmount,
+        'previous_base_amount' => torItemBaseAmount($item),
+    ], [
+        'base_amount' => $baseAmount,
+        'stamp_amount' => $stampAmount,
+        'line_total' => $lineTotal,
+        'updated_by' => $updatedBy,
+        'request_id' => $requestId,
+    ]);
+
+    return null;
 }
 
 function prepareRequestItemsAfterPayment(int $requestId): void {
