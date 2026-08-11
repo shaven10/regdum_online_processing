@@ -34,8 +34,9 @@ require_once __DIR__ . '/../includes/header.php';
 renderDashboardWelcome($user, 'Review requests, verify requirements, assign documents to staff, and process documents assigned to you.');
 renderDashboardActions([
     ['url' => 'new-onsite-request.php', 'label' => 'Onsite Request', 'icon' => 'fa-store', 'class' => 'btn-primary'],
+    ['url' => 'reports.php', 'label' => 'All Requests', 'icon' => 'fa-chart-bar'],
     ['url' => 'documents.php', 'label' => 'My Assignments', 'icon' => 'fa-tasks'],
-    ['url' => 'compliance.php?filter=pending', 'label' => 'New Requests', 'icon' => 'fa-inbox'],
+    ['url' => 'compliance.php', 'label' => 'Request Review', 'icon' => 'fa-clipboard-check'],
     ['url' => 'assignments.php', 'label' => 'Staff Assignment', 'icon' => 'fa-user-tag'],
     ['url' => 'compliance.php?filter=awaiting_student', 'label' => 'Awaiting Student', 'icon' => 'fa-list-check'],
     ['url' => 'compliance.php?filter=re_evaluation', 'label' => 'Re-evaluation', 'icon' => 'fa-search'],
@@ -45,10 +46,12 @@ renderDashboardActions([
 ?>
 
 <div class="stats-grid">
-    <?= statCardLink('compliance.php?filter=pending', 'orange', 'fa-inbox', (string)$stats['pending'], 'New Requests') ?>
-    <?= statCardLink('compliance.php?filter=awaiting_student', 'blue', 'fa-list-check', (string)$stats['awaiting_student'], 'Awaiting Student') ?>
-    <?= statCardLink('compliance.php?filter=re_evaluation', 'purple', 'fa-search', (string)$stats['re_evaluation'], 'Re-evaluation') ?>
-    <?= statCardLink('compliance.php?filter=verified', 'teal', 'fa-credit-card', (string)$stats['compliant'], 'Approved for Payment') ?>
+    <?= statCardLink('compliance.php', 'orange', 'fa-clipboard-check', (string)($stats['review'] ?? 0), 'Review Queue') ?>
+    <?= statCardLink('compliance.php?filter=pending', 'blue', 'fa-inbox', (string)$stats['pending'], 'New Requests') ?>
+    <?= statCardLink('compliance.php?filter=needs_revision', 'gold', 'fa-exclamation-triangle', (string)$stats['needs_revision'], 'Needs Revision') ?>
+    <?= statCardLink('compliance.php?filter=awaiting_student', 'purple', 'fa-list-check', (string)$stats['awaiting_student'], 'Awaiting Student') ?>
+    <?= statCardLink('compliance.php?filter=re_evaluation', 'teal', 'fa-search', (string)$stats['re_evaluation'], 'Re-evaluation') ?>
+    <?= statCardLink('compliance.php?filter=verified', 'green', 'fa-credit-card', (string)$stats['compliant'], 'Approved for Payment') ?>
     <?= statCardLink('assignments.php', 'purple', 'fa-user-tag', (string)($stats['assignment_pending'] ?? 0), 'Staff Assignment') ?>
     <?= statCardLink('documents.php', 'orange', 'fa-tasks', (string) ($assignmentStats['assigned'] ?? 0), 'My Assignments') ?>
     <?= statCardLink('documents.php?status=processing', 'blue', 'fa-cog', (string) ($assignmentStats['processing'] ?? 0), 'My Processing') ?>

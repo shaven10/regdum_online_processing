@@ -29,18 +29,8 @@ if ($itemId) {
     redirect(APP_URL . '/staff/requests.php');
 }
 
-$db = getDB();
-$headerStmt = $db->prepare('SELECT r.*, u.first_name, u.last_name, u.email, u.student_id, u.phone, sp.course, sp.year_level, sp.enrollment_status
-    FROM requests r
-    JOIN users u ON r.user_id = u.id
-    LEFT JOIN student_profiles sp ON u.id = sp.user_id
-    WHERE r.id = ?');
-$headerStmt->execute([$requestId]);
-$requestHeader = $headerStmt->fetch();
-
-$docs = $db->prepare('SELECT * FROM request_documents WHERE request_id = ?');
-$docs->execute([$requestId]);
-$documents = $docs->fetchAll();
+$context = loadAssignmentRequestContext($requestId);
+$requestHeader = $context['request'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $action = $_POST['action'] ?? '';
@@ -81,40 +71,23 @@ $activeNav = 'requests';
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
-<div class="grid-2">
+<div class="grid-2 assignment-process-layout">
     <div class="card">
         <div class="card-header">
-            <h2><?= e($request['document_name']) ?></h2>
+            <div>
+                <h2>Request Details</h2>
+                <p class="text-muted" style="margin:.35rem 0 0">
+                    <?= e($request['request_number']) ?> · <?= e($request['document_name']) ?>
+                </p>
+            </div>
             <?= requestItemStatusBadge($request['item_status']) ?>
         </div>
         <div class="card-body">
-            <div class="detail-grid">
-                <div class="detail-item"><label>Request #</label><span><?= e($request['request_number']) ?></span></div>
-                <div class="detail-item"><label>Student</label><span><?= e($requestHeader['first_name'] . ' ' . $requestHeader['last_name']) ?></span></div>
-                <div class="detail-item"><label>Student ID</label><span><?= e($requestHeader['student_id']) ?></span></div>
-                <div class="detail-item"><label>Course</label><span><?= e($requestHeader['course'] ?? '—') ?> (<?= e($requestHeader['year_level'] ?? '') ?>)</span></div>
-                <div class="detail-item"><label>Purpose</label><span><?= purposeLabel($requestHeader['purpose']) ?></span></div>
-                <div class="detail-item"><label>Copies</label><span><?= (int) $request['copies'] ?></span></div>
-                <div class="detail-item"><label>Batch Status</label><span><?= statusBadge($requestHeader['status']) ?></span></div>
-                <?php if (!empty($request['release_date'])): ?>
-                    <div class="detail-item"><label>Release Date</label><span><?= formatDate($request['release_date']) ?> at <?= date('g:i A', strtotime((string) $request['release_time'])) ?></span></div>
-                <?php endif; ?>
-            </div>
-
-            <?= renderRequestItemDetailsHtml($request) ?>
-
-            <?php if (!empty($documents)): ?>
-                <h4>Uploaded Documents</h4>
-                <ul class="doc-list">
-                    <?php foreach ($documents as $doc): ?>
-                        <li><a href="<?= UPLOAD_URL ?>/<?= e($doc['file_name']) ?>" target="_blank"><?= e($doc['original_name']) ?></a></li>
-                    <?php endforeach; ?>
-                </ul>
-            <?php endif; ?>
+            <?= renderAssignmentRequestDetailsHtml($context, $request) ?>
         </div>
     </div>
 
-    <div class="card">
+    <div class="card assignment-actions-card">
         <div class="card-header"><h2>Processing Actions</h2></div>
         <div class="card-body">
             <div class="action-buttons">
@@ -139,6 +112,10 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
                 <button type="submit" class="btn btn-outline">Send Notification</button>
             </form>
+
+            <p style="margin-top:1rem">
+                <a href="<?= APP_URL ?>/staff/requests.php" class="btn btn-outline btn-sm"><i class="fas fa-arrow-left"></i> Back to Assignments</a>
+            </p>
         </div>
     </div>
 </div>

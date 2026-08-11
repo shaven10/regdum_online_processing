@@ -29,6 +29,10 @@ A PHP/MySQL web application for managing online credential and document requests
 - Verify or reject student payment submissions
 - Payment reports
 
+### Accounting
+- Process **Statement of Account (SOA)** document assignments only
+- Mark SOA ready for pickup / completed
+
 ### Registrar
 - Review submitted requests and assign requirement checklists
 - Approve requirements for payment or send back for revision
@@ -52,7 +56,7 @@ A PHP/MySQL web application for managing online credential and document requests
 - Student records, reports (CSV export), audit logs
 
 ### Security
-- Role-based access control (Student, Staff, Registrar, Admin, Cashier, Clearance Officer)
+- Role-based access control (Student, Staff, Registrar, Admin, Cashier, Accounting, Clearance Officer)
 - Bcrypt password hashing
 - CSRF protection on forms
 - Audit logging
@@ -125,6 +129,7 @@ Delete `install.php` in production after setup.
 | Staff      | staff@regdum.edu.ph       | Staff@123     |
 | Registrar  | registrar@regdum.edu.ph   | Registrar@123 |
 | Cashier    | cashier@regdum.edu.ph     | Cashier@123   |
+| Accounting | accounting@regdum.edu.ph  | Accounting@123 |
 
 Students register via the registration page.
 
@@ -133,6 +138,7 @@ Students register via the registration page.
 ```
 regdum_ol_docs_prcsng/
 ├── admin/              # Administrator module (users, reports, programs, campuses)
+├── accounting/         # Accounting module (SOA document assignments only)
 ├── auth/               # Login, register, password reset
 ├── cashier/            # Payment verification
 ├── clearance/          # Clearance officer module

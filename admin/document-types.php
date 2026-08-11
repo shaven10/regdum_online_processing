@@ -528,7 +528,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <option value="<?= e($office) ?>"><?= e($label) ?></option>
             <?php endforeach; ?>
         </select>
-        <small class="text-muted">Suggested office when registrar assigns this document (e.g. SOA → Cashier, Good Moral → Guidance).</small>
+        <small class="text-muted">Suggested office when registrar assigns this document. SOA defaults to Accounting; other offices remain available as assignees.</small>
     </div>
 
     <div class="form-group">

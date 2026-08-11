@@ -1,11 +1,19 @@
 <?php
 
 function assignmentOfficeOptions(): array {
-    return [
+    require_once __DIR__ . '/clearance.php';
+
+    $options = [
         'registrar' => 'Registrar Office',
         'cashier' => 'Cashier',
-        'guidance' => 'Guidance Office',
+        'accounting' => 'Accounting (SOA)',
     ];
+
+    foreach (clearanceDepartments() as $dept) {
+        $options[$dept['code']] = $dept['name'];
+    }
+
+    return $options;
 }
 
 function normalizeAssignmentOffice(?string $office): string {
@@ -26,7 +34,7 @@ function ensureDocumentAssignmentOfficeSchema(): void {
             ADD COLUMN assignment_office VARCHAR(30) NOT NULL DEFAULT 'registrar' AFTER requirements_required");
 
         $defaults = [
-            'SOA' => 'cashier',
+            'SOA' => 'accounting',
             'GMC' => 'guidance',
         ];
         $update = $db->prepare('UPDATE document_types SET assignment_office = ? WHERE code = ?');
@@ -39,7 +47,7 @@ function ensureDocumentAssignmentOfficeSchema(): void {
 function defaultAssignmentOfficeForDocumentCode(?string $code): string {
     $code = strtoupper(trim((string) $code));
     return match ($code) {
-        'SOA' => 'cashier',
+        'SOA' => 'accounting',
         'GMC' => 'guidance',
         default => 'registrar',
     };
@@ -69,10 +77,30 @@ function getDocumentAssignmentOffice(?int $documentTypeId = null, ?string $docum
 function getAssignableProcessors(): array {
     ensureDocumentAssignmentOfficeSchema();
     require_once __DIR__ . '/clearance.php';
+    require_once __DIR__ . '/programs.php';
     ensureClearanceSchema();
+    ensureAcademicProgramsSchema();
 
     $db = getDB();
     $processors = [];
+    $seen = [];
+
+    $addProcessor = static function (array $row, string $office, string $officeLabel, string $role) use (&$processors, &$seen): void {
+        $id = (int) $row['id'];
+        if ($id <= 0 || isset($seen[$id])) {
+            return;
+        }
+        $seen[$id] = true;
+        $processors[] = [
+            'id' => $id,
+            'first_name' => $row['first_name'],
+            'last_name' => $row['last_name'],
+            'email' => $row['email'],
+            'office' => $office,
+            'office_label' => $officeLabel,
+            'role' => $role,
+        ];
+    };
 
     $registrars = $db->query("SELECT u.id, u.first_name, u.last_name, u.email, r.name as role_name
         FROM users u
@@ -80,15 +108,7 @@ function getAssignableProcessors(): array {
         WHERE r.name = 'registrar' AND u.is_active = 1
         ORDER BY u.last_name, u.first_name")->fetchAll();
     foreach ($registrars as $row) {
-        $processors[] = [
-            'id' => (int) $row['id'],
-            'first_name' => $row['first_name'],
-            'last_name' => $row['last_name'],
-            'email' => $row['email'],
-            'office' => 'registrar',
-            'office_label' => 'Registrar',
-            'role' => 'registrar',
-        ];
+        $addProcessor($row, 'registrar', 'Registrar', 'registrar');
     }
 
     $staff = $db->query("SELECT u.id, u.first_name, u.last_name, u.email, r.name as role_name
@@ -97,15 +117,7 @@ function getAssignableProcessors(): array {
         WHERE r.name = 'staff' AND u.is_active = 1
         ORDER BY u.last_name, u.first_name")->fetchAll();
     foreach ($staff as $row) {
-        $processors[] = [
-            'id' => (int) $row['id'],
-            'first_name' => $row['first_name'],
-            'last_name' => $row['last_name'],
-            'email' => $row['email'],
-            'office' => 'registrar',
-            'office_label' => 'Registrar Staff',
-            'role' => 'staff',
-        ];
+        $addProcessor($row, 'registrar', 'Registrar Staff', 'staff');
     }
 
     $cashiers = $db->query("SELECT u.id, u.first_name, u.last_name, u.email, r.name as role_name
@@ -114,34 +126,52 @@ function getAssignableProcessors(): array {
         WHERE r.name = 'cashier' AND u.is_active = 1
         ORDER BY u.last_name, u.first_name")->fetchAll();
     foreach ($cashiers as $row) {
-        $processors[] = [
-            'id' => (int) $row['id'],
-            'first_name' => $row['first_name'],
-            'last_name' => $row['last_name'],
-            'email' => $row['email'],
-            'office' => 'cashier',
-            'office_label' => 'Cashier',
-            'role' => 'cashier',
-        ];
+        $addProcessor($row, 'cashier', 'Cashier', 'cashier');
     }
 
-    $guidance = $db->query("SELECT u.id, u.first_name, u.last_name, u.email, r.name as role_name
+    require_once __DIR__ . '/accounting.php';
+    ensureAccountingRole();
+    $accountants = $db->query("SELECT u.id, u.first_name, u.last_name, u.email, r.name as role_name
+        FROM users u
+        JOIN roles r ON u.role_id = r.id
+        WHERE r.name = 'accounting' AND u.is_active = 1
+        ORDER BY u.last_name, u.first_name")->fetchAll();
+    foreach ($accountants as $row) {
+        $addProcessor($row, 'accounting', 'Accounting (SOA)', 'accounting');
+    }
+
+    $officers = $db->query("SELECT u.id, u.first_name, u.last_name, u.email, u.clearance_program_id,
+            r.name as role_name, cd.code AS department_code, cd.name AS department_name,
+            ap.code AS program_code, ap.name AS program_name
         FROM users u
         JOIN roles r ON u.role_id = r.id
         LEFT JOIN clearance_departments cd ON cd.id = u.clearance_department_id
+        LEFT JOIN academic_programs ap ON ap.id = u.clearance_program_id
         WHERE r.name = 'clearance_officer' AND u.is_active = 1
-          AND (cd.code = 'guidance' OR u.email LIKE 'guidance@%')
-        ORDER BY u.last_name, u.first_name")->fetchAll();
-    foreach ($guidance as $row) {
-        $processors[] = [
-            'id' => (int) $row['id'],
-            'first_name' => $row['first_name'],
-            'last_name' => $row['last_name'],
-            'email' => $row['email'],
-            'office' => 'guidance',
-            'office_label' => 'Guidance Office',
-            'role' => 'clearance_officer',
-        ];
+        ORDER BY cd.sort_order, u.last_name, u.first_name")->fetchAll();
+
+    $deptLabels = [];
+    foreach (clearanceDepartments() as $dept) {
+        $deptLabels[$dept['code']] = $dept['name'];
+    }
+
+    foreach ($officers as $row) {
+        $office = strtolower(trim((string) ($row['department_code'] ?? '')));
+        if ($office === '' || !isset($deptLabels[$office])) {
+            // Fallback: keep unassigned officers selectable under Registrar Office.
+            $office = 'registrar';
+            $officeLabel = 'Clearance Officer';
+        } else {
+            $officeLabel = $deptLabels[$office];
+            if ($office === 'program_chair') {
+                $programCode = trim((string) ($row['program_code'] ?? ''));
+                $programName = trim((string) ($row['program_name'] ?? ''));
+                if ($programCode !== '' || $programName !== '') {
+                    $officeLabel .= ' — ' . ($programCode !== '' ? $programCode : $programName);
+                }
+            }
+        }
+        $addProcessor($row, $office, $officeLabel, 'clearance_officer');
     }
 
     return $processors;
@@ -182,6 +212,7 @@ function assignmentProcessUrlForUser(int $userId, int $itemId): string {
 
     return match ($role) {
         'cashier' => APP_URL . '/cashier/process-document.php?item_id=' . $itemId,
+        'accounting' => APP_URL . '/accounting/process-document.php?item_id=' . $itemId,
         'clearance_officer' => APP_URL . '/clearance/process-document.php?item_id=' . $itemId,
         'registrar' => APP_URL . '/registrar/process-document.php?item_id=' . $itemId,
         default => APP_URL . '/staff/process-request.php?item_id=' . $itemId,

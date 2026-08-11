@@ -71,10 +71,9 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/clearance/documents.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-file-signature"></i> Assigned Documents</a>
             <?php elseif (hasRole('registrar')): ?>
                 <a href="<?= APP_URL ?>/registrar/dashboard.php" class="<?= $activeNav === 'dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+                <a href="<?= APP_URL ?>/registrar/reports.php" class="<?= $activeNav === 'reports' ? 'active' : '' ?>"><i class="fas fa-list-alt"></i> All Request</a>
                 <a href="<?= APP_URL ?>/registrar/new-onsite-request.php" class="<?= $activeNav === 'onsite-request' ? 'active' : '' ?>"><i class="fas fa-store"></i> Onsite Request</a>
-                <a href="<?= APP_URL ?>/registrar/compliance.php" class="<?= $activeNav === 'compliance' ? 'active' : '' ?>"><i class="fas fa-clipboard-check"></i> Compliance Review</a>
-                <a href="<?= APP_URL ?>/registrar/compliance.php?filter=pending" class="<?= $activeNav === 'pending' ? 'active' : '' ?>"><i class="fas fa-clock"></i> Pending</a>
-                <a href="<?= APP_URL ?>/registrar/compliance.php?filter=needs_revision" class="<?= $activeNav === 'revision' ? 'active' : '' ?>"><i class="fas fa-exclamation-triangle"></i> Needs Revision</a>
+                <a href="<?= APP_URL ?>/registrar/compliance.php" class="<?= $activeNav === 'compliance' ? 'active' : '' ?>"><i class="fas fa-clipboard-check"></i> Request Review</a>
                 <a href="<?= APP_URL ?>/registrar/assignments.php" class="<?= $activeNav === 'assignments' ? 'active' : '' ?>"><i class="fas fa-user-tag"></i> Staff Assignment</a>
                 <a href="<?= APP_URL ?>/registrar/documents.php" class="<?= $activeNav === 'my-assignments' ? 'active' : '' ?>"><i class="fas fa-tasks"></i> My Assignments</a>
                 <a href="<?= APP_URL ?>/registrar/attachments.php" class="<?= $activeNav === 'attachments' ? 'active' : '' ?>"><i class="fas fa-paperclip"></i> Attachments</a>
@@ -86,6 +85,11 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/cashier/documents.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-file-invoice"></i> Assigned Documents</a>
                 <a href="<?= APP_URL ?>/cashier/reports.php" class="<?= $activeNav === 'reports' ? 'active' : '' ?>"><i class="fas fa-receipt"></i> Payment Reports</a>
                 <a href="<?= APP_URL ?>/cashier/bank-settings.php" class="<?= $activeNav === 'bank-settings' ? 'active' : '' ?>"><i class="fas fa-university"></i> Bank Settings</a>
+            <?php elseif (hasRole('accounting')): ?>
+                <a href="<?= APP_URL ?>/accounting/dashboard.php" class="<?= $activeNav === 'dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+                <a href="<?= APP_URL ?>/accounting/documents.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-file-invoice-dollar"></i> SOA Assignments</a>
+                <a href="<?= APP_URL ?>/accounting/documents.php?status=processing" class="<?= $activeNav === 'processing' ? 'active' : '' ?>"><i class="fas fa-spinner"></i> Processing</a>
+                <a href="<?= APP_URL ?>/accounting/documents.php?status=ready_for_pickup" class="<?= $activeNav === 'ready' ? 'active' : '' ?>"><i class="fas fa-box-open"></i> Ready for Pickup</a>
             <?php elseif (hasRole('admin')): ?>
                 <?php $adminSettingsNav = ['users', 'documents', 'release-rules', 'programs', 'campuses', 'requirement-types', 'requirements', 'purpose-suggestions', 'theme', 'audit']; ?>
                 <?php $settingsMenuOpen = in_array($activeNav, $adminSettingsNav, true); ?>
@@ -122,6 +126,9 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
 
             <div class="sidebar-nav-section">
                 <p class="sidebar-nav-section-title">Support</p>
+            <?php if (!hasRole('student')): ?>
+            <a href="<?= APP_URL ?>/account/profile.php" class="<?= $activeNav === 'profile' ? 'active' : '' ?>"><i class="fas fa-user"></i> My Profile</a>
+            <?php endif; ?>
             <a href="<?= APP_URL ?>/faq.php" class="<?= $activeNav === 'faq' ? 'active' : '' ?>"><i class="fas fa-question-circle"></i> FAQ</a>
             <a href="<?= APP_URL ?>/help.php" class="<?= $activeNav === 'help' ? 'active' : '' ?>"><i class="fas fa-headset"></i> Help Desk</a>
             <a href="<?= APP_URL ?>/notifications.php" class="<?= $activeNav === 'notifications' ? 'active' : '' ?>">
@@ -131,11 +138,21 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
             </div>
         </nav>
         <div class="sidebar-user-card">
+            <?php if (!hasRole('student')): ?>
+            <a href="<?= APP_URL ?>/account/profile.php" class="sidebar-user-card-link" title="My Profile">
+                <div class="sidebar-user-avatar" aria-hidden="true"><?= e($userInitials) ?></div>
+                <div class="sidebar-user-info">
+                    <strong><?= e(fullName($user)) ?></strong>
+                    <span><?= e(str_replace('_', ' ', $user['role_name'])) ?></span>
+                </div>
+            </a>
+            <?php else: ?>
             <div class="sidebar-user-avatar" aria-hidden="true"><?= e($userInitials) ?></div>
             <div class="sidebar-user-info">
                 <strong><?= e(fullName($user)) ?></strong>
                 <span><?= e(str_replace('_', ' ', $user['role_name'])) ?></span>
             </div>
+            <?php endif; ?>
         </div>
         <div class="sidebar-footer">
             <a href="<?= APP_URL ?>/auth/logout.php" class="sidebar-logout-btn"><i class="fas fa-sign-out-alt"></i> Sign Out</a>

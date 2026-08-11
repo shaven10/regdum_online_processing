@@ -47,6 +47,35 @@ function statusFlashMeta(string $type): array {
     };
 }
 
+/**
+ * Status dialog is reserved for important operational changes
+ * (follow-up guidance, context details, or explicit modal flag).
+ */
+function flashShouldUseModal(?array $flash): bool {
+    if (!$flash) {
+        return false;
+    }
+
+    if (array_key_exists('modal', $flash)) {
+        return (bool) $flash['modal'];
+    }
+
+    $details = $flash['details'] ?? [];
+    if (is_string($details)) {
+        $details = array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $details) ?: [])));
+    }
+
+    $context = $flash['context'] ?? [];
+    if (!is_array($context)) {
+        $context = [];
+    }
+
+    return $context !== []
+        || $details !== []
+        || trim((string) ($flash['next_step'] ?? '')) !== ''
+        || trim((string) ($flash['action_url'] ?? '')) !== '';
+}
+
 function setStatusFlash(string $type, string $message, array $options = []): void {
     $meta = statusFlashMeta($type);
     setFlash($type, $message, array_merge([
@@ -54,8 +83,38 @@ function setStatusFlash(string $type, string $message, array $options = []): voi
     ], $options));
 }
 
-function renderAppStatusModal(?array $flash): void {
+function renderAppFlashBanner(?array $flash): void {
     $payload = normalizeFlashPayload($flash);
+    if (!$payload || flashShouldUseModal($flash)) {
+        return;
+    }
+
+    $type = preg_replace('/[^a-z]/', '', (string) ($payload['type'] ?? 'info')) ?: 'info';
+    $icon = match ($type) {
+        'success' => 'fa-check-circle',
+        'error' => 'fa-exclamation-circle',
+        'warning' => 'fa-exclamation-triangle',
+        default => 'fa-info-circle',
+    };
+    ?>
+    <div class="alert alert-<?= e($type) ?> app-flash-banner" id="appFlashBanner" role="status">
+        <i class="fas <?= e($icon) ?>" aria-hidden="true"></i>
+        <div class="app-flash-banner-body">
+            <?php if (!empty($payload['title']) && $payload['title'] !== statusFlashMeta($type)['title']): ?>
+                <strong><?= e($payload['title']) ?></strong>
+            <?php endif; ?>
+            <span><?= e($payload['message']) ?></span>
+        </div>
+        <button type="button" class="app-flash-banner-close" data-dismiss-flash-banner aria-label="Dismiss">
+            <i class="fas fa-times"></i>
+        </button>
+    </div>
+    <?php
+}
+
+function renderAppStatusModal(?array $flash): void {
+    $useModal = flashShouldUseModal($flash);
+    $payload = $useModal ? normalizeFlashPayload($flash) : null;
     ?>
     <div class="status-modal" id="statusModal" aria-hidden="true">
         <div class="status-modal-overlay" data-close-status-modal></div>
@@ -95,7 +154,9 @@ function renderAppStatusModal(?array $flash): void {
             </div>
         </div>
     </div>
-    <?php if ($payload): ?>
+    <?php
+    renderAppFlashBanner($useModal ? null : $flash);
+    if ($payload): ?>
         <script>window.__APP_FLASH__ = <?= json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;</script>
     <?php endif;
 }
@@ -172,12 +233,13 @@ function adminFormRecordAttr(array $record): string {
 
 function adminSettingsActionMeta(string $action): array {
     return match ($action) {
-        'edit'       => ['icon' => 'fa-edit', 'label' => 'Edit'],
-        'activate'   => ['icon' => 'fa-toggle-on', 'label' => 'Activate'],
-        'deactivate' => ['icon' => 'fa-toggle-off', 'label' => 'Deactivate'],
-        'delete'     => ['icon' => 'fa-trash-alt', 'label' => 'Delete'],
-        'configure'  => ['icon' => 'fa-sliders-h', 'label' => 'Configure'],
-        default      => ['icon' => 'fa-circle', 'label' => ucfirst($action)],
+        'edit'           => ['icon' => 'fa-edit', 'label' => 'Edit'],
+        'activate'       => ['icon' => 'fa-toggle-on', 'label' => 'Activate'],
+        'deactivate'     => ['icon' => 'fa-toggle-off', 'label' => 'Deactivate'],
+        'delete'         => ['icon' => 'fa-trash-alt', 'label' => 'Delete'],
+        'reset_password' => ['icon' => 'fa-key', 'label' => 'Reset Password'],
+        'configure'      => ['icon' => 'fa-sliders-h', 'label' => 'Configure'],
+        default          => ['icon' => 'fa-circle', 'label' => ucfirst($action)],
     };
 }
 
@@ -282,6 +344,7 @@ function landingNavLinks(): array
 {
     return [
         'home' => ['href' => 'index.php', 'label' => 'Home'],
+        'track' => ['href' => 'track.php', 'label' => 'Track Request'],
         'faq' => ['href' => 'faq.php', 'label' => 'FAQ'],
         'verify' => ['href' => 'verify.php', 'label' => 'Verify Document'],
         'login' => ['href' => 'auth/login.php', 'label' => 'Sign In', 'class' => 'btn btn-outline'],

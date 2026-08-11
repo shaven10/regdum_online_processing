@@ -18,6 +18,15 @@ $status = trim($_GET['status'] ?? '');
 $search = trim($_GET['search'] ?? '');
 $items = getStaffAssignedItems((int) $user['id'], $status);
 
+if (!empty($documentCodeFilter)) {
+    $allowedCodes = is_array($documentCodeFilter)
+        ? array_map(static fn($code): string => strtoupper(trim((string) $code)), $documentCodeFilter)
+        : [strtoupper(trim((string) $documentCodeFilter))];
+    $items = array_values(array_filter($items, static function (array $row) use ($allowedCodes): bool {
+        return in_array(strtoupper(trim((string) ($row['document_code'] ?? ''))), $allowedCodes, true);
+    }));
+}
+
 if ($search !== '') {
     $items = array_values(array_filter($items, static function (array $row) use ($search): bool {
         $haystack = strtolower($row['request_number'] . ' ' . $row['document_name'] . ' ' . $row['first_name'] . ' ' . $row['last_name'] . ' ' . ($row['student_id'] ?? ''));
@@ -71,8 +80,10 @@ require_once __DIR__ . '/header.php';
                         <td data-label="Copies"><?= (int) $item['copies'] ?></td>
                         <td data-label="Item Status"><?= requestItemStatusBadge($item['item_status']) ?></td>
                         <td data-label="Batch Status"><?= statusBadge($item['request_status']) ?></td>
-                        <td data-label="Action">
-                            <a href="<?= e($processBaseUrl) ?>?item_id=<?= (int) $item['id'] ?>" class="btn btn-sm btn-primary">Process</a>
+                        <td data-label="Action" class="payment-actions-cell">
+                            <a href="<?= e($processBaseUrl) ?>?item_id=<?= (int) $item['id'] ?>" class="btn btn-sm btn-primary">
+                                <i class="fas fa-eye"></i> View / Process
+                            </a>
                         </td>
                     </tr>
                     <?php endforeach; ?>

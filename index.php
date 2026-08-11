@@ -99,11 +99,11 @@ if (isLoggedIn()) {
                 <h3>Request Documents</h3>
                 <p>TOR, Diploma, Certificates, and more</p>
             </a>
-            <div class="feature-card">
-                <i class="fas fa-credit-card"></i>
-                <h3>Online Payment</h3>
-                <p>Pay via bank transfer or on-site at the cashier</p>
-            </div>
+            <a href="track.php" class="feature-card feature-card-link">
+                <i class="fas fa-search-location"></i>
+                <h3>Track Onsite Request</h3>
+                <p>Check walk-in request and online clearance status</p>
+            </a>
             <a href="verify.php" class="feature-card feature-card-link">
                 <i class="fas fa-qrcode"></i>
                 <h3>Digital Verification</h3>

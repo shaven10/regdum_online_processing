@@ -38,10 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     if ($paymentId && $action === 'verify') {
         $validationError = validatePaymentVerificationFields($orNumber, $paymentDate);
         if ($validationError) {
-            setFlash('error', $validationError, [
-                'title' => 'Verification Details Required',
-                'next_step' => 'Enter the OR number and date of payment before verifying.',
-            ]);
+            setFlash('error', $validationError);
             redirect($redirectUrl . ($search ? '&search=' . urlencode($search) : '') . '#payment-' . $paymentId);
         }
 
@@ -51,10 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         if ($requestIdForGate > 0) {
             $clearanceBlock = paymentVerificationBlockedByClearance($requestIdForGate);
             if ($clearanceBlock !== null) {
-                setFlash('error', $clearanceBlock, [
-                    'title' => 'Online Clearance Incomplete',
-                    'next_step' => 'Wait until all clearance offices have signed before verifying this payment.',
-                ]);
+                setFlash('error', $clearanceBlock);
                 redirect($redirectUrl . ($search ? '&search=' . urlencode($search) : '') . '#payment-' . $paymentId);
             }
         }
@@ -74,10 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             'action_label' => 'Back to payments',
         ]);
     } elseif ($action === 'reject') {
-        setFlash('error', 'Please provide feedback explaining why the payment was rejected.', [
-            'title' => 'Feedback Required',
-            'next_step' => 'Add clear notes so the student knows what to fix before resubmitting.',
-        ]);
+        setFlash('error', 'Please provide feedback explaining why the payment was rejected.');
         redirect($redirectUrl . ($search ? '&search=' . urlencode($search) : '') . '#payment-' . $paymentId);
     } else {
         setFlash('error', 'Unable to process payment. It may have already been handled.');
@@ -87,6 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
 $payments = getPaymentsList($status, $search);
 $verificationDetailsByPayment = buildPaymentVerificationDetailsForPayments($payments);
+$requestDetailsByPayment = buildPaymentRequestDetailsForPayments($payments);
 $stats = getPaymentStats();
 $rejectReasons = [
     'Invalid or unreadable receipt uploaded.',
@@ -238,6 +230,12 @@ require_once __DIR__ . '/../includes/header.php';
                             <td data-label="Status"><?= statusBadge($p['status']) ?></td>
                             <td data-label="Submitted"><?= formatDateTime($p['created_at']) ?></td>
                             <td data-label="Actions" class="payment-actions-cell">
+                                <button type="button"
+                                    class="btn btn-sm btn-outline payment-details-btn"
+                                    data-payment-id="<?= (int) $p['id'] ?>"
+                                    data-request-number="<?= e($p['request_number']) ?>">
+                                    <i class="fas fa-eye"></i> View Details
+                                </button>
                                 <?php if ($p['receipt_path'] && !isOnsitePaymentMethod($p['payment_method'])): ?>
                                     <a href="<?= UPLOAD_URL ?>/<?= e($p['receipt_path']) ?>" target="_blank" class="btn btn-sm btn-outline">
                                         <i class="fas fa-file-invoice"></i> Receipt
@@ -326,6 +324,16 @@ require_once __DIR__ . '/../includes/header.php';
                         <p data-clearance-alert-message>Payment verification is blocked until all offices clear this request.</p>
                     </div>
                 </div>
+
+                <details class="payment-request-details-panel" open>
+                    <summary>
+                        <i class="fas fa-folder-open"></i>
+                        <span>Full Request Details</span>
+                    </summary>
+                    <div class="payment-request-details-body" data-request-details>
+                        <p class="text-muted">Select a payment to load request details.</p>
+                    </div>
+                </details>
 
                 <div class="payment-verify-fields" data-verify-panel>
                     <h4><i class="fas fa-file-invoice-dollar"></i> Verification Details</h4>
@@ -421,6 +429,35 @@ require_once __DIR__ . '/../includes/header.php';
             <?= $verificationDetailsByPayment[(int) $p['id']] ?? '' ?>
         </div>
     <?php endforeach; ?>
+</div>
+
+<div class="payment-request-details-store" hidden aria-hidden="true">
+    <?php foreach ($payments as $p): ?>
+        <div id="paymentRequestDetails-<?= (int) $p['id'] ?>">
+            <?= $requestDetailsByPayment[(int) $p['id']] ?? '' ?>
+        </div>
+    <?php endforeach; ?>
+</div>
+
+<div class="payment-modal payment-details-modal" id="paymentRequestDetailsModal" aria-hidden="true">
+    <div class="payment-modal-overlay" data-close-payment-details-modal></div>
+    <div class="payment-modal-dialog payment-details-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="paymentDetailsModalTitle">
+        <div class="payment-modal-header">
+            <div>
+                <span class="payment-modal-eyebrow">Request Details</span>
+                <h3 id="paymentDetailsModalTitle">Request Information</h3>
+            </div>
+            <button type="button" class="payment-modal-close" data-close-payment-details-modal aria-label="Close">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="payment-modal-body payment-details-modal-body" data-payment-details-body>
+            <p class="text-muted">Select a payment to view request details.</p>
+        </div>
+        <div class="payment-modal-footer">
+            <button type="button" class="btn btn-outline" data-close-payment-details-modal>Close</button>
+        </div>
+    </div>
 </div>
 
 <?php if ($onsiteLookupPayment): ?>

@@ -6,7 +6,7 @@ requireRole('clearance_officer');
 $user = currentUser();
 $pageTitle = 'Assigned Documents';
 $activeNav = 'documents';
-$officeLabel = 'Guidance / Office Document Assignments';
+$officeLabel = 'Assigned Documents';
 $processBaseUrl = APP_URL . '/clearance/process-document.php';
 
 require_once __DIR__ . '/../includes/assigned-documents-list.php';

@@ -1,11 +1,13 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/clearance.php';
+require_once __DIR__ . '/../includes/programs.php';
 requireRole('admin');
 
 $user = currentUser();
 $db = getDB();
 ensureClearanceSchema();
+ensureAcademicProgramsSchema();
 
 $editId = (int) ($_GET['edit'] ?? 0);
 $search = trim($_GET['search'] ?? '');
@@ -26,6 +28,14 @@ foreach ($roles as $role) {
 }
 
 $departments = $db->query('SELECT * FROM clearance_departments WHERE is_active = 1 ORDER BY sort_order, name')->fetchAll();
+$programChairDeptId = null;
+foreach ($departments as $dept) {
+    if (($dept['code'] ?? '') === 'program_chair') {
+        $programChairDeptId = (int) $dept['id'];
+        break;
+    }
+}
+$programs = getActiveAcademicPrograms();
 
 function countStaffUserActivity(PDO $db, int $userId): int {
     $tables = [
@@ -80,6 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         $lastName = normalizePersonName($_POST['last_name'] ?? '');
         $isActive = !empty($_POST['is_active']) ? 1 : 0;
         $clearanceDeptId = (int) ($_POST['clearance_department_id'] ?? 0) ?: null;
+        $clearanceProgramId = (int) ($_POST['clearance_program_id'] ?? 0) ?: null;
 
         $errors = [];
         if ($firstName === '') {
@@ -105,6 +116,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         }
         if (($roleNames[$roleId] ?? '') !== 'clearance_officer') {
             $clearanceDeptId = null;
+            $clearanceProgramId = null;
+        }
+        if ($clearanceDeptId && $programChairDeptId && (int) $clearanceDeptId === (int) $programChairDeptId) {
+            if (!$clearanceProgramId) {
+                $errors[] = 'Course/program is required for Program Chair accounts.';
+            } elseif (!getAcademicProgramById($clearanceProgramId)) {
+                $errors[] = 'Selected course/program is invalid.';
+            }
+        } else {
+            $clearanceProgramId = null;
         }
 
         if ($action === 'update' && !(int) ($_POST['user_id'] ?? 0)) {
@@ -123,14 +144,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             try {
                 if ($action === 'create') {
                     $hash = password_hash($password, PASSWORD_BCRYPT);
-                    $db->prepare('INSERT INTO users (role_id, clearance_department_id, email, password, first_name, last_name, is_active, email_verified) VALUES (?, ?, ?, ?, ?, ?, ?, 1)')
-                       ->execute([$roleId, $clearanceDeptId, $email, $hash, $firstName, $lastName, $isActive]);
+                    $db->prepare('INSERT INTO users (role_id, clearance_department_id, clearance_program_id, email, password, first_name, last_name, is_active, email_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)')
+                       ->execute([$roleId, $clearanceDeptId, $clearanceProgramId, $email, $hash, $firstName, $lastName, $isActive]);
                     $newId = (int) $db->lastInsertId();
                     auditLog('create_user', 'users', $newId);
                     setFlash('success', 'User account created.');
                 } else {
-                    $params = [$roleId, $clearanceDeptId, $email, $firstName, $lastName, $isActive];
-                    $sql = 'UPDATE users SET role_id = ?, clearance_department_id = ?, email = ?, first_name = ?, last_name = ?, is_active = ?';
+                    $params = [$roleId, $clearanceDeptId, $clearanceProgramId, $email, $firstName, $lastName, $isActive];
+                    $sql = 'UPDATE users SET role_id = ?, clearance_department_id = ?, clearance_program_id = ?, email = ?, first_name = ?, last_name = ?, is_active = ?';
                     if ($password !== '') {
                         $sql .= ', password = ?';
                         $params[] = password_hash($password, PASSWORD_BCRYPT);
@@ -165,6 +186,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         redirect(APP_URL . '/admin/users.php');
     }
 
+    if ($action === 'reset_password') {
+        $userId = (int) ($_POST['user_id'] ?? 0);
+        $stmt = $db->prepare('SELECT u.id, u.first_name, u.last_name, u.email, r.name AS role_name
+            FROM users u
+            JOIN roles r ON u.role_id = r.id
+            WHERE u.id = ? AND r.name != "student"');
+        $stmt->execute([$userId]);
+        $target = $stmt->fetch();
+
+        if (!$target) {
+            setFlash('error', 'User account not found.', ['title' => 'Reset Failed']);
+        } else {
+            $temporaryPassword = generateTemporaryPassword();
+            $hash = password_hash($temporaryPassword, PASSWORD_BCRYPT);
+            $db->prepare('UPDATE users SET password = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?')
+               ->execute([$hash, $userId]);
+            auditLog('reset_user_password', 'users', $userId);
+
+            $displayName = trim(($target['first_name'] ?? '') . ' ' . ($target['last_name'] ?? ''));
+            setFlash('success', 'Password reset successfully. Copy the temporary password now — it will not be shown again.', [
+                'title' => 'Password Reset',
+                'modal' => true,
+                'context' => [
+                    'User' => $displayName !== '' ? $displayName : ($target['email'] ?? 'User'),
+                    'Email' => $target['email'] ?? '—',
+                    'Temporary Password' => $temporaryPassword,
+                ],
+                'next_step' => 'Share this password securely with the user and ask them to change it after signing in.',
+            ]);
+        }
+
+        redirect(APP_URL . '/admin/users.php' . ($search !== '' ? '?search=' . urlencode($search) : ''));
+    }
+
     if ($action === 'delete') {
         $userId = (int) ($_POST['user_id'] ?? 0);
 
@@ -197,10 +252,12 @@ if ($search) {
 }
 $whereClause = implode(' AND ', $where);
 
-$stmt = $db->prepare("SELECT u.*, r.name as role_name, cd.name as department_name
+$stmt = $db->prepare("SELECT u.*, r.name as role_name, cd.name as department_name, cd.code as department_code,
+        ap.code as program_code, ap.name as program_name
     FROM users u
     JOIN roles r ON u.role_id = r.id
     LEFT JOIN clearance_departments cd ON u.clearance_department_id = cd.id
+    LEFT JOIN academic_programs ap ON u.clearance_program_id = ap.id
     WHERE $whereClause
     ORDER BY u.created_at DESC");
 $stmt->execute($params);
@@ -264,6 +321,9 @@ require_once __DIR__ . '/../includes/header.php';
                                     <?php if ($account['department_name']): ?>
                                         <br><small class="text-muted"><?= e($account['department_name']) ?></small>
                                     <?php endif; ?>
+                                    <?php if (!empty($account['program_name'])): ?>
+                                        <br><small class="text-muted"><?= e($account['program_code'] . ' — ' . $account['program_name']) ?></small>
+                                    <?php endif; ?>
                                 </td>
                                 <td data-label="Status">
                                     <?= $account['is_active'] ? '<span class="badge badge-completed">Active</span>' : '<span class="badge badge-rejected">Inactive</span>' ?>
@@ -278,9 +338,18 @@ require_once __DIR__ . '/../includes/header.php';
                                             'email' => $account['email'],
                                             'role_id' => (int) $account['role_id'],
                                             'clearance_department_id' => $account['clearance_department_id'] ?? '',
+                                            'clearance_program_id' => $account['clearance_program_id'] ?? '',
                                             'is_active' => (int) $account['is_active'],
                                             'is_self' => $isSelf,
                                         ]) ?>"><?= adminSettingsIconBtnContent('edit') ?></button>
+                                        <form method="POST" class="user-reset-password-form"
+                                            data-confirm-name="<?= e($account['first_name'] . ' ' . $account['last_name']) ?>"
+                                            data-confirm-email="<?= e($account['email']) ?>">
+                                            <?= csrfField() ?>
+                                            <input type="hidden" name="action" value="reset_password">
+                                            <input type="hidden" name="user_id" value="<?= (int) $account['id'] ?>">
+                                            <button type="submit" <?= adminSettingsIconBtnAttrs('reset_password') ?>><?= adminSettingsIconBtnContent('reset_password') ?></button>
+                                        </form>
                                         <?php if (!$isSelf): ?>
                                         <form method="POST">
                                             <?= csrfField() ?>
@@ -339,7 +408,12 @@ require_once __DIR__ . '/../includes/header.php';
 
     <div class="form-group">
         <label for="password">Password <span data-admin-form-password-hint>(required)</span></label>
-        <input type="password" id="password" name="password" required minlength="<?= PASSWORD_MIN_LENGTH ?>" autocomplete="new-password">
+        <div class="password-input-wrap">
+            <input type="password" id="password" name="password" required minlength="<?= PASSWORD_MIN_LENGTH ?>" autocomplete="new-password">
+            <button type="button" class="password-toggle-btn" id="toggleUserPassword" aria-label="Show password" title="Show password">
+                <i class="fas fa-eye" aria-hidden="true"></i>
+            </button>
+        </div>
         <small class="text-muted" data-admin-form-password-note>Minimum <?= PASSWORD_MIN_LENGTH ?> characters.</small>
     </div>
 
@@ -354,12 +428,23 @@ require_once __DIR__ . '/../includes/header.php';
 
     <div class="form-group" id="clearanceDepartmentGroup" hidden>
         <label for="clearance_department_id">Clearance Department *</label>
-        <select id="clearance_department_id" name="clearance_department_id">
+        <select id="clearance_department_id" name="clearance_department_id" data-program-chair-dept-id="<?= (int) $programChairDeptId ?>">
             <option value="">— Select Department —</option>
             <?php foreach ($departments as $dept): ?>
                 <option value="<?= $dept['id'] ?>"><?= e($dept['name']) ?></option>
             <?php endforeach; ?>
         </select>
+    </div>
+
+    <div class="form-group" id="clearanceProgramGroup" hidden>
+        <label for="clearance_program_id">Course / Program *</label>
+        <select id="clearance_program_id" name="clearance_program_id">
+            <option value="">— Select Course —</option>
+            <?php foreach ($programs as $program): ?>
+                <option value="<?= (int) $program['id'] ?>"><?= e($program['code'] . ' — ' . $program['name']) ?></option>
+            <?php endforeach; ?>
+        </select>
+        <small class="text-muted">Program Chair accounts only see clearance requests for students in this course.</small>
     </div>
 
     <div class="form-group">
@@ -383,6 +468,7 @@ require_once __DIR__ . '/../includes/header.php';
     'email' => $editUser['email'],
     'role_id' => (int) $editUser['role_id'],
     'clearance_department_id' => $editUser['clearance_department_id'] ?? '',
+    'clearance_program_id' => $editUser['clearance_program_id'] ?? '',
     'is_active' => (int) $editUser['is_active'],
     'is_self' => (int) $editUser['id'] === (int) $user['id'],
 ], JSON_UNESCAPED_UNICODE) ?>;</script>
@@ -394,8 +480,35 @@ document.addEventListener('DOMContentLoaded', function () {
     const roleSelect = document.getElementById('role_id');
     const deptGroup = document.getElementById('clearanceDepartmentGroup');
     const deptSelect = document.getElementById('clearance_department_id');
+    const programGroup = document.getElementById('clearanceProgramGroup');
+    const programSelect = document.getElementById('clearance_program_id');
     const passwordHint = form ? form.querySelector('[data-admin-form-password-hint]') : null;
     const passwordNote = form ? form.querySelector('[data-admin-form-password-note]') : null;
+    const passwordInput = document.getElementById('password');
+    const passwordToggle = document.getElementById('toggleUserPassword');
+
+    function setPasswordVisibility(visible) {
+        if (!passwordInput || !passwordToggle) return;
+        passwordInput.type = visible ? 'text' : 'password';
+        const icon = passwordToggle.querySelector('i');
+        if (icon) {
+            icon.className = visible ? 'fas fa-eye-slash' : 'fas fa-eye';
+        }
+        passwordToggle.setAttribute('aria-label', visible ? 'Hide password' : 'Show password');
+        passwordToggle.setAttribute('title', visible ? 'Hide password' : 'Show password');
+        passwordToggle.setAttribute('aria-pressed', visible ? 'true' : 'false');
+    }
+
+    function syncClearanceProgram() {
+        if (!programGroup || !deptSelect) return;
+        const programChairDeptId = deptSelect.dataset.programChairDeptId || '';
+        const show = !deptGroup.hidden && programChairDeptId && String(deptSelect.value) === programChairDeptId;
+        programGroup.hidden = !show;
+        if (programSelect) {
+            programSelect.required = show;
+            if (!show) programSelect.value = '';
+        }
+    }
 
     function syncClearanceDepartment() {
         if (!roleSelect || !deptGroup) return;
@@ -406,10 +519,21 @@ document.addEventListener('DOMContentLoaded', function () {
             deptSelect.required = show;
             if (!show) deptSelect.value = '';
         }
+        syncClearanceProgram();
+    }
+
+    if (passwordToggle) {
+        passwordToggle.setAttribute('aria-pressed', 'false');
+        passwordToggle.addEventListener('click', function () {
+            setPasswordVisibility(passwordInput.type === 'password');
+        });
     }
 
     if (roleSelect) {
         roleSelect.addEventListener('change', syncClearanceDepartment);
+    }
+    if (deptSelect) {
+        deptSelect.addEventListener('change', syncClearanceProgram);
     }
 
     if (form) {
@@ -420,11 +544,111 @@ document.addEventListener('DOMContentLoaded', function () {
             if (passwordNote) passwordNote.textContent = isUpdate
                 ? 'Leave blank to keep the current password.'
                 : 'Minimum <?= PASSWORD_MIN_LENGTH ?> characters.';
+            setPasswordVisibility(false);
         });
     }
 
     syncClearanceDepartment();
 });
+</script>
+
+<div class="confirm-modal" id="userResetPasswordConfirmModal" aria-hidden="true">
+    <div class="confirm-modal-overlay" data-close-confirm-modal></div>
+    <div class="confirm-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="userResetPasswordConfirmTitle">
+        <div class="confirm-modal-accent tone-error"></div>
+        <button type="button" class="confirm-modal-close" data-close-confirm-modal aria-label="Close">
+            <i class="fas fa-times"></i>
+        </button>
+        <div class="confirm-modal-icon-wrap tone-error">
+            <i class="fas fa-key"></i>
+        </div>
+        <span class="confirm-modal-eyebrow">Confirm Reset</span>
+        <h2 class="confirm-modal-title" id="userResetPasswordConfirmTitle">Reset Password?</h2>
+        <p class="confirm-modal-message" id="userResetPasswordConfirmMessage">A new temporary password will be generated. The current password will stop working immediately.</p>
+        <dl class="confirm-modal-context" id="userResetPasswordConfirmContext" hidden></dl>
+        <div class="confirm-modal-actions">
+            <button type="button" class="btn btn-outline" data-close-confirm-modal>Cancel</button>
+            <button type="button" class="btn btn-danger" id="userResetPasswordConfirmBtn">
+                <i class="fas fa-key"></i> Reset Password
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    const modal = document.getElementById('userResetPasswordConfirmModal');
+    const titleEl = document.getElementById('userResetPasswordConfirmTitle');
+    const messageEl = document.getElementById('userResetPasswordConfirmMessage');
+    const contextEl = document.getElementById('userResetPasswordConfirmContext');
+    const confirmBtn = document.getElementById('userResetPasswordConfirmBtn');
+    let pendingForm = null;
+
+    function closeConfirmModal() {
+        if (!modal) return;
+        modal.classList.remove('is-open');
+        modal.setAttribute('aria-hidden', 'true');
+        document.body.style.overflow = '';
+        pendingForm = null;
+    }
+
+    function openConfirmModal(form) {
+        if (!modal) return;
+        pendingForm = form;
+        if (titleEl) titleEl.textContent = 'Reset Password?';
+        if (messageEl) {
+            messageEl.textContent = 'A new temporary password will be generated and shown once. The current password will stop working immediately.';
+        }
+        if (contextEl) {
+            contextEl.innerHTML = '';
+            const name = form.getAttribute('data-confirm-name') || '—';
+            const email = form.getAttribute('data-confirm-email') || '—';
+            [
+                ['User', name],
+                ['Email', email]
+            ].forEach(function (pair) {
+                const dt = document.createElement('dt');
+                dt.textContent = pair[0];
+                const dd = document.createElement('dd');
+                dd.textContent = pair[1];
+                contextEl.appendChild(dt);
+                contextEl.appendChild(dd);
+            });
+            contextEl.hidden = false;
+        }
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+        document.body.style.overflow = 'hidden';
+        if (confirmBtn) confirmBtn.focus();
+    }
+
+    document.querySelectorAll('.user-reset-password-form').forEach(function (form) {
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            openConfirmModal(form);
+        });
+    });
+
+    if (modal) {
+        modal.querySelectorAll('[data-close-confirm-modal]').forEach(function (el) {
+            el.addEventListener('click', closeConfirmModal);
+        });
+    }
+
+    if (confirmBtn) {
+        confirmBtn.addEventListener('click', function () {
+            const form = pendingForm;
+            closeConfirmModal();
+            if (form) form.submit();
+        });
+    }
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && modal && modal.classList.contains('is-open')) {
+            closeConfirmModal();
+        }
+    });
+})();
 </script>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

@@ -66,7 +66,7 @@ require_once __DIR__ . '/../includes/header.php';
                         <td data-label="Copies"><?= (int) $item['copies'] ?></td>
                         <td data-label="Item Status"><?= requestItemStatusBadge($item['item_status']) ?></td>
                         <td data-label="Batch Status"><?= statusBadge($item['request_status']) ?></td>
-                        <td data-label="Action"><a href="process-request.php?item_id=<?= (int) $item['id'] ?>" class="btn btn-sm btn-primary">Process</a></td>
+                        <td data-label="Action"><a href="process-request.php?item_id=<?= (int) $item['id'] ?>" class="btn btn-sm btn-primary"><i class="fas fa-eye"></i> View / Process</a></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>

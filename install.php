@@ -124,7 +124,11 @@ function runApplicationMigrations(): array {
 
     require_once __DIR__ . '/includes/assignment-offices.php';
     ensureDocumentAssignmentOfficeSchema();
-    $log[] = 'Document assignment offices (Cashier, Guidance, Registrar)';
+    $log[] = 'Document assignment offices (Cashier, Accounting, Guidance, Registrar, Clearance)';
+
+    require_once __DIR__ . '/includes/accounting.php';
+    ensureAccountingModule();
+    $log[] = 'Accounting RBAC role for SOA document assignment';
 
     ensureUploadDirectories();
     $log[] = 'Upload directories';
@@ -133,7 +137,7 @@ function runApplicationMigrations(): array {
 }
 
 function seedDefaultUsers(PDO $db): bool {
-    $existing = $db->query("SELECT COUNT(*) FROM users WHERE email IN ('admin@regdum.edu.ph','staff@regdum.edu.ph','cashier@regdum.edu.ph','registrar@regdum.edu.ph')")->fetchColumn();
+    $existing = $db->query("SELECT COUNT(*) FROM users WHERE email IN ('admin@regdum.edu.ph','staff@regdum.edu.ph','cashier@regdum.edu.ph','registrar@regdum.edu.ph','accounting@regdum.edu.ph')")->fetchColumn();
     if ((int) $existing > 0) {
         return false;
     }
@@ -142,9 +146,11 @@ function seedDefaultUsers(PDO $db): bool {
     $staffHash = password_hash('Staff@123', PASSWORD_BCRYPT);
     $cashierHash = password_hash('Cashier@123', PASSWORD_BCRYPT);
     $registrarHash = password_hash('Registrar@123', PASSWORD_BCRYPT);
+    $accountingHash = password_hash('Accounting@123', PASSWORD_BCRYPT);
 
     $cashierRoleId = $db->query("SELECT id FROM roles WHERE name = 'cashier'")->fetchColumn() ?: 5;
     $registrarRoleId = $db->query("SELECT id FROM roles WHERE name = 'registrar'")->fetchColumn() ?: 3;
+    $accountingRoleId = $db->query("SELECT id FROM roles WHERE name = 'accounting'")->fetchColumn();
 
     $db->prepare('INSERT INTO users (role_id, email, password, first_name, last_name, is_active, email_verified) VALUES (4, ?, ?, ?, ?, 1, 1)')
        ->execute(['admin@regdum.edu.ph', $adminHash, 'System', 'Administrator']);
@@ -157,6 +163,11 @@ function seedDefaultUsers(PDO $db): bool {
 
     $db->prepare('INSERT INTO users (role_id, email, password, first_name, last_name, is_active, email_verified) VALUES (?, ?, ?, ?, ?, 1, 1)')
        ->execute([$registrarRoleId, 'registrar@regdum.edu.ph', $registrarHash, 'Records', 'Registrar']);
+
+    if ($accountingRoleId) {
+        $db->prepare('INSERT INTO users (role_id, email, password, first_name, last_name, is_active, email_verified) VALUES (?, ?, ?, ?, ?, 1, 1)')
+           ->execute([$accountingRoleId, 'accounting@regdum.edu.ph', $accountingHash, 'SOA', 'Accounting']);
+    }
 
     return true;
 }
@@ -222,6 +233,7 @@ $defaultAccounts = [
     ['Admin', 'admin@regdum.edu.ph', 'Admin@123'],
     ['Staff', 'staff@regdum.edu.ph', 'Staff@123'],
     ['Cashier', 'cashier@regdum.edu.ph', 'Cashier@123'],
+    ['Accounting', 'accounting@regdum.edu.ph', 'Accounting@123'],
     ['Registrar', 'registrar@regdum.edu.ph', 'Registrar@123'],
 ];
 ?>

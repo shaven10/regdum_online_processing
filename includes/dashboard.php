@@ -106,14 +106,26 @@ function adminWorkflowStats(): array {
     ];
 }
 
-function clearanceDashboardStats(int $departmentId): array {
+function clearanceDashboardStats(int $departmentId, ?int $programId = null): array {
     $db = getDB();
-    $pending = $db->prepare("SELECT COUNT(*) FROM request_clearances WHERE department_id = ? AND status = 'pending'");
-    $pending->execute([$departmentId]);
-    $onHold = $db->prepare("SELECT COUNT(*) FROM request_clearances WHERE department_id = ? AND status = 'on_hold'");
-    $onHold->execute([$departmentId]);
-    $clearedToday = $db->prepare("SELECT COUNT(*) FROM request_clearances WHERE department_id = ? AND status = 'cleared' AND DATE(cleared_at) = CURDATE()");
-    $clearedToday->execute([$departmentId]);
+    $baseFrom = "FROM request_clearances rc
+        JOIN requests r ON rc.request_id = r.id
+        JOIN users u ON r.user_id = u.id
+        LEFT JOIN student_profiles sp ON u.id = sp.user_id
+        WHERE rc.department_id = ?
+          AND r.status NOT IN ('completed','rejected')";
+    $params = [$departmentId];
+    if ($programId !== null) {
+        $baseFrom .= ' AND sp.course_id = ?';
+        $params[] = $programId;
+    }
+
+    $pending = $db->prepare("SELECT COUNT(*) $baseFrom AND rc.status = 'pending'");
+    $pending->execute($params);
+    $onHold = $db->prepare("SELECT COUNT(*) $baseFrom AND rc.status = 'on_hold'");
+    $onHold->execute($params);
+    $clearedToday = $db->prepare("SELECT COUNT(*) $baseFrom AND rc.status = 'cleared' AND DATE(rc.cleared_at) = CURDATE()");
+    $clearedToday->execute($params);
 
     return [
         'pending' => (int) $pending->fetchColumn(),

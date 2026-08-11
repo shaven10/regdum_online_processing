@@ -66,12 +66,31 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     initPaymentReviewModal();
+    initPaymentRequestDetailsModal();
     initReleaseScheduleForm();
     initStatusModal();
     initAdminFormModal();
     initUppercaseNameFields();
     initFormSectionCollapsibles();
+    initFlashBanner();
 });
+
+function initFlashBanner() {
+    const banner = document.getElementById('appFlashBanner');
+    if (!banner) return;
+
+    const host = document.querySelector('.content-area')
+        || document.querySelector('.auth-container')
+        || document.querySelector('.auth-card')?.parentElement
+        || document.body;
+    if (host && banner.parentElement !== host) {
+        host.prepend(banner);
+    }
+
+    banner.querySelector('[data-dismiss-flash-banner]')?.addEventListener('click', function () {
+        banner.remove();
+    });
+}
 
 function initFormSectionCollapsibles() {
     document.querySelectorAll('[data-form-section-collapsible]').forEach(function (section) {
@@ -481,6 +500,7 @@ function initPaymentReviewModal() {
     const clearanceAlert = modal.querySelector('[data-clearance-alert]');
     const clearanceAlertMessage = modal.querySelector('[data-clearance-alert-message]');
     const verificationDetails = modal.querySelector('[data-verification-details]');
+    const requestDetails = modal.querySelector('[data-request-details]');
     const verifySubmitBtn = modal.querySelector('#paymentVerifyForm button[type="submit"]');
     let activePaymentId = null;
     let activeIsOnsite = false;
@@ -592,6 +612,19 @@ function initPaymentReviewModal() {
         verificationDetails.innerHTML = source ? source.innerHTML : '';
     }
 
+    function renderRequestDetails(paymentId, target) {
+        if (!target) {
+            return;
+        }
+
+        const source = paymentId
+            ? document.getElementById('paymentRequestDetails-' + paymentId)
+            : null;
+        target.innerHTML = source && source.innerHTML.trim()
+            ? source.innerHTML
+            : '<p class="text-muted">No request details available for this payment.</p>';
+    }
+
     function renderReceipt(url, isImage) {
         if (!receiptPreview) {
             return;
@@ -655,6 +688,7 @@ function initPaymentReviewModal() {
 
         setPaymentId(data.paymentId);
         renderVerificationDetails(data.paymentId);
+        renderRequestDetails(data.paymentId, requestDetails);
         setClearanceGate(
             data.clearanceRequired === '1' && data.clearanceBlocked === '1',
             data.clearanceMessage || '',
@@ -679,6 +713,7 @@ function initPaymentReviewModal() {
         document.body.style.overflow = '';
         setPaymentId(null);
         renderVerificationDetails(null);
+        renderRequestDetails(null, requestDetails);
         setClearanceGate(false, '', '');
         setRejectMode(false);
     }
@@ -751,7 +786,8 @@ function initPaymentReviewModal() {
         if (rejectMode || clearanceBlocked) {
             e.preventDefault();
             if (clearanceBlocked) {
-                alert('Online clearance must be completed by all offices before verifying this payment.');
+                rejectNotes?.blur();
+                clearanceAlert?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
             return;
         }
@@ -763,19 +799,12 @@ function initPaymentReviewModal() {
 
         if (!orNumber || !paymentDate) {
             e.preventDefault();
-            alert(activeIsOnsite
-                ? 'Enter the OR number and date of payment before verifying this on-site payment.'
-                : 'Enter the OR number and date of payment before verifying.');
             if (!orNumber) {
                 orInput?.focus();
             } else {
                 dateInput?.focus();
             }
             return;
-        }
-
-        if (!confirm('Verify this payment with OR ' + orNumber + ' dated ' + paymentDate + '?')) {
-            e.preventDefault();
         }
     });
 
@@ -798,6 +827,62 @@ function initPaymentReviewModal() {
             row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     }
+}
+
+function initPaymentRequestDetailsModal() {
+    const modal = document.getElementById('paymentRequestDetailsModal');
+    if (!modal) return;
+
+    const body = modal.querySelector('[data-payment-details-body]');
+    const titleEl = document.getElementById('paymentDetailsModalTitle');
+
+    function closeDetailsModal() {
+        modal.classList.remove('is-open');
+        modal.setAttribute('aria-hidden', 'true');
+        document.body.style.overflow = '';
+        if (body) {
+            body.innerHTML = '<p class="text-muted">Select a payment to view request details.</p>';
+        }
+    }
+
+    function openDetailsModal(button) {
+        const paymentId = button.getAttribute('data-payment-id') || '';
+        const requestNumber = button.getAttribute('data-request-number') || '';
+        const source = paymentId
+            ? document.getElementById('paymentRequestDetails-' + paymentId)
+            : null;
+
+        if (titleEl) {
+            titleEl.textContent = requestNumber
+                ? 'Request ' + requestNumber
+                : 'Request Information';
+        }
+        if (body) {
+            body.innerHTML = source && source.innerHTML.trim()
+                ? source.innerHTML
+                : '<p class="text-muted">No request details available for this payment.</p>';
+        }
+
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+        document.body.style.overflow = 'hidden';
+    }
+
+    document.querySelectorAll('.payment-details-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            openDetailsModal(btn);
+        });
+    });
+
+    modal.querySelectorAll('[data-close-payment-details-modal]').forEach(function (el) {
+        el.addEventListener('click', closeDetailsModal);
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && modal.classList.contains('is-open')) {
+            closeDetailsModal();
+        }
+    });
 }
 
 function initAdminFormModal() {

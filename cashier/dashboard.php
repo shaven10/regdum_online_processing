@@ -27,7 +27,7 @@ ensureRequestItemsSchema();
 $assignedDocuments = getStaffAssignedItems((int) $user['id']);
 
 require_once __DIR__ . '/../includes/header.php';
-renderDashboardWelcome($user, 'Verify student payments and process documents assigned to Cashier (e.g. SOA).');
+renderDashboardWelcome($user, 'Verify student payments and process any documents assigned to Cashier.');
 renderDashboardActions([
     ['url' => 'payments.php?status=pending', 'label' => 'Pending Payments', 'icon' => 'fa-clock', 'class' => 'btn-primary'],
     ['url' => 'documents.php', 'label' => 'Assigned Documents', 'icon' => 'fa-file-invoice'],

@@ -19,10 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($email) || empty($password)) {
             $errors['general'] = 'Email and password are required.';
         } elseif (login($email, $password)) {
-            setFlash('success', 'Welcome back!', [
-                'title' => 'Signed In Successfully',
-                'next_step' => 'Your dashboard and notifications are ready.',
-            ]);
+            setFlash('success', 'Welcome back!');
             redirect(dashboardUrl());
         } else {
             $errors['general'] = 'Invalid email or password.';

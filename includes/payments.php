@@ -532,6 +532,40 @@ function buildPaymentVerificationDetailsForPayments(array $payments): array {
     return $details;
 }
 
+/**
+ * Full request detail HTML keyed by payment id (for cashier verify payments).
+ *
+ * @return array<int,string>
+ */
+function buildPaymentRequestDetailsForPayments(array $payments): array {
+    require_once __DIR__ . '/request-items.php';
+
+    $contextByRequest = [];
+    $details = [];
+
+    foreach ($payments as $payment) {
+        $paymentId = (int) ($payment['id'] ?? 0);
+        $requestId = (int) ($payment['request_id'] ?? 0);
+        if ($paymentId <= 0 || $requestId <= 0) {
+            continue;
+        }
+
+        if (!isset($contextByRequest[$requestId])) {
+            $context = loadAssignmentRequestContext($requestId);
+            // Prefer the payment row being reviewed when multiple payments exist.
+            $context['payment'] = $payment;
+            $contextByRequest[$requestId] = $context;
+        } else {
+            $context = $contextByRequest[$requestId];
+            $context['payment'] = $payment;
+        }
+
+        $details[$paymentId] = renderAssignmentRequestDetailsHtml($context);
+    }
+
+    return $details;
+}
+
 function renderPaymentVerificationSections(array $request, array $items, float $paymentAmount = 0.0): string {
     require_once __DIR__ . '/student.php';
     require_once __DIR__ . '/document-rules.php';
@@ -752,6 +786,339 @@ function processPaymentAction(int $paymentId, string $action, int $verifierId, s
 
     auditLog('payment_' . $action, 'payments', $paymentId);
     return true;
+}
+
+/**
+ * Permanently delete a payment record and its receipt file.
+ *
+ * @return array{ok:bool,error?:string,request_number?:string,amount?:string}
+ */
+function adminDeletePayment(int $paymentId): array {
+    $db = getDB();
+    $stmt = $db->prepare('SELECT p.*, r.request_number
+        FROM payments p
+        JOIN requests r ON p.request_id = r.id
+        WHERE p.id = ?');
+    $stmt->execute([$paymentId]);
+    $payment = $stmt->fetch();
+
+    if (!$payment) {
+        return ['ok' => false, 'error' => 'Payment not found.'];
+    }
+
+    try {
+        $paths = [];
+        if (!empty($payment['receipt_path'])) {
+            $paths[] = (string) $payment['receipt_path'];
+        }
+
+        $db->prepare('DELETE FROM payments WHERE id = ?')->execute([$paymentId]);
+        deleteStoredUploadFiles($paths);
+
+        auditLog('delete_payment', 'payments', $paymentId, [
+            'request_number' => $payment['request_number'] ?? null,
+            'amount' => $payment['amount'] ?? null,
+            'status' => $payment['status'] ?? null,
+            'reference_number' => $payment['reference_number'] ?? null,
+        ], null);
+
+        return [
+            'ok' => true,
+            'request_number' => (string) ($payment['request_number'] ?? ''),
+            'amount' => formatMoney((float) ($payment['amount'] ?? 0)),
+        ];
+    } catch (PDOException $e) {
+        return ['ok' => false, 'error' => 'Unable to delete payment.'];
+    }
+}
+
+/**
+ * @return array{ok:bool,deleted:int,failed:array}
+ */
+function adminBatchDeletePayments(array $paymentIds): array {
+    $deleted = 0;
+    $failed = [];
+
+    foreach (normalizeAdminBatchRequestIds($paymentIds) as $paymentId) {
+        $result = adminDeletePayment($paymentId);
+        if (!empty($result['ok'])) {
+            $deleted++;
+        } else {
+            $failed[] = $result['error'] ?? ('Payment #' . $paymentId);
+        }
+    }
+
+    return [
+        'ok' => $deleted > 0,
+        'deleted' => $deleted,
+        'failed' => $failed,
+    ];
+}
+
+/**
+ * Resolve date range for cashier payment report periods.
+ *
+ * @return array{period:string,date:string,from:string,to:string,label:string}
+ */
+function resolvePaymentReportPeriod(string $period, string $date): array {
+    $period = in_array($period, ['daily', 'weekly', 'monthly'], true) ? $period : 'daily';
+    $ts = strtotime($date) ?: time();
+    $date = date('Y-m-d', $ts);
+
+    if ($period === 'weekly') {
+        $dayOfWeek = (int) date('N', $ts); // 1=Mon .. 7=Sun
+        $fromTs = strtotime('-' . ($dayOfWeek - 1) . ' days', $ts);
+        $toTs = strtotime('+' . (7 - $dayOfWeek) . ' days', $ts);
+        $from = date('Y-m-d', $fromTs);
+        $to = date('Y-m-d', $toTs);
+        $label = 'Week of ' . date('M d', $fromTs) . ' – ' . date('M d, Y', $toTs);
+    } elseif ($period === 'monthly') {
+        $from = date('Y-m-01', $ts);
+        $to = date('Y-m-t', $ts);
+        $label = date('F Y', $ts);
+    } else {
+        $from = $date;
+        $to = $date;
+        $label = date('F j, Y', $ts);
+        $period = 'daily';
+    }
+
+    return [
+        'period' => $period,
+        'date' => $date,
+        'from' => $from,
+        'to' => $to,
+        'label' => $label,
+    ];
+}
+
+/**
+ * @return array{where:string,params:array,period:array}
+ */
+function buildPaymentReportFilters(array $filters): array {
+    $period = resolvePaymentReportPeriod(
+        (string) ($filters['period'] ?? 'daily'),
+        (string) ($filters['date'] ?? date('Y-m-d'))
+    );
+    $status = trim((string) ($filters['status'] ?? ''));
+    $search = trim((string) ($filters['search'] ?? ''));
+    $method = trim((string) ($filters['method'] ?? ''));
+
+    $where = ['DATE(COALESCE(p.verified_at, p.created_at)) BETWEEN ? AND ?'];
+    $params = [$period['from'], $period['to']];
+
+    if ($status !== '' && in_array($status, ['pending', 'verified', 'rejected', 'refunded'], true)) {
+        $where[] = 'p.status = ?';
+        $params[] = $status;
+    }
+
+    if ($method !== '') {
+        $where[] = 'p.payment_method = ?';
+        $params[] = $method;
+    }
+
+    if ($search !== '') {
+        $where[] = '(r.request_number LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.student_id LIKE ?
+            OR p.reference_number LIKE ? OR p.or_number LIKE ?)';
+        $like = '%' . $search . '%';
+        array_push($params, $like, $like, $like, $like, $like, $like);
+    }
+
+    return [
+        'where' => implode(' AND ', $where),
+        'params' => $params,
+        'period' => $period,
+        'status' => $status,
+        'search' => $search,
+        'method' => $method,
+    ];
+}
+
+function paymentReportBaseSelect(): string {
+    return 'SELECT p.*, r.request_number, r.request_channel, r.total_amount AS request_amount,
+            u.first_name, u.last_name, u.student_id, u.email,
+            v.first_name AS verifier_first, v.last_name AS verifier_last
+        FROM payments p
+        JOIN requests r ON p.request_id = r.id
+        JOIN users u ON r.user_id = u.id
+        LEFT JOIN users v ON p.verified_by = v.id';
+}
+
+/**
+ * @return array{rows:array,total:int,summary:array,period:array,filters:array}
+ */
+function getPaymentReportData(array $filters, ?int $page = null, ?int $perPage = null): array {
+    $db = getDB();
+    $built = buildPaymentReportFilters($filters);
+    $where = $built['where'];
+    $params = $built['params'];
+
+    $countStmt = $db->prepare('SELECT COUNT(*) FROM payments p
+        JOIN requests r ON p.request_id = r.id
+        JOIN users u ON r.user_id = u.id
+        WHERE ' . $where);
+    $countStmt->execute($params);
+    $total = (int) $countStmt->fetchColumn();
+
+    $summaryStmt = $db->prepare("SELECT
+            COUNT(*) AS total_count,
+            COALESCE(SUM(p.amount), 0) AS total_amount,
+            SUM(CASE WHEN p.status = 'verified' THEN 1 ELSE 0 END) AS verified_count,
+            COALESCE(SUM(CASE WHEN p.status = 'verified' THEN p.amount ELSE 0 END), 0) AS verified_amount,
+            SUM(CASE WHEN p.status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+            COALESCE(SUM(CASE WHEN p.status = 'pending' THEN p.amount ELSE 0 END), 0) AS pending_amount,
+            SUM(CASE WHEN p.status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count,
+            COALESCE(SUM(CASE WHEN p.status = 'rejected' THEN p.amount ELSE 0 END), 0) AS rejected_amount
+        FROM payments p
+        JOIN requests r ON p.request_id = r.id
+        JOIN users u ON r.user_id = u.id
+        WHERE " . $where);
+    $summaryStmt->execute($params);
+    $summary = $summaryStmt->fetch() ?: [];
+
+    $methodStmt = $db->prepare("SELECT p.payment_method, COUNT(*) AS count, COALESCE(SUM(p.amount), 0) AS total
+        FROM payments p
+        JOIN requests r ON p.request_id = r.id
+        JOIN users u ON r.user_id = u.id
+        WHERE " . $where . " AND p.status = 'verified'
+        GROUP BY p.payment_method
+        ORDER BY total DESC");
+    $methodStmt->execute($params);
+    $byMethod = $methodStmt->fetchAll();
+
+    $sql = paymentReportBaseSelect() . ' WHERE ' . $where . ' ORDER BY COALESCE(p.verified_at, p.created_at) DESC, p.id DESC';
+    if ($page !== null && $perPage !== null) {
+        $pag = paginate($total, $page, $perPage);
+        $sql .= ' LIMIT ' . (int) $pag['per_page'] . ' OFFSET ' . (int) $pag['offset'];
+    } else {
+        $pag = [
+            'total' => $total,
+            'page' => 1,
+            'per_page' => max(1, $total),
+            'total_pages' => 1,
+            'offset' => 0,
+        ];
+    }
+
+    $stmt = $db->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll();
+
+    return [
+        'rows' => $rows,
+        'total' => $total,
+        'summary' => [
+            'total_count' => (int) ($summary['total_count'] ?? 0),
+            'total_amount' => (float) ($summary['total_amount'] ?? 0),
+            'verified_count' => (int) ($summary['verified_count'] ?? 0),
+            'verified_amount' => (float) ($summary['verified_amount'] ?? 0),
+            'pending_count' => (int) ($summary['pending_count'] ?? 0),
+            'pending_amount' => (float) ($summary['pending_amount'] ?? 0),
+            'rejected_count' => (int) ($summary['rejected_count'] ?? 0),
+            'rejected_amount' => (float) ($summary['rejected_amount'] ?? 0),
+            'by_method' => $byMethod,
+        ],
+        'period' => $built['period'],
+        'filters' => [
+            'period' => $built['period']['period'],
+            'date' => $built['period']['date'],
+            'status' => $built['status'],
+            'search' => $built['search'],
+            'method' => $built['method'],
+        ],
+        'pagination' => $pag,
+    ];
+}
+
+function paymentReportExportHeaders(): array {
+    return [
+        'Request #',
+        'Student',
+        'Student ID',
+        'Channel',
+        'Method',
+        'Amount',
+        'Reference',
+        'OR Number',
+        'Payment Date',
+        'Status',
+        'Submitted',
+        'Verified At',
+        'Verified By',
+        'Notes',
+    ];
+}
+
+function mapPaymentReportExportRow(array $row): array {
+    $student = trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''));
+    $verifier = trim(($row['verifier_first'] ?? '') . ' ' . ($row['verifier_last'] ?? ''));
+    $channel = (($row['request_channel'] ?? '') === 'onsite') ? 'Onsite' : 'Online';
+
+    return [
+        $row['request_number'] ?? '',
+        $student,
+        $row['student_id'] ?? '',
+        $channel,
+        paymentMethodLabel($row['payment_method'] ?? null),
+        number_format((float) ($row['amount'] ?? 0), 2, '.', ''),
+        $row['reference_number'] ?? '',
+        $row['or_number'] ?? '',
+        $row['payment_date'] ?? '',
+        ucfirst((string) ($row['status'] ?? '')),
+        $row['created_at'] ?? '',
+        $row['verified_at'] ?? '',
+        $verifier !== '' ? $verifier : '',
+        $row['notes'] ?? '',
+    ];
+}
+
+function exportPaymentReportExcel(array $rows, array $summary, array $period, array $filters, string $filename): void {
+    if (headers_sent($file, $line)) {
+        throw new RuntimeException('Cannot export Excel because output already started in ' . $file . ' on line ' . $line . '.');
+    }
+
+    header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    echo '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
+    echo '<head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head><body>';
+    echo '<h2>Payment Report — ' . htmlspecialchars($period['label'] ?? '', ENT_QUOTES, 'UTF-8') . '</h2>';
+    echo '<p>Period: ' . htmlspecialchars(ucfirst((string) ($period['period'] ?? '')), ENT_QUOTES, 'UTF-8');
+    echo ' | Range: ' . htmlspecialchars(($period['from'] ?? '') . ' to ' . ($period['to'] ?? ''), ENT_QUOTES, 'UTF-8');
+    if (!empty($filters['status'])) {
+        echo ' | Status: ' . htmlspecialchars(ucfirst((string) $filters['status']), ENT_QUOTES, 'UTF-8');
+    }
+    if (!empty($filters['search'])) {
+        echo ' | Search: ' . htmlspecialchars((string) $filters['search'], ENT_QUOTES, 'UTF-8');
+    }
+    echo '</p>';
+    echo '<p>Verified: ' . (int) ($summary['verified_count'] ?? 0) . ' (' . htmlspecialchars(formatMoney((float) ($summary['verified_amount'] ?? 0)), ENT_QUOTES, 'UTF-8') . ')';
+    echo ' | Pending: ' . (int) ($summary['pending_count'] ?? 0);
+    echo ' | Rejected: ' . (int) ($summary['rejected_count'] ?? 0);
+    echo ' | Total records: ' . (int) ($summary['total_count'] ?? 0) . '</p>';
+
+    echo '<table border="1" cellspacing="0" cellpadding="4"><thead><tr>';
+    foreach (paymentReportExportHeaders() as $header) {
+        echo '<th>' . htmlspecialchars($header, ENT_QUOTES, 'UTF-8') . '</th>';
+    }
+    echo '</tr></thead><tbody>';
+
+    if (empty($rows)) {
+        echo '<tr><td colspan="14">No payment records found for this period.</td></tr>';
+    } else {
+        foreach ($rows as $row) {
+            echo '<tr>';
+            foreach (mapPaymentReportExportRow($row) as $cell) {
+                echo '<td>' . htmlspecialchars((string) $cell, ENT_QUOTES, 'UTF-8') . '</td>';
+            }
+            echo '</tr>';
+        }
+    }
+
+    echo '</tbody></table></body></html>';
+    exit;
 }
 
 function ensureCashierRole(): void {

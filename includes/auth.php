@@ -56,6 +56,7 @@ function dashboardUrl(): string {
     return match ($user['role_name']) {
         'admin'              => APP_URL . '/admin/dashboard.php',
         'cashier'            => APP_URL . '/cashier/dashboard.php',
+        'accounting'         => APP_URL . '/accounting/dashboard.php',
         'registrar'          => APP_URL . '/registrar/dashboard.php',
         'clearance_officer'  => APP_URL . '/clearance/dashboard.php',
         'staff'              => APP_URL . '/staff/dashboard.php',

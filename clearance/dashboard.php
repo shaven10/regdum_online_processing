@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/clearance.php';
 require_once __DIR__ . '/../includes/dashboard.php';
+require_once __DIR__ . '/../includes/programs.php';
 requireClearanceAccess();
 
 $user = currentUser();
@@ -11,10 +12,24 @@ if (!$department && !hasRole('admin')) {
     redirect(dashboardUrl());
 }
 
-$deptId = $department['id'] ?? (int)($_GET['department_id'] ?? 0);
-$pending = $deptId ? getClearanceRequestsForDepartment($deptId, 'pending') : [];
-$onHold = $deptId ? getClearanceRequestsForDepartment($deptId, 'on_hold') : [];
-$clearanceStats = $deptId ? clearanceDashboardStats($deptId) : ['pending' => 0, 'on_hold' => 0, 'cleared_today' => 0];
+$deptId = $department['id'] ?? (int) ($_GET['department_id'] ?? 0);
+$programScope = $user ? getClearanceOfficerProgramScope($user) : null;
+$isProgramChair = isProgramChairDepartment($department);
+$assignedProgram = null;
+if ($isProgramChair && $programScope && $programScope > 0) {
+    $assignedProgram = getAcademicProgramById($programScope);
+}
+
+$queueProgramId = null;
+if ($isProgramChair) {
+    $queueProgramId = ($programScope !== null && $programScope > 0) ? $programScope : 0;
+}
+
+$pending = $deptId ? getClearanceRequestsForDepartment($deptId, 'pending', '', $queueProgramId) : [];
+$onHold = $deptId ? getClearanceRequestsForDepartment($deptId, 'on_hold', '', $queueProgramId) : [];
+$clearanceStats = $deptId
+    ? clearanceDashboardStats($deptId, $queueProgramId)
+    : ['pending' => 0, 'on_hold' => 0, 'cleared_today' => 0];
 
 $pageTitle = 'Clearance Dashboard';
 $activeNav = 'dashboard';
@@ -27,7 +42,13 @@ require_once __DIR__ . '/../includes/request-items.php';
 ensureRequestItemsSchema();
 $assignedDocuments = getStaffAssignedItems((int) $user['id']);
 
-renderDashboardWelcome($user, 'Sign student clearances for ' . $department['name'] . ' and process assigned documents (e.g. Good Moral).');
+$welcomeHint = 'Sign student clearances for ' . $department['name'];
+if ($isProgramChair && $assignedProgram) {
+    $welcomeHint .= ' — ' . $assignedProgram['name'] . ' (' . $assignedProgram['code'] . ')';
+}
+$welcomeHint .= ' and process assigned documents (e.g. Good Moral).';
+
+renderDashboardWelcome($user, $welcomeHint);
 renderDashboardActions([
     ['url' => 'requests.php?status=pending', 'label' => 'Pending Clearances', 'icon' => 'fa-clock', 'class' => 'btn-primary'],
     ['url' => 'documents.php', 'label' => 'Assigned Documents', 'icon' => 'fa-file-signature'],
@@ -36,23 +57,30 @@ renderDashboardActions([
 ]);
 ?>
 
+<?php if ($isProgramChair && (!$programScope || $programScope <= 0)): ?>
+    <div class="alert alert-warning">
+        <i class="fas fa-exclamation-triangle"></i>
+        This Program Chair account has no assigned course/program yet. Ask an administrator to assign a course so you can see matching clearance requests.
+    </div>
+<?php endif; ?>
+
 <div class="stats-grid">
     <?= statCardLink('requests.php?status=pending', 'orange', $department['icon'], (string)$clearanceStats['pending'], 'Pending Clearance') ?>
     <?= statCardLink('documents.php', 'purple', 'fa-file-signature', (string) count($assignedDocuments), 'Assigned Documents') ?>
     <?= statCardLink('requests.php?status=on_hold', 'gold', 'fa-pause-circle', (string)$clearanceStats['on_hold'], 'On Hold') ?>
     <?= statCardLink('requests.php?status=cleared', 'green', 'fa-check', (string)$clearanceStats['cleared_today'], 'Cleared Today') ?>
-    <?= statCardLink('requests.php', 'blue', 'fa-building', e($department['name']), 'Your Office') ?>
+    <?= statCardLink('requests.php', 'blue', 'fa-building', e($isProgramChair && $assignedProgram ? $assignedProgram['code'] : $department['name']), $isProgramChair && $assignedProgram ? 'Assigned Course' : 'Your Office') ?>
 </div>
 
 <div class="grid-2">
     <div class="card">
         <div class="card-header">
-            <h2>Pending — <?= e($department['name']) ?></h2>
+            <h2>Pending — <?= e($department['name']) ?><?= $assignedProgram ? ' · ' . e($assignedProgram['code']) : '' ?></h2>
             <a href="requests.php?status=pending" class="btn btn-primary btn-sm">View All</a>
         </div>
         <div class="card-body">
             <?php if (empty($pending)): ?>
-                <div class="empty-state"><i class="fas fa-check-circle"></i><p>No pending clearances for your office.</p></div>
+                <div class="empty-state"><i class="fas fa-check-circle"></i><p>No pending clearances for your office<?= $isProgramChair ? '/course' : '' ?>.</p></div>
             <?php else: ?>
                 <div class="table-wrap">
                     <table class="data-table data-table-responsive">

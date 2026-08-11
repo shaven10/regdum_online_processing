@@ -810,6 +810,7 @@ function renderOnsiteRequestSlipSheetHtml(array $data): void {
             <?php else: ?>
                 Present this slip and pay at the Cashier. Use the 6-digit payment code above.
             <?php endif; ?>
+            Track status anytime at <?= e(publicOnsiteTrackingUrl($request['request_number'] ?? null, $paymentCode !== '—' ? $paymentCode : null)) ?>
         </p>
 
         <footer class="onsite-slip-footer regdum-slip-footer">
@@ -864,4 +865,145 @@ function renderOnsiteRequestSlipDocument(array $data, bool $autoPrint = false): 
 </body>
 </html>
     <?php
+}
+
+/**
+ * Public onsite request tracking lookup by request number and/or 6-digit payment code.
+ *
+ * @return array{
+ *   request:array,
+ *   items:array,
+ *   payment:?array,
+ *   clearance_required:bool,
+ *   clearance_progress:array,
+ *   next_hint:string
+ * }|null
+ */
+function lookupPublicOnsiteTracking(?string $requestNumber, ?string $paymentCode, ?string $studentId = null): ?array {
+    ensureOnsiteRequestSchema();
+    require_once __DIR__ . '/request-items.php';
+    require_once __DIR__ . '/compliance.php';
+    require_once __DIR__ . '/clearance.php';
+    require_once __DIR__ . '/payments.php';
+
+    $requestNumber = strtoupper(trim((string) $requestNumber));
+    $paymentCode = preg_replace('/\D+/', '', (string) $paymentCode) ?? '';
+    $studentId = trim((string) $studentId);
+
+    if ($requestNumber === '' && $paymentCode === '') {
+        return null;
+    }
+
+    $db = getDB();
+    $params = [];
+    $where = ["r.request_channel = 'onsite'"];
+
+    if ($paymentCode !== '') {
+        if (!preg_match('/^\d{6}$/', $paymentCode)) {
+            return null;
+        }
+        $where[] = "EXISTS (
+            SELECT 1 FROM payments p
+            WHERE p.request_id = r.id
+              AND p.payment_method = 'onsite_payment'
+              AND p.reference_number = ?
+        )";
+        $params[] = $paymentCode;
+    }
+
+    if ($requestNumber !== '') {
+        $where[] = 'r.request_number = ?';
+        $params[] = $requestNumber;
+    }
+
+    if ($studentId !== '') {
+        $where[] = 'u.student_id = ?';
+        $params[] = $studentId;
+    }
+
+    $sql = 'SELECT r.*,
+            u.first_name, u.last_name, u.middle_name, u.student_id, u.email, u.phone,
+            sp.course, sp.year_level, sp.enrollment_status
+        FROM requests r
+        JOIN users u ON r.user_id = u.id
+        LEFT JOIN student_profiles sp ON u.id = sp.user_id
+        WHERE ' . implode(' AND ', $where) . '
+        ORDER BY r.id DESC
+        LIMIT 1';
+
+    $stmt = $db->prepare($sql);
+    $stmt->execute($params);
+    $request = $stmt->fetch();
+    if (!$request) {
+        return null;
+    }
+
+    $requestId = (int) $request['id'];
+    $paymentStmt = $db->prepare("SELECT * FROM payments
+        WHERE request_id = ?
+        ORDER BY CASE WHEN payment_method = 'onsite_payment' THEN 0 ELSE 1 END, created_at DESC
+        LIMIT 1");
+    $paymentStmt->execute([$requestId]);
+    $payment = $paymentStmt->fetch() ?: null;
+
+    $clearanceRequired = hasAssignedRequirement($requestId, 'online_clearance');
+    $clearanceProgress = $clearanceRequired
+        ? getClearanceProgress($requestId)
+        : ['total' => 0, 'cleared' => 0, 'onHold' => 0, 'pending' => 0];
+
+    return [
+        'request' => $request,
+        'items' => getRequestItems($requestId),
+        'payment' => $payment,
+        'clearance_required' => $clearanceRequired,
+        'clearance_progress' => $clearanceProgress,
+        'next_hint' => publicOnsiteTrackingNextHint($request, $payment, $clearanceRequired, $clearanceProgress),
+    ];
+}
+
+function publicOnsiteTrackingNextHint(array $request, ?array $payment, bool $clearanceRequired, array $clearanceProgress): string {
+    $status = (string) ($request['status'] ?? '');
+    $paymentStatus = (string) ($payment['status'] ?? '');
+
+    if ($status === 'completed') {
+        return 'Your documents are ready / released. Bring a valid ID when claiming at the Registrar.';
+    }
+    if ($status === 'rejected') {
+        return 'This request was rejected. Please visit the Registrar office for assistance.';
+    }
+    if ($status === 'ready_for_pickup' || $status === 'shipped') {
+        return 'Your documents are ready for pickup. Bring your request slip and a valid ID.';
+    }
+    if (in_array($status, ['processing', 'payment_verified'], true)) {
+        return 'Payment is verified and your documents are being processed. Check back for updates.';
+    }
+    if ($clearanceRequired && (int) ($clearanceProgress['cleared'] ?? 0) < (int) ($clearanceProgress['total'] ?? 0)) {
+        $cleared = (int) ($clearanceProgress['cleared'] ?? 0);
+        $total = (int) ($clearanceProgress['total'] ?? 0);
+        $onHold = (int) ($clearanceProgress['onHold'] ?? 0);
+        $hint = 'Complete online clearance at all offices before paying at the Cashier (' . $cleared . '/' . $total . ' cleared).';
+        if ($onHold > 0) {
+            $hint .= ' One or more offices placed your clearance on hold — visit those offices for guidance.';
+        }
+        return $hint;
+    }
+    if ($paymentStatus === 'pending' || $paymentStatus === '') {
+        $code = (string) ($payment['reference_number'] ?? '');
+        return $code !== ''
+            ? 'Present your slip and pay at the Cashier using payment code ' . $code . '.'
+            : 'Proceed to the Cashier to pay for this request.';
+    }
+    if ($paymentStatus === 'rejected') {
+        return 'Payment was rejected. Visit the Cashier or Registrar for the next step.';
+    }
+
+    return 'Your request is in progress. Keep your request slip for reference.';
+}
+
+function publicOnsiteTrackingUrl(?string $requestNumber = null, ?string $paymentCode = null): string {
+    $params = array_filter([
+        'ref' => $requestNumber ?: null,
+        'code' => $paymentCode ?: null,
+    ]);
+    return APP_URL . '/track.php' . ($params ? '?' . http_build_query($params) : '');
 }

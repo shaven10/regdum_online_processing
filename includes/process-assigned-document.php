@@ -26,21 +26,18 @@ if (!$item || (int) ($item['assigned_to'] ?? 0) !== (int) $user['id']) {
     redirect($listUrl);
 }
 
+if (!empty($allowedDocumentCodes) && is_array($allowedDocumentCodes)) {
+    $allowed = array_map(static fn($code): string => strtoupper(trim((string) $code)), $allowedDocumentCodes);
+    $itemCode = strtoupper(trim((string) ($item['document_code'] ?? '')));
+    if (!in_array($itemCode, $allowed, true)) {
+        setFlash('error', 'This document type is outside your office scope.');
+        redirect($listUrl);
+    }
+}
+
 $requestId = (int) $item['request_id'];
-$db = getDB();
-
-$headerStmt = $db->prepare('SELECT r.*, u.first_name, u.last_name, u.email, u.student_id, u.phone,
-    sp.course, sp.year_level, sp.enrollment_status
-    FROM requests r
-    JOIN users u ON r.user_id = u.id
-    LEFT JOIN student_profiles sp ON u.id = sp.user_id
-    WHERE r.id = ?');
-$headerStmt->execute([$requestId]);
-$requestHeader = $headerStmt->fetch();
-
-$docs = $db->prepare('SELECT * FROM request_documents WHERE request_id = ? ORDER BY uploaded_at ASC');
-$docs->execute([$requestId]);
-$documents = $docs->fetchAll();
+$context = loadAssignmentRequestContext($requestId);
+$requestHeader = $context['request'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $action = $_POST['action'] ?? '';
@@ -86,40 +83,23 @@ $pageTitle = 'Process ' . $item['request_number'] . ' — ' . $item['document_na
 require_once __DIR__ . '/header.php';
 ?>
 
-<div class="grid-2">
+<div class="grid-2 assignment-process-layout">
     <div class="card">
         <div class="card-header">
-            <h2><?= e($item['document_name']) ?></h2>
+            <div>
+                <h2>Request Details</h2>
+                <p class="text-muted" style="margin:.35rem 0 0">
+                    <?= e($item['request_number']) ?> · <?= e($item['document_name']) ?>
+                </p>
+            </div>
             <?= requestItemStatusBadge($item['item_status']) ?>
         </div>
         <div class="card-body">
-            <div class="detail-grid">
-                <div class="detail-item"><label>Request #</label><span><?= e($item['request_number']) ?></span></div>
-                <div class="detail-item"><label>Student</label><span><?= e($requestHeader['first_name'] . ' ' . $requestHeader['last_name']) ?></span></div>
-                <div class="detail-item"><label>Student ID</label><span><?= e($requestHeader['student_id']) ?></span></div>
-                <div class="detail-item"><label>Course</label><span><?= e($requestHeader['course'] ?? '—') ?> (<?= e($requestHeader['year_level'] ?? '') ?>)</span></div>
-                <div class="detail-item"><label>Purpose</label><span><?= purposeLabel($requestHeader['purpose']) ?></span></div>
-                <div class="detail-item"><label>Copies</label><span><?= (int) $item['copies'] ?></span></div>
-                <div class="detail-item"><label>Batch Status</label><span><?= statusBadge($requestHeader['status']) ?></span></div>
-                <?php if (!empty($item['release_date'])): ?>
-                    <div class="detail-item"><label>Release Date</label><span><?= formatDate($item['release_date']) ?> at <?= date('g:i A', strtotime((string) $item['release_time'])) ?></span></div>
-                <?php endif; ?>
-            </div>
-
-            <?= renderRequestItemDetailsHtml($item) ?>
-
-            <?php if (!empty($documents)): ?>
-                <h4>Uploaded Documents</h4>
-                <ul class="doc-list">
-                    <?php foreach ($documents as $doc): ?>
-                        <li><a href="<?= UPLOAD_URL ?>/<?= e($doc['file_name']) ?>" target="_blank"><?= e($doc['original_name']) ?></a></li>
-                    <?php endforeach; ?>
-                </ul>
-            <?php endif; ?>
+            <?= renderAssignmentRequestDetailsHtml($context, $item) ?>
         </div>
     </div>
 
-    <div class="card">
+    <div class="card assignment-actions-card">
         <div class="card-header"><h2>Processing Actions</h2></div>
         <div class="card-body">
             <div class="action-buttons">

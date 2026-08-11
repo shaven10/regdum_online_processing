@@ -1672,6 +1672,8 @@ function getComplianceStats(): array {
         'compliant' => (int) $db->query("SELECT COUNT(*) FROM requests
             WHERE status = 'requirements_verified'")->fetchColumn(),
         'needs_revision' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'needs_revision'")->fetchColumn(),
+        'review' => (int) $db->query("SELECT COUNT(*) FROM requests
+            WHERE status IN ('submitted','under_review','needs_revision')")->fetchColumn(),
         'payment_ready' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'payment_verified'")->fetchColumn(),
         'assignment_pending' => countRequestsAwaitingStaffAssignment(),
         'release_ready' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status IN ('processing','ready_for_pickup','shipped')")->fetchColumn(),
@@ -1748,7 +1750,9 @@ function getRequestsForCompliance(string $filter = ''): array {
         $where = ["r.status NOT IN ('completed','rejected')"];
         $orderBy = 'r.created_at ASC';
 
-        if ($filter === 'pending') {
+        if ($filter === 'review') {
+            $where[] = "r.status IN ('submitted','under_review','needs_revision')";
+        } elseif ($filter === 'pending') {
             $where[] = "r.status IN ('submitted','under_review')";
         } elseif ($filter === 'awaiting_student') {
             $where[] = "r.status IN ('awaiting_requirements','needs_revision')";

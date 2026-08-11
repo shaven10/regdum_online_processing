@@ -18,7 +18,8 @@ INSERT INTO roles (name, description) VALUES
 ('registrar', 'Registrar Officer'),
 ('admin', 'System Administrator'),
 ('cashier', 'Payment Verification Cashier'),
-('clearance_officer', 'Clearance Signing Officer');
+('clearance_officer', 'Clearance Signing Officer'),
+('accounting', 'Accounting Office — SOA document assignment only');
 
 -- Users
 CREATE TABLE users (

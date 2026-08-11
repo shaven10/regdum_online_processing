@@ -52,6 +52,36 @@ function generateRequestNumber(): string {
     return 'REQ-' . date('Y') . '-' . strtoupper(substr(uniqid(), -6));
 }
 
+/**
+ * Generate a readable temporary password for admin resets.
+ */
+function generateTemporaryPassword(int $length = 12): string {
+    $length = max(PASSWORD_MIN_LENGTH, $length);
+    $upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    $lower = 'abcdefghijkmnopqrstuvwxyz';
+    $digits = '23456789';
+    $symbols = '!@#$%&*';
+    $all = $upper . $lower . $digits . $symbols;
+
+    $password = [
+        $upper[random_int(0, strlen($upper) - 1)],
+        $lower[random_int(0, strlen($lower) - 1)],
+        $digits[random_int(0, strlen($digits) - 1)],
+        $symbols[random_int(0, strlen($symbols) - 1)],
+    ];
+
+    for ($i = count($password); $i < $length; $i++) {
+        $password[] = $all[random_int(0, strlen($all) - 1)];
+    }
+
+    for ($i = count($password) - 1; $i > 0; $i--) {
+        $j = random_int(0, $i);
+        [$password[$i], $password[$j]] = [$password[$j], $password[$i]];
+    }
+
+    return implode('', $password);
+}
+
 function normalizeVerificationCode(?string $code): string {
     return strtoupper(preg_replace('/[^A-Z0-9]/i', '', (string) $code) ?? '');
 }
@@ -467,6 +497,100 @@ function adminBatchDeleteRequests(array $requestIds): array {
         'deleted' => $deleted,
         'failed' => $failed,
         'ok' => $deleted > 0,
+    ];
+}
+
+/**
+ * Permanently delete a student account and related credential requests.
+ *
+ * @return array{ok:bool,error?:string,name?:string,requests_deleted?:int}
+ */
+function adminDeleteStudent(int $userId): array {
+    $db = getDB();
+    $stmt = $db->prepare('SELECT u.id, u.first_name, u.last_name, u.email, u.student_id, r.name AS role_name
+        FROM users u
+        JOIN roles r ON u.role_id = r.id
+        WHERE u.id = ?');
+    $stmt->execute([$userId]);
+    $student = $stmt->fetch();
+
+    if (!$student || ($student['role_name'] ?? '') !== 'student') {
+        return ['ok' => false, 'error' => 'Student account not found.'];
+    }
+
+    $displayName = trim(($student['first_name'] ?? '') . ' ' . ($student['last_name'] ?? ''));
+
+    try {
+        $profilePaths = [];
+        $profileStmt = $db->prepare('SELECT valid_id_path, avatar FROM student_profiles WHERE user_id = ?');
+        $profileStmt->execute([$userId]);
+        $profile = $profileStmt->fetch() ?: [];
+        foreach (['valid_id_path', 'avatar'] as $field) {
+            if (!empty($profile[$field])) {
+                $profilePaths[] = (string) $profile[$field];
+            }
+        }
+
+        $requestStmt = $db->prepare('SELECT id FROM requests WHERE user_id = ? ORDER BY id ASC');
+        $requestStmt->execute([$userId]);
+        $requestIds = array_map('intval', $requestStmt->fetchAll(PDO::FETCH_COLUMN));
+
+        $requestsDeleted = 0;
+        foreach ($requestIds as $requestId) {
+            $result = adminDeleteRequest($requestId);
+            if (!$result['ok']) {
+                return [
+                    'ok' => false,
+                    'error' => $result['error'] ?? ('Unable to delete request #' . $requestId . ' for this student.'),
+                ];
+            }
+            $requestsDeleted++;
+        }
+
+        $db->prepare('DELETE FROM appointments WHERE user_id = ?')->execute([$userId]);
+        $db->prepare('DELETE FROM users WHERE id = ?')->execute([$userId]);
+
+        deleteStoredUploadFiles($profilePaths);
+        auditLog('delete_student', 'users', $userId, [
+            'email' => $student['email'] ?? null,
+            'student_id' => $student['student_id'] ?? null,
+            'name' => $displayName,
+            'requests_deleted' => $requestsDeleted,
+        ], null);
+
+        return [
+            'ok' => true,
+            'name' => $displayName !== '' ? $displayName : ($student['email'] ?? 'Student'),
+            'requests_deleted' => $requestsDeleted,
+        ];
+    } catch (PDOException $e) {
+        return ['ok' => false, 'error' => 'Unable to delete student account.'];
+    }
+}
+
+/**
+ * @return array{ok:bool,deleted:int,failed:array,requests_deleted:int}
+ */
+function adminBatchDeleteStudents(array $userIds): array {
+    $deleted = 0;
+    $failed = [];
+    $requestsDeleted = 0;
+
+    foreach (normalizeAdminBatchRequestIds($userIds) as $userId) {
+        $result = adminDeleteStudent($userId);
+        if (!empty($result['ok'])) {
+            $deleted++;
+            $requestsDeleted += (int) ($result['requests_deleted'] ?? 0);
+        } else {
+            $failed[] = $result['error'] ?? ('Student #' . $userId);
+        }
+    }
+
+    return [
+        'ok' => $deleted > 0,
+        'deleted' => $deleted,
+        'failed' => $failed,
+        'requests_deleted' => $requestsDeleted,
     ];
 }
 

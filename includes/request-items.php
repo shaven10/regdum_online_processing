@@ -367,6 +367,16 @@ function assignRequestItemProcessing(
     }
 
     $db = getDB();
+    $assigneeRole = $db->prepare('SELECT r.name AS role_name FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?');
+    $assigneeRole->execute([$staffId]);
+    $roleName = (string) ($assigneeRole->fetchColumn() ?: '');
+    if ($roleName === 'accounting') {
+        require_once __DIR__ . '/accounting.php';
+        if (!isSoaDocumentAssignment($item)) {
+            return false;
+        }
+    }
+
     $db->prepare('UPDATE request_items SET assigned_to = ?, release_date = ?, release_time = ?, pickup_date = ?, pickup_time = ?, item_status = ? WHERE id = ?')
        ->execute([$staffId, $releaseDate, $releaseTime, $releaseDate, $releaseTime, 'processing', $itemId]);
 
@@ -469,7 +479,7 @@ function getStaffAssignedItems(int $staffId, string $status = ''): array {
         $where[] = "ri.item_status IN ('processing', 'ready_for_pickup')";
     }
 
-    $sql = 'SELECT ri.*, dt.name as document_name, r.request_number, r.status as request_status,
+    $sql = 'SELECT ri.*, dt.name as document_name, dt.code as document_code, r.request_number, r.status as request_status,
             u.first_name, u.last_name, u.student_id
         FROM request_items ri
         JOIN requests r ON ri.request_id = r.id
@@ -603,7 +613,7 @@ function renderRequestItemDetailsHtml(array $item): string {
 
     if (!empty($item['request_school_year']) || !empty($item['request_semester'])) {
         $html .= '<div class="detail-item"><label>School Year</label><span>' . e($item['request_school_year'] ?? '—') . '</span></div>';
-        $html .= '<div class="detail-item"><label>Semester</label><span>' . e($item['request_semester'] ?? '—') . '</span></div>';
+        $html .= '<div class="detail-item"><label>Semester</label><span>' . e(semesterLabel($item['request_semester'] ?? null)) . '</span></div>';
     }
 
     if (!empty($item['staff_first'])) {
@@ -616,4 +626,223 @@ function renderRequestItemDetailsHtml(array $item): string {
 
     $html .= '</div></div>';
     return $html;
+}
+
+/**
+ * Load full request context for My Assignments process pages.
+ *
+ * @return array{request:array,items:array,payment:?array,documents:array,clearance_required:bool,clearance_progress:array}
+ */
+function loadAssignmentRequestContext(int $requestId): array {
+    require_once __DIR__ . '/payments.php';
+    require_once __DIR__ . '/compliance.php';
+    require_once __DIR__ . '/clearance.php';
+    require_once __DIR__ . '/campuses.php';
+    require_once __DIR__ . '/student.php';
+    require_once __DIR__ . '/onsite-request.php';
+
+    ensureOnsiteRequestSchema();
+    ensureCampusesSchema();
+
+    $db = getDB();
+    $stmt = $db->prepare('SELECT r.*,
+            u.first_name, u.last_name, u.middle_name, u.email, u.student_id, u.phone,
+            sp.course, sp.course_id, sp.year_level, sp.enrollment_status,
+            sp.origin_campus_id, sp.year_graduated, sp.last_school_year, sp.current_semester,
+            c.name as campus_name, c.code as campus_code
+        FROM requests r
+        JOIN users u ON r.user_id = u.id
+        LEFT JOIN student_profiles sp ON u.id = sp.user_id
+        LEFT JOIN campuses c ON sp.origin_campus_id = c.id
+        WHERE r.id = ?');
+    $stmt->execute([$requestId]);
+    $request = $stmt->fetch() ?: [];
+
+    $paymentStmt = $db->prepare('SELECT * FROM payments WHERE request_id = ? ORDER BY created_at DESC LIMIT 1');
+    $paymentStmt->execute([$requestId]);
+    $payment = $paymentStmt->fetch() ?: null;
+
+    $docsStmt = $db->prepare('SELECT * FROM request_documents WHERE request_id = ? ORDER BY uploaded_at ASC');
+    $docsStmt->execute([$requestId]);
+    $documents = $docsStmt->fetchAll();
+
+    $clearanceRequired = hasAssignedRequirement($requestId, 'online_clearance');
+    $clearanceProgress = $clearanceRequired ? getClearanceProgress($requestId) : ['total' => 0, 'cleared' => 0, 'onHold' => 0, 'pending' => 0];
+
+    return [
+        'request' => $request,
+        'items' => getRequestItems($requestId),
+        'payment' => $payment,
+        'documents' => $documents,
+        'clearance_required' => $clearanceRequired,
+        'clearance_progress' => $clearanceProgress,
+    ];
+}
+
+/**
+ * Render detailed request + requestor info for assignment processors.
+ */
+function renderAssignmentRequestDetailsHtml(array $context, ?array $activeItem = null): string {
+    $request = $context['request'] ?? [];
+    if (!$request) {
+        return '';
+    }
+
+    $items = $context['items'] ?? [];
+    $payment = $context['payment'] ?? null;
+    $documents = $context['documents'] ?? [];
+    $clearanceRequired = !empty($context['clearance_required']);
+    $progress = $context['clearance_progress'] ?? [];
+    $activeItemId = (int) ($activeItem['id'] ?? 0);
+    $isOnsite = isOnsiteRequestChannel($request['request_channel'] ?? null);
+    $isGraduated = isGraduatedEnrollment($request['enrollment_status'] ?? null);
+    $isInactive = isInactiveEnrollment($request['enrollment_status'] ?? null);
+
+    $studentName = trim(
+        ($request['first_name'] ?? '')
+        . (!empty($request['middle_name']) ? ' ' . $request['middle_name'] : '')
+        . ' ' . ($request['last_name'] ?? '')
+    );
+
+    $purposeText = purposeLabel((string) ($request['purpose'] ?? ''));
+    if (!empty($request['purpose_other'])) {
+        $purposeText .= ' — ' . $request['purpose_other'];
+    }
+
+    $courseYear = trim((string) ($request['course'] ?? ''));
+    if ($isGraduated && !empty($request['year_graduated'])) {
+        $courseYear .= ($courseYear !== '' ? ' · ' : '') . 'Graduated ' . (int) $request['year_graduated'];
+    } elseif ($isInactive) {
+        $lastTerm = trim(
+            (string) ($request['last_school_year'] ?? '')
+            . (!empty($request['current_semester']) ? ' · ' . semesterLabel($request['current_semester']) : '')
+        );
+        if ($lastTerm !== '') {
+            $courseYear .= ($courseYear !== '' ? ' · ' : '') . 'Last attended ' . $lastTerm;
+        }
+    } elseif (!empty($request['year_level'])) {
+        $courseYear .= ($courseYear !== '' ? ' · ' : '') . $request['year_level'];
+    }
+    if ($courseYear === '') {
+        $courseYear = '—';
+    }
+
+    $campusLabel = '—';
+    if (!empty($request['campus_name'])) {
+        $campusLabel = $request['campus_name'] . (!empty($request['campus_code']) ? ' (' . $request['campus_code'] . ')' : '');
+    }
+
+    ob_start();
+    ?>
+    <div class="assignment-request-details">
+        <section class="assignment-detail-section">
+            <h3><i class="fas fa-user-graduate"></i> Requestor</h3>
+            <div class="detail-grid">
+                <div class="detail-item"><label>Full Name</label><span><?= e($studentName !== '' ? $studentName : '—') ?></span></div>
+                <div class="detail-item"><label>Student / Requestor ID</label><span><?= e($request['student_id'] ?? '—') ?></span></div>
+                <div class="detail-item"><label>Email</label><span><?= e($request['email'] ?? '—') ?></span></div>
+                <div class="detail-item"><label>Phone</label><span><?= e($request['phone'] ?? '—') ?></span></div>
+                <div class="detail-item"><label>Enrollment Status</label><span><?= e(enrollmentStatusLabel($request['enrollment_status'] ?? null)) ?></span></div>
+                <div class="detail-item"><label>Course / Program</label><span><?= e($courseYear) ?></span></div>
+                <?php if ($isGraduated || $isInactive): ?>
+                    <div class="detail-item"><label>Campus</label><span><?= e($campusLabel) ?></span></div>
+                <?php endif; ?>
+            </div>
+        </section>
+
+        <section class="assignment-detail-section">
+            <h3><i class="fas fa-file-alt"></i> Request Information</h3>
+            <div class="detail-grid">
+                <div class="detail-item"><label>Request #</label><span><?= e($request['request_number'] ?? '—') ?></span></div>
+                <div class="detail-item"><label>Channel</label><span><?= $isOnsite ? '<span class="badge badge-processing">Onsite Walk-in</span>' : '<span class="badge badge-review">Online</span>' ?></span></div>
+                <div class="detail-item"><label>Batch Status</label><span><?= statusBadge((string) ($request['status'] ?? '')) ?></span></div>
+                <div class="detail-item"><label>Submitted</label><span><?= e(formatDateTime($request['created_at'] ?? null)) ?></span></div>
+                <div class="detail-item"><label>Purpose</label><span><?= e($purposeText) ?></span></div>
+                <div class="detail-item"><label>Request Type</label><span><?= e(copyRequestTypeLabel($request['copy_request_type'] ?? null)) ?></span></div>
+                <div class="detail-item"><label>Delivery</label><span><?= e(deliveryMethodLabel($request['delivery_method'] ?? null)) ?></span></div>
+                <div class="detail-item"><label>Total Amount</label><span><strong><?= e(formatMoney((float) ($request['total_amount'] ?? 0))) ?></strong></span></div>
+                <?php if (!empty($request['notes'])): ?>
+                    <div class="detail-item full"><label>Notes</label><span><?= e($request['notes']) ?></span></div>
+                <?php endif; ?>
+                <?php if (($request['delivery_method'] ?? '') === 'authorized_representative'): ?>
+                    <div class="detail-item"><label>Representative</label><span><?= e($request['representative_name'] ?? '—') ?></span></div>
+                    <div class="detail-item"><label>Relationship</label><span><?= e($request['representative_relationship'] ?? '—') ?></span></div>
+                    <div class="detail-item"><label>Rep. Phone</label><span><?= e($request['representative_phone'] ?? '—') ?></span></div>
+                    <div class="detail-item"><label>Rep. ID No.</label><span><?= e($request['representative_id_number'] ?? '—') ?></span></div>
+                <?php endif; ?>
+            </div>
+        </section>
+
+        <?php if ($activeItem): ?>
+        <section class="assignment-detail-section">
+            <h3><i class="fas fa-tasks"></i> Assigned Document</h3>
+            <?= renderRequestItemDetailsHtml($activeItem) ?>
+        </section>
+        <?php endif; ?>
+
+        <?php if (!empty($items)): ?>
+        <section class="assignment-detail-section">
+            <h3><i class="fas fa-layer-group"></i> Documents in Request (<?= count($items) ?>)</h3>
+            <div class="request-items-summary-list">
+                <?php foreach ($items as $requestItem): ?>
+                    <?php $isActive = $activeItemId > 0 && (int) $requestItem['id'] === $activeItemId; ?>
+                    <div class="request-item-summary-row<?= $isActive ? ' is-active-assignment' : '' ?>">
+                        <strong><?= e($requestItem['document_name'] ?? 'Document') ?><?= $isActive ? ' <small class="text-muted">(this assignment)</small>' : '' ?></strong>
+                        <span><?= (int) ($requestItem['copies'] ?? 1) ?> cop<?= (int) ($requestItem['copies'] ?? 1) === 1 ? 'y' : 'ies' ?></span>
+                        <span><?= e(formatMoney((float) ($requestItem['item_amount'] ?? 0))) ?></span>
+                        <?= requestItemStatusBadge($requestItem['item_status'] ?? 'pending_assignment') ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </section>
+        <?php endif; ?>
+
+        <?php if ($payment): ?>
+        <section class="assignment-detail-section">
+            <h3><i class="fas fa-receipt"></i> Payment</h3>
+            <div class="detail-grid">
+                <div class="detail-item"><label>Method</label><span><?= e(paymentMethodLabel($payment['payment_method'] ?? null)) ?></span></div>
+                <div class="detail-item"><label>Status</label><span><?= statusBadge((string) ($payment['status'] ?? '')) ?></span></div>
+                <div class="detail-item"><label>Amount</label><span><?= e(formatMoney((float) ($payment['amount'] ?? 0))) ?></span></div>
+                <div class="detail-item"><label><?= isOnsitePaymentMethod($payment['payment_method'] ?? null) ? 'Payment Code' : 'Reference' ?></label><span><?= e($payment['reference_number'] ?? '—') ?></span></div>
+                <?php if (!empty($payment['or_number'])): ?>
+                    <div class="detail-item"><label>OR #</label><span><?= e($payment['or_number']) ?></span></div>
+                <?php endif; ?>
+                <?php if (!empty($payment['payment_date'])): ?>
+                    <div class="detail-item"><label>Payment Date</label><span><?= e(formatDate($payment['payment_date'])) ?></span></div>
+                <?php endif; ?>
+                <div class="detail-item"><label>Submitted</label><span><?= e(formatDateTime($payment['created_at'] ?? null)) ?></span></div>
+            </div>
+        </section>
+        <?php endif; ?>
+
+        <?php if ($clearanceRequired): ?>
+        <section class="assignment-detail-section">
+            <h3><i class="fas fa-stamp"></i> Online Clearance</h3>
+            <p class="text-muted" style="margin:0 0 .75rem">
+                Progress: <?= (int) ($progress['cleared'] ?? 0) ?>/<?= (int) ($progress['total'] ?? 0) ?> offices cleared
+                <?php if (!empty($progress['onHold'])): ?>
+                    · <?= (int) $progress['onHold'] ?> on hold
+                <?php endif; ?>
+            </p>
+            <?= renderClearanceGrid((int) $request['id'], true) ?>
+        </section>
+        <?php endif; ?>
+
+        <?php if (!empty($documents)): ?>
+        <section class="assignment-detail-section">
+            <h3><i class="fas fa-paperclip"></i> Uploaded Requirements</h3>
+            <ul class="doc-list">
+                <?php foreach ($documents as $doc): ?>
+                    <li>
+                        <a href="<?= UPLOAD_URL ?>/<?= e($doc['file_name']) ?>" target="_blank"><?= e($doc['original_name']) ?></a>
+                        <small class="text-muted"><?= e(formatDateTime($doc['uploaded_at'] ?? null)) ?></small>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        </section>
+        <?php endif; ?>
+    </div>
+    <?php
+    return (string) ob_get_clean();
 }

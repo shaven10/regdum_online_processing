@@ -44,6 +44,11 @@ function ensureClearanceSchema(): void {
         $db->exec('ALTER TABLE users ADD COLUMN clearance_department_id TINYINT UNSIGNED NULL AFTER role_id');
     }
 
+    $programCol = $db->query("SHOW COLUMNS FROM users LIKE 'clearance_program_id'")->fetch();
+    if (!$programCol) {
+        $db->exec('ALTER TABLE users ADD COLUMN clearance_program_id TINYINT UNSIGNED NULL AFTER clearance_department_id');
+    }
+
     $role = $db->query("SELECT id FROM roles WHERE name = 'clearance_officer'")->fetch();
     if (!$role) {
         $db->exec("INSERT INTO roles (name, description) VALUES ('clearance_officer', 'Clearance Signing Officer')");
@@ -52,6 +57,55 @@ function ensureClearanceSchema(): void {
     seedClearanceDepartments();
     removeExcludedClearanceOffices();
     seedClearanceRequirement();
+}
+
+function isProgramChairDepartment(?array $department): bool {
+    return ($department['code'] ?? '') === 'program_chair';
+}
+
+/**
+ * Program/course scope for a clearance officer.
+ * null = not a program chair (no course filter).
+ * 0 = program chair with no course assigned (should see no requests).
+ * >0 = only requests for that academic program.
+ */
+function getClearanceOfficerProgramScope(array $user): ?int {
+    $department = getUserClearanceDepartment($user);
+    if (!isProgramChairDepartment($department)) {
+        return null;
+    }
+    return (int) ($user['clearance_program_id'] ?? 0);
+}
+
+function getRequestorCourseIdForRequest(int $requestId): int {
+    $db = getDB();
+    $stmt = $db->prepare('SELECT sp.course_id
+        FROM requests r
+        JOIN users u ON r.user_id = u.id
+        LEFT JOIN student_profiles sp ON u.id = sp.user_id
+        WHERE r.id = ?');
+    $stmt->execute([$requestId]);
+    return (int) ($stmt->fetchColumn() ?: 0);
+}
+
+function canClearanceOfficerAccessRequest(array $user, int $requestId): bool {
+    $department = getUserClearanceDepartment($user);
+    if (!$department && !hasRole('admin')) {
+        return false;
+    }
+    if (hasRole('admin') && !$department) {
+        return true;
+    }
+
+    $programScope = getClearanceOfficerProgramScope($user);
+    if ($programScope === null) {
+        return true;
+    }
+    if ($programScope <= 0) {
+        return false;
+    }
+
+    return getRequestorCourseIdForRequest($requestId) === $programScope;
 }
 
 function removeExcludedClearanceOffices(): void {
@@ -112,9 +166,10 @@ function notifyClearanceOfficersPendingSigning(
     $db = getDB();
     $departmentIds = array_values(array_unique(array_filter(array_map('intval', $departmentIds))));
 
-    $info = $db->prepare('SELECT r.request_number, u.first_name, u.last_name, u.student_id
+    $info = $db->prepare('SELECT r.request_number, u.first_name, u.last_name, u.student_id, sp.course_id
         FROM requests r
         JOIN users u ON r.user_id = u.id
+        LEFT JOIN student_profiles sp ON u.id = sp.user_id
         WHERE r.id = ?');
     $info->execute([$requestId]);
     $request = $info->fetch();
@@ -127,6 +182,7 @@ function notifyClearanceOfficersPendingSigning(
         return 0;
     }
 
+    $requestorCourseId = (int) ($request['course_id'] ?? 0);
     $studentName = trim(($request['first_name'] ?? '') . ' ' . ($request['last_name'] ?? ''));
     $studentLabel = $studentName !== '' ? $studentName : 'A student';
     if (!empty($request['student_id'])) {
@@ -144,14 +200,17 @@ function notifyClearanceOfficersPendingSigning(
     }
     $link = APP_URL . '/clearance/sign.php?request_id=' . $requestId;
 
-    $sql = 'SELECT id FROM users WHERE role_id = ? AND is_active = 1';
+    $sql = 'SELECT u.id, u.clearance_program_id, cd.code AS department_code
+        FROM users u
+        LEFT JOIN clearance_departments cd ON u.clearance_department_id = cd.id
+        WHERE u.role_id = ? AND u.is_active = 1';
     $params = [(int) $roleId];
 
     // New requests notify every clearance officer account.
     // Department filter is used for targeted re-alerts (e.g. reset to pending).
     if (!$allOfficers && $departmentIds) {
         $placeholders = implode(',', array_fill(0, count($departmentIds), '?'));
-        $sql .= ' AND clearance_department_id IN (' . $placeholders . ')';
+        $sql .= ' AND u.clearance_department_id IN (' . $placeholders . ')';
         $params = array_merge($params, $departmentIds);
     }
 
@@ -164,6 +223,15 @@ function notifyClearanceOfficersPendingSigning(
         if ($excludeUserId !== null && $userId === $excludeUserId) {
             continue;
         }
+
+        // Program chairs only receive requests for their assigned course/program.
+        if (($row['department_code'] ?? '') === 'program_chair') {
+            $officerProgramId = (int) ($row['clearance_program_id'] ?? 0);
+            if ($officerProgramId <= 0 || $requestorCourseId <= 0 || $officerProgramId !== $requestorCourseId) {
+                continue;
+            }
+        }
+
         sendNotification($userId, $title, $message, 'info', $link);
         $count++;
     }
@@ -268,7 +336,7 @@ function requireClearanceAccess(): void {
     }
 }
 
-function getClearanceRequestsForDepartment(int $departmentId, string $status = ''): array {
+function getClearanceRequestsForDepartment(int $departmentId, string $status = '', string $search = '', ?int $programId = null): array {
     $db = getDB();
     $where = ['rc.department_id = ?'];
     $params = [$departmentId];
@@ -278,15 +346,29 @@ function getClearanceRequestsForDepartment(int $departmentId, string $status = '
         $params[] = $status;
     }
 
+    $search = trim($search);
+    if ($search !== '') {
+        $where[] = '(r.request_number LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.student_id LIKE ? OR sp.course LIKE ?)';
+        $like = '%' . $search . '%';
+        array_push($params, $like, $like, $like, $like, $like);
+    }
+
+    if ($programId !== null) {
+        $where[] = 'sp.course_id = ?';
+        $params[] = $programId;
+    }
+
     $where[] = "r.status NOT IN ('completed','rejected')";
 
     $sql = 'SELECT rc.*, cd.name as department_name, r.request_number, r.status as request_status,
-                   r.created_at as request_date, dt.name as document_name,
-                   u.first_name, u.last_name, u.student_id
+                   r.request_channel, r.created_at as request_date, dt.name as document_name,
+                   u.first_name, u.last_name, u.student_id, u.email, u.phone,
+                   sp.course, sp.course_id, sp.year_level, sp.enrollment_status
             FROM request_clearances rc
             JOIN requests r ON rc.request_id = r.id
             JOIN document_types dt ON r.document_type_id = dt.id
             JOIN users u ON r.user_id = u.id
+            LEFT JOIN student_profiles sp ON u.id = sp.user_id
             JOIN clearance_departments cd ON rc.department_id = cd.id
             WHERE ' . implode(' AND ', $where) . '
             ORDER BY rc.updated_at DESC, r.created_at ASC';
@@ -302,6 +384,19 @@ function processClearanceAction(int $requestId, int $departmentId, int $userId, 
     }
 
     $db = getDB();
+    $officerStmt = $db->prepare('SELECT u.*, cd.code AS department_code
+        FROM users u
+        LEFT JOIN clearance_departments cd ON u.clearance_department_id = cd.id
+        WHERE u.id = ?');
+    $officerStmt->execute([$userId]);
+    $officer = $officerStmt->fetch();
+    if ($officer && ($officer['department_code'] ?? '') === 'program_chair') {
+        $officerProgramId = (int) ($officer['clearance_program_id'] ?? 0);
+        $requestorCourseId = getRequestorCourseIdForRequest($requestId);
+        if ($officerProgramId <= 0 || $requestorCourseId !== $officerProgramId) {
+            return false;
+        }
+    }
     $stmt = $db->prepare('SELECT rc.*, r.request_number, r.user_id, cd.name as department_name
         FROM request_clearances rc
         JOIN requests r ON rc.request_id = r.id
