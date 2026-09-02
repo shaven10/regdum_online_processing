@@ -127,7 +127,7 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/accounting/documents.php?status=processing" class="<?= $activeNav === 'processing' ? 'active' : '' ?>"><i class="fas fa-spinner"></i> Processing</a>
                 <a href="<?= APP_URL ?>/accounting/documents.php?status=ready_for_pickup" class="<?= $activeNav === 'ready' ? 'active' : '' ?>"><i class="fas fa-box-open"></i> Ready for Pickup</a>
             <?php elseif (hasRole('admin')): ?>
-                <?php $adminSettingsNav = ['users', 'documents', 'release-rules', 'programs', 'campuses', 'requirement-types', 'requirements', 'purpose-suggestions', 'theme', 'database-tools', 'audit']; ?>
+                <?php $adminSettingsNav = ['users', 'documents', 'release-rules', 'programs', 'campuses', 'requirement-types', 'requirements', 'purpose-suggestions', 'theme', 'api-settings', 'database-tools', 'audit']; ?>
                 <?php $adminReportsNav = ['reports', 'enrollment-report', 'enrollment-list']; ?>
                 <?php $settingsMenuOpen = in_array($activeNav, $adminSettingsNav, true); ?>
                 <?php $reportsMenuOpen = in_array($activeNav, $adminReportsNav, true); ?>
@@ -173,6 +173,7 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                         <a href="<?= APP_URL ?>/admin/requirement-settings.php" class="<?= $activeNav === 'requirements' ? 'active' : '' ?>"><i class="fas fa-sliders-h"></i> Requirement Settings</a>
                         <a href="<?= APP_URL ?>/admin/purpose-suggestions.php" class="<?= $activeNav === 'purpose-suggestions' ? 'active' : '' ?>"><i class="fas fa-bullseye"></i> Purpose & Suggestions</a>
                         <a href="<?= APP_URL ?>/admin/theme-settings.php" class="<?= $activeNav === 'theme' ? 'active' : '' ?>"><i class="fas fa-palette"></i> Theme Manager</a>
+                        <a href="<?= APP_URL ?>/admin/api-settings.php" class="<?= $activeNav === 'api-settings' ? 'active' : '' ?>"><i class="fas fa-plug"></i> External API</a>
                         <a href="<?= APP_URL ?>/admin/database-tools.php" class="<?= $activeNav === 'database-tools' ? 'active' : '' ?>"><i class="fas fa-database"></i> Database Tools</a>
                         <a href="<?= APP_URL ?>/admin/audit-logs.php" class="<?= $activeNav === 'audit' ? 'active' : '' ?>"><i class="fas fa-shield-alt"></i> Audit Logs</a>
                     </div>

@@ -845,6 +845,44 @@ a:hover { text-decoration: underline; }
     flex-wrap: wrap;
 }
 
+.api-log-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.api-log-stats div {
+    background: var(--primary-soft);
+    border: 1px solid var(--primary-soft-strong);
+    border-radius: var(--radius);
+    padding: .85rem 1rem;
+}
+
+.api-log-stats strong {
+    display: block;
+    font-size: 1.35rem;
+    line-height: 1.2;
+}
+
+.api-log-stats span {
+    color: var(--text-muted);
+    font-size: .85rem;
+}
+
+.api-log-filters {
+    margin-bottom: 1.25rem;
+}
+
+.card-body .card-header-actions,
+.card-header.card-header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
 .card-body { padding: 1.25rem; }
 
 /* Stats */
