@@ -1,17 +1,77 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/ui.php';
+require_once __DIR__ . '/../includes/grades-evaluation.php';
 requireRole('admin');
+
+ensureAcademicProgramsSchema();
+ensureCampusesSchema();
+ensureEnrollmentStatuses();
+ensureGradesEvaluationSchema();
 
 $db = getDB();
 $page = max(1, (int) ($_GET['page'] ?? 1));
 $search = trim($_GET['search'] ?? '');
+$enrollmentStatus = trim($_GET['enrollment_status'] ?? '');
+$courseId = (int) ($_GET['course_id'] ?? 0);
+$yearLevel = trim($_GET['year_level'] ?? '');
+$accountStatus = trim($_GET['account'] ?? '');
+$campusId = (int) ($_GET['campus_id'] ?? 0);
+$sort = trim($_GET['sort'] ?? 'name');
+$perPage = normalizeStudentRecordsPerPage((int) ($_GET['per_page'] ?? ITEMS_PER_PAGE));
 
-$listQuery = array_filter([
+$enrollmentOptions = enrollmentStatusOptions();
+$yearOptions = yearLevelOptions();
+if (!isset($yearOptions['5th Year'])) {
+    $yearOptions['5th Year'] = '5th Year';
+}
+$programs = getAllAcademicPrograms();
+$campuses = getAllCampuses();
+$sortOptions = [
+    'name'   => 'Name (A–Z)',
+    'newest' => 'Newest first',
+    'id'     => 'Student ID',
+];
+
+if (!array_key_exists($enrollmentStatus, $enrollmentOptions)) {
+    $enrollmentStatus = '';
+}
+if (!array_key_exists($yearLevel, $yearOptions)) {
+    $yearLevel = '';
+}
+if (!in_array($accountStatus, ['active', 'inactive'], true)) {
+    $accountStatus = '';
+}
+if (!array_key_exists($sort, $sortOptions)) {
+    $sort = 'name';
+}
+
+$validCourseIds = array_map(static fn($p) => (int) $p['id'], $programs);
+if ($courseId > 0 && !in_array($courseId, $validCourseIds, true)) {
+    $courseId = 0;
+}
+$validCampusIds = array_map(static fn($c) => (int) $c['id'], $campuses);
+if ($campusId > 0 && !in_array($campusId, $validCampusIds, true)) {
+    $campusId = 0;
+}
+
+$filters = array_filter([
     'search' => $search,
+    'enrollment_status' => $enrollmentStatus,
+    'course_id' => $courseId > 0 ? (string) $courseId : '',
+    'year_level' => $yearLevel,
+    'account' => $accountStatus,
+    'campus_id' => $campusId > 0 ? (string) $campusId : '',
+    'sort' => $sort !== 'name' ? $sort : '',
+    'per_page' => $perPage !== ITEMS_PER_PAGE ? (string) $perPage : '',
+]);
+$listQuery = array_filter($filters + [
     'page' => $page > 1 ? (string) $page : '',
 ]);
 $listUrl = APP_URL . '/admin/students.php' . ($listQuery ? '?' . http_build_query($listQuery) : '');
+$filterQuery = http_build_query($filters);
+$hasFilters = $search !== '' || $enrollmentStatus !== '' || $courseId > 0 || $yearLevel !== '' || $accountStatus !== '' || $campusId > 0;
+handleStudentRecordsClearGradesPost($listUrl);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $action = $_POST['action'] ?? '';
@@ -75,50 +135,148 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
 $where = ["r.name = 'student'"];
 $params = [];
-if ($search) {
-    $where[] = '(u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ? OR u.student_id LIKE ?)';
-    array_push($params, "%$search%", "%$search%", "%$search%", "%$search%");
+
+if ($search !== '') {
+    $terms = preg_split('/\s+/', $search, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    foreach ($terms as $term) {
+        $like = '%' . $term . '%';
+        $where[] = '(u.first_name LIKE ? OR u.last_name LIKE ? OR u.middle_name LIKE ?
+            OR u.email LIKE ? OR u.student_id LIKE ? OR u.phone LIKE ?
+            OR sp.course LIKE ? OR CONCAT(u.last_name, " ", u.first_name) LIKE ?
+            OR CONCAT(u.first_name, " ", u.last_name) LIKE ?)';
+        array_push($params, $like, $like, $like, $like, $like, $like, $like, $like, $like);
+    }
 }
+if ($enrollmentStatus !== '') {
+    $where[] = 'sp.enrollment_status = ?';
+    $params[] = $enrollmentStatus;
+}
+if ($courseId > 0) {
+    $where[] = 'sp.course_id = ?';
+    $params[] = $courseId;
+}
+if ($yearLevel !== '') {
+    $where[] = 'sp.year_level = ?';
+    $params[] = $yearLevel;
+}
+if ($accountStatus === 'active') {
+    $where[] = 'u.is_active = 1';
+} elseif ($accountStatus === 'inactive') {
+    $where[] = 'u.is_active = 0';
+}
+if ($campusId > 0) {
+    $where[] = 'sp.origin_campus_id = ?';
+    $params[] = $campusId;
+}
+
 $whereClause = implode(' AND ', $where);
+$orderBy = match ($sort) {
+    'name' => 'u.last_name ASC, u.first_name ASC, u.middle_name ASC, u.id ASC',
+    'id'   => 'u.student_id ASC, u.id DESC',
+    default => 'u.created_at DESC, u.id DESC',
+};
 
-$countStmt = $db->prepare("SELECT COUNT(*) FROM users u JOIN roles r ON u.role_id = r.id WHERE $whereClause");
+$countStmt = $db->prepare("SELECT COUNT(*) FROM users u
+    JOIN roles r ON u.role_id = r.id
+    LEFT JOIN student_profiles sp ON u.id = sp.user_id
+    WHERE $whereClause");
 $countStmt->execute($params);
-$pag = paginate((int) $countStmt->fetchColumn(), $page);
+$totalStudents = (int) $countStmt->fetchColumn();
+$pag = paginate($totalStudents, $page, $perPage);
 
-$stmt = $db->prepare("SELECT u.*, sp.course, sp.year_level, sp.enrollment_status,
+$stmt = $db->prepare("SELECT u.*, sp.course, sp.course_id, sp.year_level, sp.enrollment_status, sp.origin_campus_id,
         (SELECT COUNT(*) FROM requests req WHERE req.user_id = u.id) AS request_count
     FROM users u
     JOIN roles r ON u.role_id = r.id
     LEFT JOIN student_profiles sp ON u.id = sp.user_id
     WHERE $whereClause
-    ORDER BY u.created_at DESC
+    ORDER BY $orderBy
     LIMIT {$pag['per_page']} OFFSET {$pag['offset']}");
 $stmt->execute($params);
 $students = $stmt->fetchAll();
+
+$from = $totalStudents > 0 ? $pag['offset'] + 1 : 0;
+$to = min($pag['offset'] + $pag['per_page'], $totalStudents);
+$viewId = (int) ($_GET['view'] ?? 0);
+$viewStudent = $viewId > 0 ? loadStudentRecordForView($viewId) : null;
+$viewCloseUrl = studentRecordsPageUrl($listQuery);
 
 $pageTitle = 'Student Records';
 $activeNav = 'students';
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
-<div class="card">
+<div class="card students-records-page">
     <div class="card-header">
         <div>
             <h2>Student Records</h2>
             <p class="text-muted" style="margin:.35rem 0 0">Delete permanently removes the account and all related credential requests.</p>
         </div>
+        <div class="card-header-actions">
+            <a href="<?= APP_URL ?>/registrar/grades-evaluation.php" class="btn btn-outline btn-sm"><i class="fas fa-clipboard-list"></i> Grades Evaluation</a>
+            <a href="import-students.php" class="btn btn-primary btn-sm"><i class="fas fa-file-import"></i> Import Active Students</a>
+        </div>
     </div>
     <div class="card-body">
-        <form method="GET" class="filter-bar">
-            <input type="text" name="search" placeholder="Search by name, email, or student ID..." value="<?= e($search) ?>">
-            <button type="submit" class="btn btn-outline btn-sm">Search</button>
-            <?php if ($search): ?>
-                <a href="students.php" class="btn btn-outline btn-sm">Clear</a>
-            <?php endif; ?>
+        <form method="GET" class="filter-bar students-filter-bar" id="studentsFilterForm">
+            <div class="students-filter-search">
+                <input type="text" name="search" placeholder="Search name, student ID, email, phone, or course..." value="<?= e($search) ?>">
+            </div>
+            <div class="students-filter-fields">
+                <select name="enrollment_status" aria-label="Enrollment status">
+                    <option value="">All enrollment</option>
+                    <?php foreach ($enrollmentOptions as $value => $label): ?>
+                        <option value="<?= e($value) ?>" <?= $enrollmentStatus === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="course_id" aria-label="Course">
+                    <option value="">All courses</option>
+                    <?php foreach ($programs as $program): ?>
+                        <option value="<?= (int) $program['id'] ?>" <?= $courseId === (int) $program['id'] ? 'selected' : '' ?>>
+                            <?= e($program['code'] ? $program['code'] . ' — ' . $program['name'] : $program['name']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="year_level" aria-label="Year level">
+                    <option value="">All years</option>
+                    <?php foreach ($yearOptions as $value => $label): ?>
+                        <option value="<?= e($value) ?>" <?= $yearLevel === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="account" aria-label="Account status">
+                    <option value="">All accounts</option>
+                    <option value="active" <?= $accountStatus === 'active' ? 'selected' : '' ?>>Active accounts</option>
+                    <option value="inactive" <?= $accountStatus === 'inactive' ? 'selected' : '' ?>>Inactive accounts</option>
+                </select>
+                <select name="campus_id" aria-label="Campus">
+                    <option value="">All campuses</option>
+                    <?php foreach ($campuses as $campus): ?>
+                        <option value="<?= (int) $campus['id'] ?>" <?= $campusId === (int) $campus['id'] ? 'selected' : '' ?>><?= e($campus['name']) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="sort" aria-label="Sort records">
+                    <?php foreach ($sortOptions as $value => $label): ?>
+                        <option value="<?= e($value) ?>" <?= $sort === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="students-filter-actions">
+                <button type="submit" class="btn btn-outline btn-sm"><i class="fas fa-filter"></i> Filter</button>
+                <?php if ($hasFilters || $sort !== 'name'): ?>
+                    <a href="students.php" class="btn btn-outline btn-sm">Clear</a>
+                <?php endif; ?>
+            </div>
         </form>
 
+        <div class="students-filter-meta">
+            <span><?= $totalStudents ?> student<?= $totalStudents === 1 ? '' : 's' ?><?= $hasFilters ? ' match these filters' : '' ?></span>
+            <?php if ($totalStudents > 0): ?>
+                <span>Showing <?= $from ?>–<?= $to ?></span>
+            <?php endif; ?>
+        </div>
+
         <?php if (empty($students)): ?>
-            <div class="empty-state"><i class="fas fa-users"></i><p>No student accounts found.</p></div>
+            <div class="empty-state"><i class="fas fa-users"></i><p><?= $hasFilters ? 'No students match these filters.' : 'No student accounts found.' ?></p></div>
         <?php else: ?>
             <form method="POST" id="adminStudentsBatchForm" class="admin-students-batch-form">
                 <?= csrfField() ?>
@@ -134,8 +292,8 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
             </form>
 
-            <div class="table-responsive">
-                <table class="data-table data-table-responsive">
+            <div class="table-responsive students-table-wrap">
+                <table class="data-table data-table-responsive students-records-table">
                     <thead>
                         <tr>
                             <th class="batch-select-col">
@@ -143,14 +301,11 @@ require_once __DIR__ . '/../includes/header.php';
                                     <input type="checkbox" id="adminSelectAllStudents" form="adminStudentsBatchForm" aria-label="Select all students on this page">
                                 </label>
                             </th>
-                            <th>Student ID</th>
-                            <th>Name</th>
-                            <th>Email</th>
-                            <th>Course</th>
-                            <th>Status</th>
-                            <th>Account</th>
-                            <th>Requests</th>
-                            <th>Registered</th>
+                            <th>Student</th>
+                            <th>Program</th>
+                            <th>Enrollment</th>
+                            <th class="students-col-account">Account</th>
+                            <th class="students-col-requests">Requests</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -158,11 +313,12 @@ require_once __DIR__ . '/../includes/header.php';
                         <?php foreach ($students as $s): ?>
                             <?php
                             $requestCount = (int) ($s['request_count'] ?? 0);
+                            $displayName = studentRecordName($s);
                             $confirmMessage = $requestCount > 0
                                 ? 'Delete this student permanently? This will also delete ' . $requestCount . ' credential request(s). This cannot be undone.'
                                 : 'Delete this student account permanently? This cannot be undone.';
                             ?>
-                            <tr>
+                            <tr<?= $viewId === (int) $s['id'] ? ' class="is-viewing"' : '' ?>>
                                 <td class="batch-select-col" data-label="Select">
                                     <label class="checkbox-label">
                                         <input type="checkbox"
@@ -173,24 +329,36 @@ require_once __DIR__ . '/../includes/header.php';
                                             data-request-count="<?= $requestCount ?>">
                                     </label>
                                 </td>
-                                <td data-label="Student ID"><?= e($s['student_id'] ?? '—') ?></td>
-                                <td data-label="Name"><strong><?= e($s['first_name'] . ' ' . $s['last_name']) ?></strong></td>
-                                <td data-label="Email"><?= e($s['email']) ?></td>
-                                <td data-label="Course"><?= e($s['course'] ?? '—') ?></td>
-                                <td data-label="Status"><?= e(enrollmentStatusLabel($s['enrollment_status'] ?? null)) ?></td>
-                                <td data-label="Account">
+                                <td data-label="Student">
+                                    <div class="student-record-identity">
+                                        <?= renderStudentRecordNameLink($s, studentRecordsPageUrl($listQuery, (int) $s['id'])) ?>
+                                        <span class="student-record-id"><?= e($s['student_id'] ?: 'No student ID') ?></span>
+                                        <span class="student-record-email" title="<?= e($s['email']) ?>"><?= e($s['email']) ?></span>
+                                    </div>
+                                </td>
+                                <td data-label="Program">
+                                    <div class="student-record-program">
+                                        <span><?= e($s['course'] ?: '—') ?></span>
+                                        <?php if (!empty($s['year_level'])): ?>
+                                            <small><?= e($s['year_level']) ?></small>
+                                        <?php endif; ?>
+                                    </div>
+                                </td>
+                                <td data-label="Enrollment"><?= e(enrollmentStatusLabel($s['enrollment_status'] ?? null)) ?></td>
+                                <td class="students-col-account" data-label="Account">
                                     <?= !empty($s['is_active'])
                                         ? '<span class="badge badge-completed">Active</span>'
                                         : '<span class="badge badge-rejected">Inactive</span>' ?>
                                 </td>
-                                <td data-label="Requests"><?= $requestCount ?></td>
-                                <td data-label="Registered"><?= formatDate($s['created_at']) ?></td>
+                                <td class="students-col-requests" data-label="Requests"><?= $requestCount ?></td>
                                 <td data-label="Actions" class="action-cell">
                                     <div class="action-cell-buttons">
+                                        <a href="<?= e(APP_URL . '/registrar/grades-evaluation.php?student_user_id=' . (int) $s['id']) ?>" <?= adminSettingsIconBtnAttrs('evaluate') ?>><?= adminSettingsIconBtnContent('evaluate') ?></a>
+                                        <?= renderClearStudentGradesForm((int) $s['id'], studentRecordName($s), 'icon') ?>
                                         <form method="POST" class="student-delete-form"
                                             data-confirm-title="Delete Student?"
                                             data-confirm-message="<?= e($confirmMessage) ?>"
-                                            data-confirm-name="<?= e($s['first_name'] . ' ' . $s['last_name']) ?>"
+                                            data-confirm-name="<?= e($displayName) ?>"
                                             data-confirm-requests="<?= $requestCount ?>">
                                             <?= csrfField() ?>
                                             <input type="hidden" name="action" value="delete">
@@ -204,10 +372,22 @@ require_once __DIR__ . '/../includes/header.php';
                     </tbody>
                 </table>
             </div>
-            <?= paginationLinks($pag, '?' . http_build_query(array_filter(['search' => $search]))) ?>
+            <?= renderStudentRecordsPagination($pag, '?' . $filterQuery, $perPage) ?>
         <?php endif; ?>
     </div>
 </div>
+
+<?php renderStudentRecordViewModal($viewStudent, $viewCloseUrl); ?>
+
+<script>
+(function () {
+    document.querySelectorAll('.students-filter-fields select, .students-per-page select').forEach(function (el) {
+        el.addEventListener('change', function () {
+            if (el.form) el.form.submit();
+        });
+    });
+})();
+</script>
 
 <?php if (!empty($students)): ?>
 <div class="confirm-modal" id="studentDeleteConfirmModal" aria-hidden="true">

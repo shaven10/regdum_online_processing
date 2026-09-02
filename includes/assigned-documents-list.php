@@ -1,96 +1,313 @@
 <?php
 
+
+
 /**
+
  * Shared list of documents assigned to the current processor.
+
  *
+
  * Expected before include:
+
  * - $user
+
  * - $pageTitle
+
  * - $activeNav
+
  * - $processBaseUrl (e.g. APP_URL.'/cashier/process-document.php')
+
  * - $officeLabel
+
+ * - $listPageUrl (optional)
+
  */
 
+
+
 require_once __DIR__ . '/request-items.php';
+
+require_once __DIR__ . '/student.php';
+
 ensureRequestItemsSchema();
 
+
+
 $status = trim($_GET['status'] ?? '');
+
 $search = trim($_GET['search'] ?? '');
+
 $items = getStaffAssignedItems((int) $user['id'], $status);
 
+
+
 if (!empty($documentCodeFilter)) {
+
     $allowedCodes = is_array($documentCodeFilter)
+
         ? array_map(static fn($code): string => strtoupper(trim((string) $code)), $documentCodeFilter)
+
         : [strtoupper(trim((string) $documentCodeFilter))];
+
     $items = array_values(array_filter($items, static function (array $row) use ($allowedCodes): bool {
+
         return in_array(strtoupper(trim((string) ($row['document_code'] ?? ''))), $allowedCodes, true);
+
     }));
+
 }
+
+
 
 if ($search !== '') {
+
     $items = array_values(array_filter($items, static function (array $row) use ($search): bool {
-        $haystack = strtolower($row['request_number'] . ' ' . $row['document_name'] . ' ' . $row['first_name'] . ' ' . $row['last_name'] . ' ' . ($row['student_id'] ?? ''));
+
+        $haystack = strtolower(
+
+            ($row['request_number'] ?? '') . ' '
+
+            . ($row['document_name'] ?? '') . ' '
+
+            . ($row['first_name'] ?? '') . ' '
+
+            . ($row['middle_name'] ?? '') . ' '
+
+            . ($row['last_name'] ?? '') . ' '
+
+            . assignedStudentNameLabel($row) . ' '
+
+            . ($row['student_id'] ?? '') . ' '
+
+            . assignedStudentCourseLabel($row) . ' '
+
+            . assignedStudentYearLabel($row) . ' '
+
+            . enrollmentStatusLabel($row['enrollment_status'] ?? null)
+
+        );
+
         return str_contains($haystack, strtolower($search));
+
     }));
+
 }
 
+
+
+if (!function_exists('currentScriptPageUrl')) {
+    function currentScriptPageUrl(): string {
+        $scriptPath = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? ''));
+        if ($scriptPath === '') {
+            return rtrim(APP_URL, '/');
+        }
+
+        $appUrlPath = parse_url(APP_URL, PHP_URL_PATH);
+        $appUrlPath = is_string($appUrlPath) ? rtrim($appUrlPath, '/') : '';
+
+        if ($appUrlPath !== '' && str_starts_with($scriptPath, $appUrlPath)) {
+            $scriptPath = substr($scriptPath, strlen($appUrlPath)) ?: '/';
+        }
+
+        return rtrim(APP_URL, '/') . $scriptPath;
+    }
+}
+
+$listPageUrl = $listPageUrl ?? currentScriptPageUrl();
+
+
+
+$exportBaseQuery = array_filter([
+
+    'status' => $status !== '' ? $status : null,
+
+    'search' => $search !== '' ? $search : null,
+
+], static fn($value) => $value !== null && $value !== '');
+
+
+
+$printUrl = $listPageUrl . '?' . http_build_query($exportBaseQuery + ['print' => '1']);
+
+$pdfUrl = $listPageUrl . '?' . http_build_query($exportBaseQuery + ['print' => '1', 'pdf' => '1']);
+
+$csvUrl = $listPageUrl . '?' . http_build_query($exportBaseQuery + ['export' => 'csv']);
+
+
+
+if (($_GET['export'] ?? '') === 'csv') {
+
+    exportAssignedDocumentsCsv($items, 'my_assignments_' . date('Ymd_His') . '.csv');
+
+}
+
+
+
+if (($_GET['print'] ?? '') === '1') {
+
+    require_once __DIR__ . '/ui.php';
+
+    require_once __DIR__ . '/assigned-documents-print.php';
+
+    exit;
+
+}
+
+
+
 require_once __DIR__ . '/header.php';
+
 ?>
 
+
+
 <div class="card">
+
     <div class="card-header">
+
         <div>
+
             <h2><?= e($officeLabel ?? 'Document Assignments') ?></h2>
+
             <p class="text-muted" style="margin:.35rem 0 0">Documents assigned to your office for processing.</p>
+
         </div>
+
+        <?php if ($items !== []): ?>
+
+            <div class="card-header-actions payment-report-actions grades-eval-export-actions">
+
+                <span class="grades-eval-export-label">Print / Export</span>
+
+                <a href="<?= e($printUrl) ?>" target="_blank" class="btn btn-outline btn-sm"><i class="fas fa-print"></i> Print</a>
+
+                <a href="<?= e($pdfUrl) ?>" target="_blank" class="btn btn-outline btn-sm"><i class="fas fa-file-pdf"></i> Export PDF</a>
+
+                <a href="<?= e($csvUrl) ?>" class="btn btn-outline btn-sm"><i class="fas fa-file-csv"></i> Export CSV</a>
+
+            </div>
+
+        <?php endif; ?>
+
     </div>
+
     <div class="card-body">
+
         <form method="GET" class="filter-bar">
-            <input type="text" name="search" placeholder="Search request #, document, or student..." value="<?= e($search) ?>">
+
+            <input type="text" name="search" placeholder="Search request #, document, student, course..." value="<?= e($search) ?>">
+
             <select name="status">
+
                 <option value="">Active Assignments</option>
+
                 <option value="processing" <?= $status === 'processing' ? 'selected' : '' ?>>Processing</option>
+
                 <option value="ready_for_pickup" <?= $status === 'ready_for_pickup' ? 'selected' : '' ?>>Ready for Pickup</option>
+
                 <option value="completed" <?= $status === 'completed' ? 'selected' : '' ?>>Completed</option>
+
             </select>
+
             <button type="submit" class="btn btn-outline btn-sm">Filter</button>
+
         </form>
 
+
+
         <?php if (empty($items)): ?>
+
             <div class="empty-state"><i class="fas fa-inbox"></i><p>No document assignments found.</p></div>
+
         <?php else: ?>
+
             <table class="data-table data-table-responsive">
+
                 <thead>
+
                     <tr>
+
                         <th>Request #</th>
+
                         <th>Document</th>
+
                         <th>Student</th>
+
+                        <th>Course</th>
+
+                        <th>Year</th>
+
+                        <th>Enrollment</th>
+
                         <th>Copies</th>
+
                         <th>Item Status</th>
+
                         <th>Batch Status</th>
+
                         <th>Action</th>
+
                     </tr>
+
                 </thead>
+
                 <tbody>
+
                     <?php foreach ($items as $item): ?>
+
                     <tr>
+
                         <td data-label="Request #"><strong><?= e($item['request_number']) ?></strong></td>
+
                         <td data-label="Document"><?= e($item['document_name']) ?></td>
-                        <td data-label="Student"><?= e($item['first_name'] . ' ' . $item['last_name']) ?><br><small class="text-muted"><?= e($item['student_id'] ?? '') ?></small></td>
-                        <td data-label="Copies"><?= (int) $item['copies'] ?></td>
-                        <td data-label="Item Status"><?= requestItemStatusBadge($item['item_status']) ?></td>
-                        <td data-label="Batch Status"><?= statusBadge($item['request_status']) ?></td>
-                        <td data-label="Action" class="payment-actions-cell">
-                            <a href="<?= e($processBaseUrl) ?>?item_id=<?= (int) $item['id'] ?>" class="btn btn-sm btn-primary">
-                                <i class="fas fa-eye"></i> View / Process
-                            </a>
+
+                        <td data-label="Student">
+
+                            <?= e(assignedStudentNameLabel($item)) ?>
+
+                            <br><small class="text-muted"><?= e($item['student_id'] ?? '') ?></small>
+
                         </td>
+
+                        <td data-label="Course"><?= e(assignedStudentCourseLabel($item)) ?></td>
+
+                        <td data-label="Year"><?= e(assignedStudentYearLabel($item)) ?></td>
+
+                        <td data-label="Enrollment"><?= e(enrollmentStatusLabel($item['enrollment_status'] ?? null)) ?></td>
+
+                        <td data-label="Copies"><?= (int) $item['copies'] ?></td>
+
+                        <td data-label="Item Status"><?= requestItemStatusBadge($item['item_status']) ?></td>
+
+                        <td data-label="Batch Status"><?= statusBadge($item['request_status']) ?></td>
+
+                        <td data-label="Action" class="payment-actions-cell">
+
+                            <a href="<?= e($processBaseUrl) ?>?item_id=<?= (int) $item['id'] ?>" class="btn btn-sm btn-primary">
+
+                                <i class="fas fa-eye"></i> View / Process
+
+                            </a>
+
+                        </td>
+
                     </tr>
+
                     <?php endforeach; ?>
+
                 </tbody>
+
             </table>
+
         <?php endif; ?>
+
     </div>
+
 </div>
 
+
+
 <?php require_once __DIR__ . '/footer.php'; ?>
+
+

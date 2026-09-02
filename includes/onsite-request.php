@@ -77,31 +77,114 @@ function findStudentUserByStudentId(string $studentId): ?array {
     return $row ?: null;
 }
 
-function searchStudentsForOnsiteRequest(string $search = '', int $limit = 50): array {
-    $search = trim($search);
-    $limit = max(1, min(100, $limit));
+function formatOnsitePickerStudent(array $row): array {
+    return [
+        'id' => (int) ($row['id'] ?? 0),
+        'student_id' => (string) ($row['student_id'] ?? ''),
+        'display_name' => studentRecordName($row),
+        'email' => (string) ($row['email'] ?? ''),
+        'phone' => (string) ($row['phone'] ?? ''),
+        'course' => (string) ($row['course'] ?? ''),
+        'year_level' => (string) ($row['year_level'] ?? ''),
+        'enrollment_status' => (string) ($row['enrollment_status'] ?? ''),
+        'enrollment_label' => enrollmentStatusLabel($row['enrollment_status'] ?? null),
+    ];
+}
+
+function queryStudentsForOnsitePicker(array $filters = [], int $page = 1, int $perPage = 15): array {
+    $search = trim((string) ($filters['search'] ?? ''));
+    $courseId = (int) ($filters['course_id'] ?? 0);
+    $yearLevel = trim((string) ($filters['year_level'] ?? ''));
+    $enrollmentStatus = trim((string) ($filters['enrollment_status'] ?? ''));
+    $activeOnly = array_key_exists('active_only', $filters) ? (bool) $filters['active_only'] : true;
+    $requireSearch = !empty($filters['require_search']);
+    $perPage = max(1, min(50, $perPage));
+
+    if ($requireSearch && strlen($search) < 2) {
+        return [
+            'students'    => [],
+            'total'       => 0,
+            'page'        => 1,
+            'per_page'    => $perPage,
+            'total_pages' => 1,
+        ];
+    }
 
     $db = getDB();
     $where = ['u.role_id = 1'];
     $params = [];
 
-    if ($search !== '') {
-        $like = '%' . $search . '%';
-        $where[] = '(u.first_name LIKE ? OR u.last_name LIKE ? OR u.middle_name LIKE ? OR u.student_id LIKE ? OR u.email LIKE ?
-            OR CONCAT(u.first_name, \' \', u.last_name) LIKE ? OR sp.course LIKE ?)';
-        array_push($params, $like, $like, $like, $like, $like, $like, $like);
+    if ($activeOnly) {
+        $where[] = 'u.is_active = 1';
     }
 
-    $stmt = $db->prepare('SELECT u.id, u.student_id, u.first_name, u.last_name, u.middle_name, u.email, u.phone,
-            sp.course, sp.year_level, sp.enrollment_status
-        FROM users u
+    if ($search !== '') {
+        $terms = preg_split('/\s+/', $search, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        foreach ($terms as $term) {
+            $like = '%' . $term . '%';
+            $prefix = $term . '%';
+            $where[] = '(u.student_id LIKE ? OR u.student_id LIKE ? OR u.last_name LIKE ? OR u.first_name LIKE ?
+                OR u.middle_name LIKE ? OR u.email LIKE ?
+                OR CONCAT(u.last_name, ", ", u.first_name) LIKE ?
+                OR CONCAT(u.first_name, " ", u.last_name) LIKE ?
+                OR sp.course LIKE ?)';
+            array_push($params, $prefix, $like, $prefix, $prefix, $like, $like, $like, $like, $like);
+        }
+    }
+
+    if ($courseId > 0) {
+        $where[] = 'sp.course_id = ?';
+        $params[] = $courseId;
+    }
+
+    $yearOptions = yearLevelOptions();
+    if ($yearLevel !== '' && isset($yearOptions[$yearLevel])) {
+        $where[] = 'sp.year_level = ?';
+        $params[] = $yearLevel;
+    }
+
+    if ($enrollmentStatus !== '' && array_key_exists($enrollmentStatus, enrollmentStatusOptions())) {
+        $where[] = 'sp.enrollment_status = ?';
+        $params[] = $enrollmentStatus;
+    }
+
+    $from = ' FROM users u
         LEFT JOIN student_profiles sp ON sp.user_id = u.id
-        WHERE ' . implode(' AND ', $where) . '
-        ORDER BY u.last_name, u.first_name, u.id
-        LIMIT ' . $limit);
+        WHERE ' . implode(' AND ', $where);
+
+    $countStmt = $db->prepare('SELECT COUNT(*)' . $from);
+    $countStmt->execute($params);
+    $total = (int) $countStmt->fetchColumn();
+    $pag = paginate($total, $page, $perPage);
+
+    $stmt = $db->prepare('SELECT u.id, u.student_id, u.first_name, u.last_name, u.middle_name, u.email, u.phone,
+            sp.course, sp.year_level, sp.enrollment_status' . $from . '
+        ORDER BY u.last_name, u.first_name, u.middle_name, u.id
+        LIMIT ' . (int) $pag['per_page'] . ' OFFSET ' . (int) $pag['offset']);
     $stmt->execute($params);
 
-    return $stmt->fetchAll();
+    return [
+        'students'    => $stmt->fetchAll(),
+        'total'       => $total,
+        'page'        => (int) $pag['page'],
+        'per_page'    => (int) $pag['per_page'],
+        'total_pages' => (int) $pag['total_pages'],
+    ];
+}
+
+function searchStudentsForOnsiteRequest(string $search = '', int $limit = 15): array {
+    $search = trim($search);
+    if (strlen($search) < 2) {
+        return [];
+    }
+
+    $result = queryStudentsForOnsitePicker([
+        'search'         => $search,
+        'require_search' => true,
+        'active_only'    => true,
+    ], 1, $limit);
+
+    return $result['students'];
 }
 
 /**

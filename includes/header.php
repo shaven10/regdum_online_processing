@@ -70,14 +70,50 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/clearance/requests.php?status=pending" class="<?= $activeNav === 'pending' ? 'active' : '' ?>"><i class="fas fa-clock"></i> Pending</a>
                 <a href="<?= APP_URL ?>/clearance/documents.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-file-signature"></i> Assigned Documents</a>
             <?php elseif (hasRole('registrar')): ?>
+                <?php $registrarReportsNav = ['reports', 'enrollment-report', 'enrollment-list']; ?>
+                <?php $reportsMenuOpen = in_array($activeNav, $registrarReportsNav, true); ?>
                 <a href="<?= APP_URL ?>/registrar/dashboard.php" class="<?= $activeNav === 'dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
-                <a href="<?= APP_URL ?>/registrar/reports.php" class="<?= $activeNav === 'reports' ? 'active' : '' ?>"><i class="fas fa-list-alt"></i> All Request</a>
+                <?php $registrarStudentsNav = ['students']; ?>
+                <?php $studentsMenuOpen = in_array($activeNav, $registrarStudentsNav, true); ?>
+                <div class="sidebar-nav-group<?= $studentsMenuOpen ? ' open' : '' ?>">
+                    <button type="button" class="sidebar-nav-group-toggle<?= $studentsMenuOpen ? ' active' : '' ?>" aria-expanded="<?= $studentsMenuOpen ? 'true' : 'false' ?>">
+                        <span class="sidebar-nav-group-label"><i class="fas fa-users"></i> Student Records</span>
+                        <i class="fas fa-chevron-down sidebar-nav-chevron"></i>
+                    </button>
+                    <div class="sidebar-nav-submenu">
+                        <a href="<?= APP_URL ?>/registrar/students.php" class="<?= $activeNav === 'students' ? 'active' : '' ?>"><i class="fas fa-list"></i> Student List</a>
+                        <a href="<?= APP_URL ?>/registrar/grades-evaluation.php" class="<?= $activeNav === 'grades-evaluation' ? 'active' : '' ?>"><i class="fas fa-clipboard-list"></i> Grades Evaluation</a>
+                    </div>
+                </div>
+                <?php $registrarGradesNav = ['grades-evaluation', 'grade-entry', 'prospectus']; ?>
+                <?php $gradesMenuOpen = in_array($activeNav, $registrarGradesNav, true); ?>
+                <div class="sidebar-nav-group<?= $gradesMenuOpen ? ' open' : '' ?>">
+                    <button type="button" class="sidebar-nav-group-toggle<?= $gradesMenuOpen ? ' active' : '' ?>" aria-expanded="<?= $gradesMenuOpen ? 'true' : 'false' ?>">
+                        <span class="sidebar-nav-group-label"><i class="fas fa-clipboard-list"></i> Grades Evaluation</span>
+                        <i class="fas fa-chevron-down sidebar-nav-chevron"></i>
+                    </button>
+                    <div class="sidebar-nav-submenu">
+                        <a href="<?= APP_URL ?>/registrar/grades-evaluation.php" class="<?= $activeNav === 'grades-evaluation' ? 'active' : '' ?>"><i class="fas fa-user-check"></i> Evaluate Student</a>
+                        <a href="<?= APP_URL ?>/registrar/grade-entry.php" class="<?= $activeNav === 'grade-entry' ? 'active' : '' ?>"><i class="fas fa-paste"></i> Enter Grades</a>
+                        <a href="<?= APP_URL ?>/registrar/prospectuses.php" class="<?= $activeNav === 'prospectus' ? 'active' : '' ?>"><i class="fas fa-book"></i> Course Prospectus</a>
+                    </div>
+                </div>
+                <div class="sidebar-nav-group<?= $reportsMenuOpen ? ' open' : '' ?>">
+                    <button type="button" class="sidebar-nav-group-toggle<?= $reportsMenuOpen ? ' active' : '' ?>" aria-expanded="<?= $reportsMenuOpen ? 'true' : 'false' ?>">
+                        <span class="sidebar-nav-group-label"><i class="fas fa-chart-bar"></i> Reports</span>
+                        <i class="fas fa-chevron-down sidebar-nav-chevron"></i>
+                    </button>
+                    <div class="sidebar-nav-submenu">
+                        <a href="<?= APP_URL ?>/registrar/reports.php" class="<?= $activeNav === 'reports' ? 'active' : '' ?>"><i class="fas fa-list-alt"></i> All Requests</a>
+                        <a href="<?= APP_URL ?>/registrar/enrollment-report.php" class="<?= $activeNav === 'enrollment-report' ? 'active' : '' ?>"><i class="fas fa-table"></i> Enrollment by Course</a>
+                        <a href="<?= APP_URL ?>/registrar/enrollment-list-report.php" class="<?= $activeNav === 'enrollment-list' ? 'active' : '' ?>"><i class="fas fa-user-graduate"></i> Enrollment List</a>
+                    </div>
+                </div>
                 <a href="<?= APP_URL ?>/registrar/new-onsite-request.php" class="<?= $activeNav === 'onsite-request' ? 'active' : '' ?>"><i class="fas fa-store"></i> Onsite Request</a>
                 <a href="<?= APP_URL ?>/registrar/compliance.php" class="<?= $activeNav === 'compliance' ? 'active' : '' ?>"><i class="fas fa-clipboard-check"></i> Request Review</a>
                 <a href="<?= APP_URL ?>/registrar/assignments.php" class="<?= $activeNav === 'assignments' ? 'active' : '' ?>"><i class="fas fa-user-tag"></i> Staff Assignment</a>
                 <a href="<?= APP_URL ?>/registrar/documents.php" class="<?= $activeNav === 'my-assignments' ? 'active' : '' ?>"><i class="fas fa-tasks"></i> My Assignments</a>
                 <a href="<?= APP_URL ?>/registrar/attachments.php" class="<?= $activeNav === 'attachments' ? 'active' : '' ?>"><i class="fas fa-paperclip"></i> Attachments</a>
-                <a href="<?= APP_URL ?>/registrar/students.php" class="<?= $activeNav === 'students' ? 'active' : '' ?>"><i class="fas fa-user-check"></i> Verify Students</a>
             <?php elseif (hasRole('cashier')): ?>
                 <a href="<?= APP_URL ?>/cashier/dashboard.php" class="<?= $activeNav === 'dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
                 <a href="<?= APP_URL ?>/cashier/payments.php" class="<?= $activeNav === 'payments' ? 'active' : '' ?>"><i class="fas fa-credit-card"></i> Verify Payments</a>
@@ -91,13 +127,37 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/accounting/documents.php?status=processing" class="<?= $activeNav === 'processing' ? 'active' : '' ?>"><i class="fas fa-spinner"></i> Processing</a>
                 <a href="<?= APP_URL ?>/accounting/documents.php?status=ready_for_pickup" class="<?= $activeNav === 'ready' ? 'active' : '' ?>"><i class="fas fa-box-open"></i> Ready for Pickup</a>
             <?php elseif (hasRole('admin')): ?>
-                <?php $adminSettingsNav = ['users', 'documents', 'release-rules', 'programs', 'campuses', 'requirement-types', 'requirements', 'purpose-suggestions', 'theme', 'audit']; ?>
+                <?php $adminSettingsNav = ['users', 'documents', 'release-rules', 'programs', 'campuses', 'requirement-types', 'requirements', 'purpose-suggestions', 'theme', 'database-tools', 'audit']; ?>
+                <?php $adminReportsNav = ['reports', 'enrollment-report', 'enrollment-list']; ?>
                 <?php $settingsMenuOpen = in_array($activeNav, $adminSettingsNav, true); ?>
+                <?php $reportsMenuOpen = in_array($activeNav, $adminReportsNav, true); ?>
                 <a href="<?= APP_URL ?>/admin/dashboard.php" class="<?= $activeNav === 'dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
                 <a href="<?= APP_URL ?>/admin/requests.php" class="<?= $activeNav === 'requests' ? 'active' : '' ?>"><i class="fas fa-file-alt"></i> Requests</a>
-                <a href="<?= APP_URL ?>/admin/students.php" class="<?= $activeNav === 'students' ? 'active' : '' ?>"><i class="fas fa-users"></i> Students</a>
+                <?php $adminStudentsNav = ['students', 'import-students', 'grades-evaluation', 'grade-entry']; ?>
+                <?php $studentsMenuOpen = in_array($activeNav, $adminStudentsNav, true); ?>
+                <div class="sidebar-nav-group<?= $studentsMenuOpen ? ' open' : '' ?>">
+                    <button type="button" class="sidebar-nav-group-toggle<?= $studentsMenuOpen ? ' active' : '' ?>" aria-expanded="<?= $studentsMenuOpen ? 'true' : 'false' ?>">
+                        <span class="sidebar-nav-group-label"><i class="fas fa-users"></i> Student Records</span>
+                        <i class="fas fa-chevron-down sidebar-nav-chevron"></i>
+                    </button>
+                    <div class="sidebar-nav-submenu">
+                        <a href="<?= APP_URL ?>/admin/students.php" class="<?= $activeNav === 'students' ? 'active' : '' ?>"><i class="fas fa-list"></i> Student List</a>
+                        <a href="<?= APP_URL ?>/admin/import-students.php" class="<?= $activeNav === 'import-students' ? 'active' : '' ?>"><i class="fas fa-file-excel"></i> Import Students</a>
+                        <a href="<?= APP_URL ?>/registrar/grades-evaluation.php" class="<?= $activeNav === 'grades-evaluation' ? 'active' : '' ?>"><i class="fas fa-clipboard-list"></i> Grades Evaluation</a>
+                    </div>
+                </div>
                 <a href="<?= APP_URL ?>/admin/payments.php" class="<?= $activeNav === 'payments' ? 'active' : '' ?>"><i class="fas fa-credit-card"></i> Payments</a>
-                <a href="<?= APP_URL ?>/admin/reports.php" class="<?= $activeNav === 'reports' ? 'active' : '' ?>"><i class="fas fa-chart-bar"></i> Reports</a>
+                <div class="sidebar-nav-group<?= $reportsMenuOpen ? ' open' : '' ?>">
+                    <button type="button" class="sidebar-nav-group-toggle<?= $reportsMenuOpen ? ' active' : '' ?>" aria-expanded="<?= $reportsMenuOpen ? 'true' : 'false' ?>">
+                        <span class="sidebar-nav-group-label"><i class="fas fa-chart-bar"></i> Reports</span>
+                        <i class="fas fa-chevron-down sidebar-nav-chevron"></i>
+                    </button>
+                    <div class="sidebar-nav-submenu">
+                        <a href="<?= APP_URL ?>/admin/reports.php" class="<?= $activeNav === 'reports' ? 'active' : '' ?>"><i class="fas fa-chart-line"></i> Analytics</a>
+                        <a href="<?= APP_URL ?>/registrar/enrollment-report.php" class="<?= $activeNav === 'enrollment-report' ? 'active' : '' ?>"><i class="fas fa-table"></i> Enrollment by Course</a>
+                        <a href="<?= APP_URL ?>/registrar/enrollment-list-report.php" class="<?= $activeNav === 'enrollment-list' ? 'active' : '' ?>"><i class="fas fa-user-graduate"></i> Enrollment List</a>
+                    </div>
+                </div>
                 <div class="sidebar-nav-group<?= $settingsMenuOpen ? ' open' : '' ?>">
                     <button type="button" class="sidebar-nav-group-toggle<?= $settingsMenuOpen ? ' active' : '' ?>" aria-expanded="<?= $settingsMenuOpen ? 'true' : 'false' ?>">
                         <span class="sidebar-nav-group-label"><i class="fas fa-cog"></i> Settings</span>
@@ -113,6 +173,7 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                         <a href="<?= APP_URL ?>/admin/requirement-settings.php" class="<?= $activeNav === 'requirements' ? 'active' : '' ?>"><i class="fas fa-sliders-h"></i> Requirement Settings</a>
                         <a href="<?= APP_URL ?>/admin/purpose-suggestions.php" class="<?= $activeNav === 'purpose-suggestions' ? 'active' : '' ?>"><i class="fas fa-bullseye"></i> Purpose & Suggestions</a>
                         <a href="<?= APP_URL ?>/admin/theme-settings.php" class="<?= $activeNav === 'theme' ? 'active' : '' ?>"><i class="fas fa-palette"></i> Theme Manager</a>
+                        <a href="<?= APP_URL ?>/admin/database-tools.php" class="<?= $activeNav === 'database-tools' ? 'active' : '' ?>"><i class="fas fa-database"></i> Database Tools</a>
                         <a href="<?= APP_URL ?>/admin/audit-logs.php" class="<?= $activeNav === 'audit' ? 'active' : '' ?>"><i class="fas fa-shield-alt"></i> Audit Logs</a>
                     </div>
                 </div>

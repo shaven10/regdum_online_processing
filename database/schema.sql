@@ -94,7 +94,11 @@ CREATE TABLE student_profiles (
     current_academic_year VARCHAR(20) NULL,
     current_semester ENUM('1st_semester','2nd_semester','summer') NULL,
     section VARCHAR(50),
+    major VARCHAR(150) NULL,
     birth_date DATE,
+    sex VARCHAR(20) NULL,
+    civil_status VARCHAR(50) NULL,
+    birth_place VARCHAR(150) NULL,
     valid_id_path VARCHAR(255) NULL,
     valid_id_original_name VARCHAR(255) NULL,
     address TEXT,
@@ -102,7 +106,9 @@ CREATE TABLE student_profiles (
     province VARCHAR(100),
     postal_code VARCHAR(10),
     emergency_contact VARCHAR(100),
+    emergency_relationship VARCHAR(100) NULL,
     emergency_phone VARCHAR(20),
+    emergency_address TEXT NULL,
     enrollment_status ENUM('enrolled','graduated','inactive') DEFAULT 'enrolled',
     graduation_date DATE,
     origin_campus_id TINYINT UNSIGNED NULL,
@@ -542,6 +548,53 @@ CREATE TABLE request_clearances (
     FOREIGN KEY (department_id) REFERENCES clearance_departments(id) ON DELETE CASCADE,
     FOREIGN KEY (cleared_by) REFERENCES users(id) ON DELETE SET NULL,
     UNIQUE KEY uk_request_department (request_id, department_id)
+);
+
+CREATE TABLE course_prospectuses (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    program_id INT UNSIGNED NOT NULL,
+    curriculum_year VARCHAR(20) NOT NULL,
+    title VARCHAR(200) NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_by INT UNSIGNED NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_prospectus_program_year (program_id, curriculum_year),
+    KEY idx_prospectus_program (program_id, is_active)
+);
+
+CREATE TABLE prospectus_subjects (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    prospectus_id INT UNSIGNED NOT NULL,
+    year_level VARCHAR(20) NOT NULL,
+    semester ENUM('1st_semester','2nd_semester','summer') NOT NULL DEFAULT '1st_semester',
+    course_code VARCHAR(40) NOT NULL,
+    course_no VARCHAR(20) NOT NULL DEFAULT '',
+    title VARCHAR(255) NOT NULL,
+    units DECIMAL(4,1) NOT NULL DEFAULT 3.0,
+    prereq VARCHAR(255) NULL,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_prospectus_subjects_parent (prospectus_id, year_level, semester, sort_order),
+    FOREIGN KEY (prospectus_id) REFERENCES course_prospectuses(id) ON DELETE CASCADE
+);
+
+CREATE TABLE student_subject_grades (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id INT UNSIGNED NOT NULL,
+    prospectus_subject_id INT UNSIGNED NOT NULL,
+    grade VARCHAR(20) NULL,
+    remarks VARCHAR(40) NULL,
+    school_year VARCHAR(20) NULL,
+    semester ENUM('1st_semester','2nd_semester','summer') NULL,
+    updated_by INT UNSIGNED NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_student_subject_grade (user_id, prospectus_subject_id),
+    KEY idx_student_grades_user (user_id),
+    FOREIGN KEY (prospectus_subject_id) REFERENCES prospectus_subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- Default accounts are created by install.php with secure password hashes.

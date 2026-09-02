@@ -186,6 +186,32 @@ function ensureStudentAcademicTermFields(): void {
     }
 }
 
+function ensureStudentImportProfileFields(): void {
+    static $ready = false;
+    if ($ready) {
+        return;
+    }
+
+    $db = getDB();
+    $columns = [
+        'major'                  => 'VARCHAR(150) NULL AFTER section',
+        'sex'                    => 'VARCHAR(20) NULL AFTER postal_code',
+        'civil_status'           => 'VARCHAR(50) NULL AFTER sex',
+        'birth_place'            => 'VARCHAR(150) NULL AFTER civil_status',
+        'emergency_relationship' => 'VARCHAR(100) NULL AFTER emergency_contact',
+        'emergency_address'      => 'TEXT NULL AFTER emergency_phone',
+    ];
+
+    foreach ($columns as $name => $definition) {
+        $exists = $db->query('SHOW COLUMNS FROM student_profiles LIKE ' . $db->quote($name))->fetch();
+        if (!$exists) {
+            $db->exec("ALTER TABLE student_profiles ADD COLUMN $name $definition");
+        }
+    }
+
+    $ready = true;
+}
+
 function ensureStudentValidIdField(): void {
     $db = getDB();
     $columns = [
@@ -685,10 +711,11 @@ function isOnSitePickupMethod(?string $method): bool {
 }
 
 function getStudentProfile(int $userId): array {
+    ensureStudentImportProfileFields();
     $db = getDB();
     $stmt = $db->prepare('SELECT u.id, u.first_name, u.last_name, u.middle_name, u.email, u.student_id, u.phone,
-        sp.course, sp.course_id, sp.year_level, sp.current_academic_year, sp.current_semester, sp.section, sp.birth_date, sp.valid_id_path, sp.valid_id_original_name, sp.address, sp.city, sp.province, sp.postal_code,
-        sp.emergency_contact, sp.emergency_phone, sp.enrollment_status, sp.graduation_date,
+        sp.course, sp.course_id, sp.year_level, sp.current_academic_year, sp.current_semester, sp.section, sp.major, sp.birth_date, sp.sex, sp.civil_status, sp.birth_place, sp.valid_id_path, sp.valid_id_original_name, sp.address, sp.city, sp.province, sp.postal_code,
+        sp.emergency_contact, sp.emergency_relationship, sp.emergency_phone, sp.emergency_address, sp.enrollment_status, sp.graduation_date,
         sp.origin_campus_id, sp.year_graduated, sp.last_school_year,
         sp.employment_status, sp.employer_name, sp.job_title, sp.employer_address, sp.employment_start_date
         FROM users u

@@ -64,22 +64,129 @@ function dashboardUrl(): string {
     };
 }
 
-function login(string $email, string $password): bool {
+function authStudentRoleId(): int {
+    static $id = null;
+    if ($id === null) {
+        $id = (int) getDB()->query("SELECT id FROM roles WHERE name = 'student' LIMIT 1")->fetchColumn();
+        if ($id <= 0) {
+            $id = 1;
+        }
+    }
+    return $id;
+}
+
+function normalizeLoginStudentId(string $studentId): string {
+    return strtoupper(preg_replace('/[^A-Z0-9]/i', '', $studentId) ?? '');
+}
+
+function studentDefaultPassword(string $studentId): string {
+    $password = trim($studentId);
+    if (strlen($password) < PASSWORD_MIN_LENGTH) {
+        $password = str_pad($password, PASSWORD_MIN_LENGTH, 'X');
+    }
+    return $password;
+}
+
+function findActiveEnrolledStudentByStudentId(string $studentId): ?array {
+    $studentId = trim($studentId);
+    if ($studentId === '') {
+        return null;
+    }
+
+    $normalized = normalizeLoginStudentId($studentId);
+    $db = getDB();
+    $stmt = $db->prepare('SELECT u.*, r.name AS role_name, sp.enrollment_status
+        FROM users u
+        JOIN roles r ON r.id = u.role_id
+        JOIN student_profiles sp ON sp.user_id = u.id
+        WHERE u.role_id = ?
+          AND u.is_active = 1
+          AND sp.enrollment_status = ?
+          AND u.student_id IS NOT NULL
+          AND u.student_id != ""
+          AND (
+              u.student_id = ?
+              OR REPLACE(REPLACE(REPLACE(UPPER(u.student_id), "-", ""), " ", ""), "/", "") = ?
+          )
+        LIMIT 1');
+    $stmt->execute([authStudentRoleId(), 'enrolled', $studentId, $normalized]);
+    $row = $stmt->fetch();
+
+    return $row ?: null;
+}
+
+function establishUserSession(array $user): void {
+    $_SESSION['user_id'] = (int) $user['id'];
+    $_SESSION['role'] = (string) $user['role_name'];
+    $_SESSION['last_activity'] = time();
+
+    getDB()->prepare('UPDATE users SET last_login = NOW() WHERE id = ?')->execute([(int) $user['id']]);
+    auditLog('login', 'users', (int) $user['id']);
+}
+
+function loginByEmail(string $email, string $password): bool {
     $db = getDB();
     $stmt = $db->prepare('SELECT u.*, r.name as role_name FROM users u JOIN roles r ON u.role_id = r.id WHERE u.email = ? AND u.is_active = 1');
-    $stmt->execute([$email]);
+    $stmt->execute([trim($email)]);
     $user = $stmt->fetch();
 
     if ($user && password_verify($password, $user['password'])) {
-        $_SESSION['user_id'] = $user['id'];
-        $_SESSION['role'] = $user['role_name'];
-        $_SESSION['last_activity'] = time();
-
-        $db->prepare('UPDATE users SET last_login = NOW() WHERE id = ?')->execute([$user['id']]);
-        auditLog('login', 'users', $user['id']);
+        establishUserSession($user);
         return true;
     }
     return false;
+}
+
+function loginByStudentId(string $studentId, string $password): bool {
+    $user = findActiveEnrolledStudentByStudentId($studentId);
+    if (!$user || !password_verify($password, $user['password'])) {
+        return false;
+    }
+
+    establishUserSession($user);
+    return true;
+}
+
+function loginWithCredentials(string $identifier, string $password): bool {
+    $identifier = trim($identifier);
+    if ($identifier === '' || $password === '') {
+        return false;
+    }
+
+    if (filter_var($identifier, FILTER_VALIDATE_EMAIL)) {
+        return loginByEmail($identifier, $password);
+    }
+
+    return loginByStudentId($identifier, $password);
+}
+
+function signupActiveStudentById(string $studentId, bool $privacyConsent): array {
+    if (!$privacyConsent) {
+        return ['ok' => false, 'error' => 'You must accept the Data Privacy Consent to continue.'];
+    }
+
+    $student = findActiveEnrolledStudentByStudentId($studentId);
+    if (!$student) {
+        return ['ok' => false, 'error' => 'Student ID not found in the active enrollment list. Please contact the registrar office.'];
+    }
+
+    $defaultPassword = studentDefaultPassword((string) ($student['student_id'] ?? $studentId));
+    if (!password_verify($defaultPassword, $student['password'])) {
+        return ['ok' => false, 'error' => 'This Student ID already has a customized password. Please sign in using the Student ID login option.'];
+    }
+
+    ensurePrivacyConsentSchema();
+    getDB()->prepare('UPDATE users SET privacy_consent_at = NOW() WHERE id = ? AND privacy_consent_at IS NULL')
+        ->execute([(int) $student['id']]);
+
+    establishUserSession($student);
+    auditLog('student_id_signup', 'users', (int) $student['id']);
+
+    return ['ok' => true];
+}
+
+function login(string $email, string $password): bool {
+    return loginWithCredentials($email, $password);
 }
 
 function logout(): void {

@@ -239,6 +239,8 @@ function adminSettingsActionMeta(string $action): array {
         'delete'         => ['icon' => 'fa-trash-alt', 'label' => 'Delete'],
         'reset_password' => ['icon' => 'fa-key', 'label' => 'Reset Password'],
         'configure'      => ['icon' => 'fa-sliders-h', 'label' => 'Configure'],
+        'evaluate'       => ['icon' => 'fa-clipboard-list', 'label' => 'Evaluate grades'],
+        'clear_grades'   => ['icon' => 'fa-eraser', 'label' => 'Clear grades'],
         default          => ['icon' => 'fa-circle', 'label' => ucfirst($action)],
     };
 }

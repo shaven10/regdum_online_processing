@@ -41,8 +41,10 @@ if (!array_key_exists($enrollmentStatus, enrollmentStatusOptions())) {
 }
 
 $docTypes = getAvailableDocumentTypesForEnrollment($enrollmentStatus);
-$searchResults = searchStudentsForOnsiteRequest($search);
-$isFilteredStudentSearch = $search !== '';
+$isFilteredStudentSearch = strlen($search) >= 2;
+$searchResults = $isFilteredStudentSearch ? searchStudentsForOnsiteRequest($search, 15) : [];
+$browsePrograms = getActiveAcademicPrograms();
+$browseYearOptions = yearLevelOptions();
 $expandAllOnsiteSections = !empty($errors);
 $onsiteSectionExpanded = static function (string $section) use ($expandAllOnsiteSections, $selectedStudent): bool {
     if ($expandAllOnsiteSections) {
@@ -489,39 +491,48 @@ require_once __DIR__ . '/../includes/header.php';
             </button>
             <div class="form-section-body" id="onsiteSectionStudents">
                 <p class="text-muted onsite-student-picker-note">
-                    Select a saved student record, or search below to filter the list.
+                    Search by student ID or name. Records are not loaded until you search or browse, so this page stays fast.
                 </p>
 
-            <form method="GET" class="filter-bar onsite-student-search">
-                <input type="text" name="search" placeholder="Search by name, student ID, email, or course..." value="<?= e($search) ?>" autofocus>
+            <form method="GET"
+                class="filter-bar onsite-student-search"
+                id="onsiteStudentSearchForm"
+                data-onsite-student-search
+                data-api-url="<?= e(APP_URL) ?>/api/onsite-students.php"
+                data-select-url="<?= e(APP_URL) ?>/registrar/new-onsite-request.php"
+                data-selected-id="<?= (int) $selectedUserId ?>">
+                <input type="search"
+                    name="search"
+                    id="onsiteStudentSearchInput"
+                    placeholder="Type a student ID or name…"
+                    value="<?= e($search) ?>"
+                    autocomplete="off"
+                    minlength="2"
+                    <?= $selectedStudent ? '' : 'autofocus' ?>>
                 <input type="hidden" name="enrollment_status" value="<?= e($enrollmentStatus) ?>">
                 <?php if ($selectedUserId > 0): ?>
                     <input type="hidden" name="student_user_id" value="<?= $selectedUserId ?>">
                 <?php endif; ?>
                 <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-search"></i> Search</button>
+                <button type="button" class="btn btn-outline btn-sm" id="onsiteBrowseStudentsBtn">
+                    <i class="fas fa-folder-open"></i> Browse active students
+                </button>
                 <?php if ($selectedStudent || $isFilteredStudentSearch): ?>
                     <a href="<?= APP_URL ?>/registrar/new-onsite-request.php" class="btn btn-outline btn-sm">Clear</a>
                 <?php endif; ?>
             </form>
 
+            <div id="onsiteStudentLiveResults" class="onsite-student-live-results" hidden></div>
+
             <?php if ($isFilteredStudentSearch && empty($searchResults)): ?>
-                <div class="alert alert-warning">No matching students found. Enter requestor details below to create a walk-in record.</div>
-            <?php elseif (empty($searchResults)): ?>
-                <div class="empty-state onsite-student-empty">
-                    <i class="fas fa-user-slash"></i>
-                    <p>No student records saved in the system yet.</p>
-                </div>
-            <?php else: ?>
-                <?php if (!$isFilteredStudentSearch): ?>
-                    <p class="text-muted onsite-student-list-note">Showing up to 50 saved students. Search to narrow the list.</p>
-                <?php endif; ?>
-                <div class="table-wrap onsite-student-results">
+                <div class="alert alert-warning" data-onsite-noscript-results>No matching students found. Enter requestor details below to create a walk-in record.</div>
+            <?php elseif ($isFilteredStudentSearch && !empty($searchResults)): ?>
+                <div class="table-wrap onsite-student-results" data-onsite-noscript-results>
                     <table class="data-table data-table-responsive">
                         <thead>
                             <tr>
-                                <th>Student ID</th>
+                                <th>ID No.</th>
                                 <th>Name</th>
-                                <th>Email</th>
                                 <th>Course</th>
                                 <th>Year</th>
                                 <th>Status</th>
@@ -530,14 +541,10 @@ require_once __DIR__ . '/../includes/header.php';
                         </thead>
                         <tbody>
                             <?php foreach ($searchResults as $row): ?>
-                                <?php
-                                    $rowSelected = $selectedUserId > 0 && (int) $row['id'] === $selectedUserId;
-                                    $fullName = trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''));
-                                ?>
+                                <?php $rowSelected = $selectedUserId > 0 && (int) $row['id'] === $selectedUserId; ?>
                                 <tr class="<?= $rowSelected ? 'is-selected' : '' ?>">
-                                    <td data-label="Student ID"><strong><?= e($row['student_id'] ?? '—') ?></strong></td>
-                                    <td data-label="Name"><?= e($fullName) ?></td>
-                                    <td data-label="Email"><?= e($row['email'] ?? '—') ?></td>
+                                    <td data-label="ID No."><strong><?= e($row['student_id'] ?? '—') ?></strong></td>
+                                    <td data-label="Name"><?= e(studentRecordName($row)) ?></td>
                                     <td data-label="Course"><?= e($row['course'] ?? '—') ?></td>
                                     <td data-label="Year"><?= e($row['year_level'] ?? '—') ?></td>
                                     <td data-label="Status"><?= e(enrollmentStatusLabel($row['enrollment_status'] ?? null)) ?></td>
@@ -546,7 +553,7 @@ require_once __DIR__ . '/../includes/header.php';
                                             <span class="onsite-student-selected-pill"><i class="fas fa-check"></i> Selected</span>
                                         <?php else: ?>
                                             <a class="btn btn-sm btn-primary"
-                                               href="?student_user_id=<?= (int) $row['id'] ?>&enrollment_status=<?= urlencode((string) ($row['enrollment_status'] ?? 'enrolled')) ?><?= $search !== '' ? '&search=' . urlencode($search) : '' ?>">
+                                               href="?student_user_id=<?= (int) $row['id'] ?>&enrollment_status=<?= urlencode((string) ($row['enrollment_status'] ?? 'enrolled')) ?>">
                                                 Select
                                             </a>
                                         <?php endif; ?>
@@ -556,6 +563,10 @@ require_once __DIR__ . '/../includes/header.php';
                         </tbody>
                     </table>
                 </div>
+            <?php else: ?>
+                <p class="text-muted onsite-student-list-note" data-onsite-noscript-results>
+                    Start typing to find a saved student, or browse active enrolled students by course.
+                </p>
             <?php endif; ?>
             </div>
         </div>
@@ -1113,6 +1124,48 @@ require_once __DIR__ . '/../includes/header.php';
             </section>
         </form>
         <?php endif; ?>
+    </div>
+</div>
+
+<div class="admin-form-modal" id="onsiteBrowseStudentsModal" aria-hidden="true">
+    <div class="admin-form-modal-overlay" data-onsite-browse-close></div>
+    <div class="admin-form-modal-dialog extra-wide" role="dialog" aria-labelledby="onsiteBrowseStudentsTitle" aria-modal="true">
+        <div class="admin-form-modal-header">
+            <div>
+                <span class="admin-form-modal-eyebrow">Onsite request</span>
+                <h2 class="admin-form-modal-title" id="onsiteBrowseStudentsTitle">Browse active students</h2>
+            </div>
+            <button type="button" class="admin-form-modal-close" data-onsite-browse-close aria-label="Close">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="admin-form-modal-body">
+            <p class="text-muted onsite-student-picker-note">Filter enrolled student accounts by name, course, or year. Select a record to fill the requestor form.</p>
+            <div class="onsite-browse-filters">
+                <input type="search" id="onsiteBrowseSearch" placeholder="Name or student ID" autocomplete="off">
+                <select id="onsiteBrowseCourse" aria-label="Course">
+                    <option value="">All courses</option>
+                    <?php foreach ($browsePrograms as $program): ?>
+                        <option value="<?= (int) $program['id'] ?>">
+                            <?= e(($program['code'] ?? '') !== '' ? $program['code'] . ' — ' . $program['name'] : $program['name']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <select id="onsiteBrowseYear" aria-label="Year level">
+                    <option value="">All years</option>
+                    <?php foreach ($browseYearOptions as $value => $label): ?>
+                        <option value="<?= e($value) ?>"><?= e($label) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select id="onsiteBrowseStatus" aria-label="Enrollment status">
+                    <option value="">All statuses</option>
+                    <?php foreach (enrollmentStatusOptions() as $value => $label): ?>
+                        <option value="<?= e($value) ?>" <?= $value === 'enrolled' ? 'selected' : '' ?>><?= e($label) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div id="onsiteBrowseResults"></div>
+        </div>
     </div>
 </div>
 
@@ -1723,6 +1776,241 @@ togglePurposeOtherField();
 updatePurposeSuggestions(false);
 initDocumentChecklistToggles();
 toggleOnsiteAcademicPanels();
+initOnsiteStudentPicker();
+
+function initOnsiteStudentPicker() {
+    const form = document.getElementById('onsiteStudentSearchForm');
+    const liveBox = document.getElementById('onsiteStudentLiveResults');
+    const input = document.getElementById('onsiteStudentSearchInput');
+    const modal = document.getElementById('onsiteBrowseStudentsModal');
+    const browseBtn = document.getElementById('onsiteBrowseStudentsBtn');
+    if (!form || !liveBox || !input) {
+        return;
+    }
+
+    const apiUrl = form.getAttribute('data-api-url') || '';
+    const selectUrl = form.getAttribute('data-select-url') || window.location.pathname;
+    const selectedId = parseInt(form.getAttribute('data-selected-id') || '0', 10) || 0;
+    let searchTimer = 0;
+    let searchAbort = null;
+    let browseTimer = 0;
+    let browsePage = 1;
+
+    document.querySelectorAll('[data-onsite-noscript-results]').forEach(function (el) {
+        el.hidden = true;
+    });
+
+    function studentSelectHref(student) {
+        const url = new URL(selectUrl, window.location.origin);
+        url.searchParams.set('student_user_id', String(student.id || ''));
+        url.searchParams.set('enrollment_status', student.enrollment_status || 'enrolled');
+        return url.toString();
+    }
+
+    function renderStudentTable(students, emptyText) {
+        if (!students.length) {
+            return '<div class="empty-state onsite-student-empty"><i class="fas fa-user-slash"></i><p>' + escapeHtml(emptyText) + '</p></div>';
+        }
+
+        const rows = students.map(function (student) {
+            const selected = selectedId > 0 && Number(student.id) === selectedId;
+            const action = selected
+                ? '<span class="onsite-student-selected-pill"><i class="fas fa-check"></i> Selected</span>'
+                : '<a class="btn btn-sm btn-primary" href="' + escapeHtml(studentSelectHref(student)) + '">Select</a>';
+            return '<tr class="' + (selected ? 'is-selected' : '') + '">'
+                + '<td data-label="ID No."><strong>' + escapeHtml(student.student_id || '—') + '</strong></td>'
+                + '<td data-label="Name">' + escapeHtml(student.display_name || '—') + '</td>'
+                + '<td data-label="Course">' + escapeHtml(student.course || '—') + '</td>'
+                + '<td data-label="Year">' + escapeHtml(student.year_level || '—') + '</td>'
+                + '<td data-label="Status">' + escapeHtml(student.enrollment_label || '—') + '</td>'
+                + '<td data-label="Action">' + action + '</td>'
+                + '</tr>';
+        }).join('');
+
+        return '<div class="table-wrap onsite-student-results"><table class="data-table data-table-responsive">'
+            + '<thead><tr><th>ID No.</th><th>Name</th><th>Course</th><th>Year</th><th>Status</th><th></th></tr></thead>'
+            + '<tbody>' + rows + '</tbody></table></div>';
+    }
+
+    function fetchStudents(params, onDone) {
+        const url = new URL(apiUrl, window.location.origin);
+        Object.keys(params).forEach(function (key) {
+            if (params[key] === null || params[key] === undefined) {
+                return;
+            }
+            url.searchParams.set(key, String(params[key]));
+        });
+        return fetch(url.toString(), { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+                if (!data || !data.ok) {
+                    throw new Error((data && data.error) || 'Unable to load students');
+                }
+                onDone(data);
+            });
+    }
+
+    function runLiveSearch() {
+        const query = (input.value || '').trim();
+        if (searchAbort) {
+            searchAbort.abort();
+            searchAbort = null;
+        }
+        if (query.length < 2) {
+            liveBox.hidden = false;
+            liveBox.innerHTML = '<p class="text-muted onsite-student-list-note">Type at least 2 characters to search saved students.</p>';
+            return;
+        }
+
+        liveBox.hidden = false;
+        liveBox.innerHTML = '<p class="text-muted onsite-student-list-note"><i class="fas fa-spinner fa-spin"></i> Searching…</p>';
+        const controller = new AbortController();
+        searchAbort = controller;
+        const url = new URL(apiUrl, window.location.origin);
+        url.searchParams.set('search', query);
+        url.searchParams.set('per_page', '10');
+        fetch(url.toString(), {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+            signal: controller.signal
+        }).then(function (res) { return res.json(); }).then(function (data) {
+            if (!data || !data.ok) {
+                throw new Error('Search failed');
+            }
+            const total = Number(data.total || 0);
+            let html = renderStudentTable(data.students || [], 'No matching students found. Enter requestor details below for a walk-in.');
+            if (total > (data.students || []).length) {
+                html += '<p class="text-muted onsite-student-list-note">Showing ' + (data.students || []).length + ' of ' + total
+                    + ' matches. Use <strong>Browse active students</strong> to filter by course or year.</p>';
+            }
+            liveBox.innerHTML = html;
+        }).catch(function (err) {
+            if (err && err.name === 'AbortError') {
+                return;
+            }
+            liveBox.innerHTML = '<div class="alert alert-warning">Unable to search students right now. Try again.</div>';
+        });
+    }
+
+    function browseFilters() {
+        return {
+            browse: '1',
+            search: (document.getElementById('onsiteBrowseSearch')?.value || '').trim(),
+            course_id: document.getElementById('onsiteBrowseCourse')?.value || '',
+            year_level: document.getElementById('onsiteBrowseYear')?.value || '',
+            enrollment_status: document.getElementById('onsiteBrowseStatus')?.value || '',
+            page: String(browsePage),
+            per_page: '15'
+        };
+    }
+
+    function runBrowse() {
+        const box = document.getElementById('onsiteBrowseResults');
+        if (!box) {
+            return;
+        }
+        box.innerHTML = '<p class="text-muted onsite-student-list-note"><i class="fas fa-spinner fa-spin"></i> Loading students…</p>';
+        fetchStudents(browseFilters(), function (data) {
+            const total = Number(data.total || 0);
+            const page = Number(data.page || 1);
+            const pages = Number(data.total_pages || 1);
+            const perPage = Number(data.per_page || 15);
+            const from = total ? ((page - 1) * perPage) + 1 : 0;
+            const to = Math.min(page * perPage, total);
+            let html = '<div class="students-filter-meta"><span>' + total + ' student' + (total === 1 ? '' : 's') + '</span>';
+            if (total) {
+                html += '<span>Showing ' + from + '–' + to + '</span>';
+            }
+            html += '</div>';
+            html += renderStudentTable(data.students || [], 'No active students match these filters.');
+            if (pages > 1) {
+                html += '<nav class="pagination onsite-browse-pager" aria-label="Student pages"><p class="pagination-status">Page '
+                    + page + ' of ' + pages + '</p><ul>'
+                    + '<li class="pagination-nav' + (page <= 1 ? ' is-disabled' : '') + '">'
+                    + (page > 1 ? '<a href="#" data-onsite-browse-page="' + (page - 1) + '">Prev</a>' : '<span>Prev</span>')
+                    + '</li>'
+                    + '<li class="pagination-nav' + (page >= pages ? ' is-disabled' : '') + '">'
+                    + (page < pages ? '<a href="#" data-onsite-browse-page="' + (page + 1) + '">Next</a>' : '<span>Next</span>')
+                    + '</li></ul></nav>';
+            }
+            box.innerHTML = html;
+        }).catch(function () {
+            box.innerHTML = '<div class="alert alert-warning">Unable to load students right now. Try again.</div>';
+        });
+    }
+
+    function openBrowse() {
+        if (!modal) {
+            return;
+        }
+        browsePage = 1;
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+        document.body.style.overflow = 'hidden';
+        runBrowse();
+        document.getElementById('onsiteBrowseSearch')?.focus();
+    }
+
+    function closeBrowse() {
+        if (!modal) {
+            return;
+        }
+        modal.classList.remove('is-open');
+        modal.setAttribute('aria-hidden', 'true');
+        document.body.style.overflow = '';
+    }
+
+    form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        runLiveSearch();
+    });
+
+    input.addEventListener('input', function () {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(runLiveSearch, 280);
+    });
+
+    if ((input.value || '').trim().length >= 2) {
+        runLiveSearch();
+    } else {
+        liveBox.hidden = false;
+        liveBox.innerHTML = '<p class="text-muted onsite-student-list-note">Type a student ID or last name to find a saved record without loading the full list.</p>';
+    }
+
+    browseBtn?.addEventListener('click', openBrowse);
+    modal?.querySelectorAll('[data-onsite-browse-close]').forEach(function (el) {
+        el.addEventListener('click', closeBrowse);
+    });
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && modal?.classList.contains('is-open')) {
+            closeBrowse();
+        }
+    });
+
+    ['onsiteBrowseSearch'].forEach(function (id) {
+        document.getElementById(id)?.addEventListener('input', function () {
+            browsePage = 1;
+            clearTimeout(browseTimer);
+            browseTimer = setTimeout(runBrowse, 280);
+        });
+    });
+    ['onsiteBrowseCourse', 'onsiteBrowseYear', 'onsiteBrowseStatus'].forEach(function (id) {
+        document.getElementById(id)?.addEventListener('change', function () {
+            browsePage = 1;
+            runBrowse();
+        });
+    });
+
+    document.getElementById('onsiteBrowseResults')?.addEventListener('click', function (event) {
+        const link = event.target.closest('[data-onsite-browse-page]');
+        if (!link) {
+            return;
+        }
+        event.preventDefault();
+        browsePage = parseInt(link.getAttribute('data-onsite-browse-page') || '1', 10) || 1;
+        runBrowse();
+    });
+}
 </script>
 <?php endif; ?>
 

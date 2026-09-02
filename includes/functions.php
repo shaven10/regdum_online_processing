@@ -732,7 +732,8 @@ function storeRequestUploads(array $filesInput): array {
 }
 
 function paginate(int $total, int $page, int $perPage = ITEMS_PER_PAGE): array {
-    $totalPages = max(1, ceil($total / $perPage));
+    $perPage = max(1, $perPage);
+    $totalPages = max(1, (int) ceil($total / $perPage));
     $page = max(1, min($page, $totalPages));
     return [
         'total'       => $total,
@@ -743,14 +744,105 @@ function paginate(int $total, int $page, int $perPage = ITEMS_PER_PAGE): array {
     ];
 }
 
-function paginationLinks(array $pag, string $baseUrl): string {
-    if ($pag['total_pages'] <= 1) return '';
-    $html = '<nav class="pagination"><ul>';
-    for ($i = 1; $i <= $pag['total_pages']; $i++) {
-        $active = $i === $pag['page'] ? ' class="active"' : '';
-        $html .= '<li' . $active . '><a href="' . $baseUrl . '&page=' . $i . '">' . $i . '</a></li>';
+function paginationPageUrl(string $baseUrl, int $page): string {
+    $baseUrl = trim($baseUrl);
+    if ($baseUrl === '' || $baseUrl === '?') {
+        return '?page=' . $page;
     }
+
+    $baseUrl = rtrim($baseUrl, '?&');
+    if ($baseUrl === '') {
+        return '?page=' . $page;
+    }
+
+    if (preg_match('/([?&])page=\d+/', $baseUrl)) {
+        return (string) preg_replace('/([?&])page=\d+/', '${1}page=' . $page, $baseUrl, 1);
+    }
+
+    return $baseUrl . (str_contains($baseUrl, '?') ? '&' : '?') . 'page=' . $page;
+}
+
+function paginationWindow(int $current, int $total, int $radius = 1): array {
+    if ($total <= 7) {
+        return range(1, $total);
+    }
+
+    $pages = [1];
+    $start = max(2, $current - $radius);
+    $end = min($total - 1, $current + $radius);
+
+    if ($start > 2) {
+        $pages[] = null;
+    }
+    for ($i = $start; $i <= $end; $i++) {
+        $pages[] = $i;
+    }
+    if ($end < $total - 1) {
+        $pages[] = null;
+    }
+    $pages[] = $total;
+
+    return $pages;
+}
+
+function paginationLinks(array $pag, string $baseUrl): string {
+    $totalPages = (int) ($pag['total_pages'] ?? 1);
+    $page = (int) ($pag['page'] ?? 1);
+    if ($totalPages <= 1) {
+        return '';
+    }
+
+    $html = '<nav class="pagination" aria-label="Pagination">';
+    $html .= '<p class="pagination-status">Page ' . $page . ' of ' . $totalPages . '</p>';
+    $html .= '<ul>';
+
+    if ($page > 1) {
+        $html .= '<li class="pagination-nav"><a href="' . e(paginationPageUrl($baseUrl, $page - 1)) . '" aria-label="Previous page">Prev</a></li>';
+    } else {
+        $html .= '<li class="pagination-nav is-disabled"><span aria-disabled="true">Prev</span></li>';
+    }
+
+    foreach (paginationWindow($page, $totalPages) as $item) {
+        if ($item === null) {
+            $html .= '<li class="pagination-ellipsis" aria-hidden="true"><span>&hellip;</span></li>';
+            continue;
+        }
+
+        $classes = 'pagination-page' . ($item === $page ? ' active' : '');
+        $current = $item === $page ? ' aria-current="page"' : '';
+        $html .= '<li class="' . $classes . '"><a href="' . e(paginationPageUrl($baseUrl, (int) $item)) . '"' . $current . '>' . (int) $item . '</a></li>';
+    }
+
+    if ($page < $totalPages) {
+        $html .= '<li class="pagination-nav"><a href="' . e(paginationPageUrl($baseUrl, $page + 1)) . '" aria-label="Next page">Next</a></li>';
+    } else {
+        $html .= '<li class="pagination-nav is-disabled"><span aria-disabled="true">Next</span></li>';
+    }
+
     $html .= '</ul></nav>';
+    return $html;
+}
+
+function studentRecordsPerPageOptions(): array {
+    return [15, 25, 50, 100];
+}
+
+function normalizeStudentRecordsPerPage(int $perPage): int {
+    $allowed = studentRecordsPerPageOptions();
+    return in_array($perPage, $allowed, true) ? $perPage : ITEMS_PER_PAGE;
+}
+
+function renderStudentRecordsPagination(array $pag, string $baseUrl, int $perPage, string $formId = 'studentsFilterForm'): string {
+    $html = '<div class="students-pagination-bar">';
+    $html .= '<label class="students-per-page">Per page ';
+    $html .= '<select name="per_page" form="' . e($formId) . '" aria-label="Records per page">';
+    foreach (studentRecordsPerPageOptions() as $option) {
+        $selected = $option === $perPage ? ' selected' : '';
+        $html .= '<option value="' . $option . '"' . $selected . '>' . $option . '</option>';
+    }
+    $html .= '</select></label>';
+    $html .= paginationLinks($pag, $baseUrl);
+    $html .= '</div>';
     return $html;
 }
 
@@ -815,6 +907,22 @@ function fullName(array $user): string {
 }
 
 /**
+ * Student records display name: LASTNAME, FIRSTNAME MIDDLENAME
+ */
+function studentRecordName(array $user): string {
+    $last = normalizePersonName($user['last_name'] ?? '');
+    $first = normalizePersonName($user['first_name'] ?? '');
+    $middle = normalizePersonName($user['middle_name'] ?? '');
+    $given = trim($first . ($middle !== '' ? ' ' . $middle : ''));
+
+    if ($last !== '' && $given !== '') {
+        return $last . ', ' . $given;
+    }
+
+    return $last !== '' ? $last : $given;
+}
+
+/**
  * Normalize a person name field to uppercase for consistent storage/display.
  */
 function normalizePersonName(?string $name): string {
@@ -840,5 +948,6 @@ function statCardLink(string $url, string $iconClass, string $icon, string $valu
 require_once __DIR__ . '/student.php';
 require_once __DIR__ . '/programs.php';
 require_once __DIR__ . '/campuses.php';
+require_once __DIR__ . '/student-view.php';
 require_once __DIR__ . '/document-rules.php';
 require_once __DIR__ . '/purpose-suggestions.php';

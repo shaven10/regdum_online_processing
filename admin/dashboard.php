@@ -19,9 +19,13 @@ require_once __DIR__ . '/../includes/header.php';
 renderDashboardWelcome($user, 'System overview across all requests, payments, and workflow stages.');
 renderDashboardActions([
     ['url' => 'requests.php', 'label' => 'All Requests', 'icon' => 'fa-list', 'class' => 'btn-primary'],
+    ['url' => 'import-students.php', 'label' => 'Import Students', 'icon' => 'fa-file-excel'],
+    ['url' => '../registrar/grades-evaluation.php', 'label' => 'Grades Evaluation', 'icon' => 'fa-clipboard-list'],
     ['url' => 'users.php', 'label' => 'User Management', 'icon' => 'fa-users'],
     ['url' => 'document-types.php', 'label' => 'Document Types', 'icon' => 'fa-file-alt'],
     ['url' => 'reports.php', 'label' => 'Reports', 'icon' => 'fa-chart-bar'],
+    ['url' => '../registrar/enrollment-report.php', 'label' => 'Enrollment by Course', 'icon' => 'fa-table'],
+    ['url' => '../registrar/enrollment-list-report.php', 'label' => 'Enrollment List', 'icon' => 'fa-user-graduate'],
 ]);
 ?>
 

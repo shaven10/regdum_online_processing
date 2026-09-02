@@ -34,7 +34,12 @@ require_once __DIR__ . '/../includes/header.php';
 renderDashboardWelcome($user, 'Review requests, verify requirements, assign documents to staff, and process documents assigned to you.');
 renderDashboardActions([
     ['url' => 'new-onsite-request.php', 'label' => 'Onsite Request', 'icon' => 'fa-store', 'class' => 'btn-primary'],
+    ['url' => 'students.php', 'label' => 'Student Records', 'icon' => 'fa-users'],
+    ['url' => 'grades-evaluation.php', 'label' => 'Grades Evaluation', 'icon' => 'fa-clipboard-list'],
+    ['url' => 'grade-entry.php', 'label' => 'Enter Grades', 'icon' => 'fa-paste'],
     ['url' => 'reports.php', 'label' => 'All Requests', 'icon' => 'fa-chart-bar'],
+    ['url' => 'enrollment-report.php', 'label' => 'Enrollment by Course', 'icon' => 'fa-table'],
+    ['url' => 'enrollment-list-report.php', 'label' => 'Enrollment List', 'icon' => 'fa-user-graduate'],
     ['url' => 'documents.php', 'label' => 'My Assignments', 'icon' => 'fa-tasks'],
     ['url' => 'compliance.php', 'label' => 'Request Review', 'icon' => 'fa-clipboard-check'],
     ['url' => 'assignments.php', 'label' => 'Staff Assignment', 'icon' => 'fa-user-tag'],

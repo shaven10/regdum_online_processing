@@ -34,7 +34,7 @@ if (isLoggedIn()) {
                             <h1>Online Credential Request System</h1>
                             <p>Request official documents, track your application, and receive credentials — all online.</p>
                             <div class="landing-hero-carousel-actions">
-                                <a href="auth/register.php" class="btn btn-primary btn-lg">Get Started</a>
+                                <a href="auth/login.php?mode=student" class="btn btn-primary btn-lg">Active Student Sign In</a>
                                 <a href="auth/login.php" class="btn btn-outline btn-lg btn-on-dark">Sign In</a>
                             </div>
                         </div>

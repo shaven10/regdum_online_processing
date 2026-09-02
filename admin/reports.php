@@ -37,6 +37,8 @@ require_once __DIR__ . '/../includes/header.php';
     <div class="card-header">
         <h2>Reports & Analytics</h2>
         <a href="?export=csv" class="btn btn-outline btn-sm"><i class="fas fa-download"></i> Export CSV</a>
+        <a href="../registrar/enrollment-report.php" class="btn btn-outline btn-sm"><i class="fas fa-table"></i> Enrollment by Course</a>
+        <a href="../registrar/enrollment-list-report.php" class="btn btn-outline btn-sm"><i class="fas fa-user-graduate"></i> Enrollment List</a>
     </div>
     <div class="card-body">
         <div class="stats-grid">

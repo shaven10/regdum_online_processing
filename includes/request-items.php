@@ -480,17 +480,66 @@ function getStaffAssignedItems(int $staffId, string $status = ''): array {
     }
 
     $sql = 'SELECT ri.*, dt.name as document_name, dt.code as document_code, r.request_number, r.status as request_status,
-            u.first_name, u.last_name, u.student_id
+            u.first_name, u.last_name, u.middle_name, u.student_id,
+            sp.course, sp.year_level, sp.enrollment_status,
+            ap.code AS program_code, ap.name AS program_name
         FROM request_items ri
         JOIN requests r ON ri.request_id = r.id
         JOIN document_types dt ON ri.document_type_id = dt.id
         JOIN users u ON r.user_id = u.id
+        LEFT JOIN student_profiles sp ON sp.user_id = u.id
+        LEFT JOIN academic_programs ap ON ap.id = sp.course_id
         WHERE ' . implode(' AND ', $where) . '
         ORDER BY ri.updated_at DESC, ri.id DESC';
 
     $stmt = $db->prepare($sql);
     $stmt->execute($params);
     return $stmt->fetchAll();
+}
+
+function assignedStudentCourseLabel(array $item): string {
+    $code = trim((string) ($item['program_code'] ?? ''));
+    if ($code !== '') {
+        return $code;
+    }
+
+    $course = trim((string) ($item['course'] ?? ''));
+    return $course !== '' ? $course : '—';
+}
+
+function assignedStudentYearLabel(array $item): string {
+    $year = trim((string) ($item['year_level'] ?? ''));
+    return $year !== '' ? $year : '—';
+}
+
+function assignedStudentNameLabel(array $item): string {
+    $name = studentRecordName($item);
+    return $name !== '' ? $name : '—';
+}
+
+function exportAssignedDocumentsCsv(array $items, string $filename = 'my_assignments.csv'): void {
+    require_once __DIR__ . '/student.php';
+    $rows = [];
+    foreach ($items as $item) {
+        $rows[] = [
+            (string) ($item['request_number'] ?? ''),
+            (string) ($item['document_name'] ?? ''),
+            assignedStudentNameLabel($item),
+            (string) ($item['student_id'] ?? ''),
+            assignedStudentCourseLabel($item),
+            assignedStudentYearLabel($item),
+            enrollmentStatusLabel($item['enrollment_status'] ?? null),
+            (string) (int) ($item['copies'] ?? 0),
+            requestItemStatusLabel((string) ($item['item_status'] ?? '')),
+            ucwords(str_replace('_', ' ', (string) ($item['request_status'] ?? ''))),
+        ];
+    }
+
+    exportCSV(
+        ['Request #', 'Document', 'Student', 'Student ID', 'Course', 'Year', 'Enrollment Status', 'Copies', 'Item Status', 'Batch Status'],
+        $rows,
+        $filename
+    );
 }
 
 function requestItemStatusLabel(string $status): string {
