@@ -17,6 +17,12 @@ $newKeyName = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $action = (string) ($_POST['action'] ?? '');
 
+    if ($action === 'dismiss_new_key') {
+        clearNewExternalApiKeyDisplay();
+        setFlash('success', 'API key hidden. Make sure you saved it — it cannot be shown again.');
+        redirect(APP_URL . '/admin/api-settings.php#api-keys');
+    }
+
     if ($action === 'save_settings') {
         $enabled = !empty($_POST['external_api_enabled']);
         $corsOrigins = trim((string) ($_POST['external_api_cors_origins'] ?? ''));
@@ -40,6 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             ]);
             $newKeyPlaintext = $created['key'];
             $newKeyName = $created['name'];
+            stashNewExternalApiKeyForDisplay($newKeyName, $newKeyPlaintext);
             setFlash('success', 'API key created. Copy it now — it will not be shown again.');
         } catch (InvalidArgumentException $e) {
             $errors[] = $e->getMessage();
@@ -73,6 +80,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             redirect(APP_URL . '/admin/api-settings.php');
         }
     }
+
+    if ($action === 'regenerate_key') {
+        $keyId = (int) ($_POST['key_id'] ?? 0);
+        try {
+            $regenerated = regenerateExternalApiKey($keyId, (int) ($user['id'] ?? 0));
+            stashNewExternalApiKeyForDisplay($regenerated['name'], $regenerated['key']);
+            setFlash('success', 'API key regenerated. Copy the new key — external apps must be updated.');
+            redirect(APP_URL . '/admin/api-settings.php#api-keys');
+        } catch (InvalidArgumentException $e) {
+            $errors[] = $e->getMessage();
+        } catch (Throwable $e) {
+            $errors[] = 'Unable to regenerate API key.';
+        }
+    }
+}
+
+$pendingKey = pullNewExternalApiKeyForDisplay();
+if ($pendingKey !== null) {
+    $newKeyPlaintext = $pendingKey['key'];
+    $newKeyName = $pendingKey['name'];
 }
 
 $apiEnabled = isExternalApiEnabled();
@@ -116,19 +143,6 @@ require_once __DIR__ . '/../includes/header.php';
             </div>
         <?php endif; ?>
 
-        <?php if ($newKeyPlaintext !== null): ?>
-            <div class="alert alert-success">
-                <p><strong>New API key for “<?= e($newKeyName) ?>”</strong></p>
-                <p>Copy this key now. It cannot be retrieved later.</p>
-                <div class="api-key-reveal">
-                    <code id="newApiKeyValue"><?= e($newKeyPlaintext) ?></code>
-                    <button type="button" class="btn btn-outline btn-sm" id="copyNewApiKey">
-                        <i class="fas fa-copy"></i> Copy
-                    </button>
-                </div>
-            </div>
-        <?php endif; ?>
-
         <form method="POST" class="form-grid">
             <?= csrfField() ?>
             <input type="hidden" name="action" value="save_settings">
@@ -156,9 +170,39 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
 </div>
 
-<div class="card">
+<div class="card" id="api-keys">
     <div class="card-header"><h2><i class="fas fa-key"></i> API Keys</h2></div>
     <div class="card-body">
+        <?php if ($newKeyPlaintext !== null): ?>
+            <div class="alert alert-success api-key-created-alert">
+                <div class="api-key-created-copy">
+                    <p><strong>New API key created: “<?= e($newKeyName) ?>”</strong></p>
+                    <p class="text-muted">Copy this key now and store it securely. You can view it again later from the API Keys list.</p>
+                    <label for="newApiKeyValue" class="api-key-copy-label">API key</label>
+                    <div class="api-key-reveal">
+                        <input type="text"
+                            id="newApiKeyValue"
+                            class="api-key-copy-input"
+                            value="<?= e($newKeyPlaintext) ?>"
+                            readonly
+                            onclick="this.select()">
+                        <button type="button" class="btn btn-primary btn-sm" id="copyNewApiKey" data-copy-label="Copy API Key">
+                            <i class="fas fa-copy"></i> Copy API Key
+                        </button>
+                    </div>
+                    <div class="api-key-created-actions">
+                        <form method="POST" class="inline-form">
+                            <?= csrfField() ?>
+                            <input type="hidden" name="action" value="dismiss_new_key">
+                            <button type="submit" class="btn btn-outline btn-sm">
+                                <i class="fas fa-check"></i> I've copied this key
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        <?php endif; ?>
+
         <form method="POST" class="form-grid api-key-create-form">
             <?= csrfField() ?>
             <input type="hidden" name="action" value="create_key">
@@ -217,6 +261,11 @@ require_once __DIR__ . '/../includes/header.php';
                                 <td><?= e(formatDateTime($key['created_at'] ?? '')) ?></td>
                                 <td><?= !empty($key['last_used_at']) ? e(formatDateTime($key['last_used_at'])) : '—' ?></td>
                                 <td class="table-actions">
+                                    <button type="button"
+                                        class="btn btn-outline btn-sm js-view-api-key"
+                                        data-key-id="<?= (int) ($key['id'] ?? 0) ?>">
+                                        <i class="fas fa-eye"></i> View Key
+                                    </button>
                                     <form method="POST" class="inline-form">
                                         <?= csrfField() ?>
                                         <input type="hidden" name="action" value="toggle_key">
@@ -549,16 +598,205 @@ if (payload.ok) {
     </div>
 </div>
 
+<div class="admin-form-modal" id="apiKeyViewModal" aria-hidden="true">
+    <div class="admin-form-modal-overlay" data-close-api-key-modal></div>
+    <div class="admin-form-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="apiKeyViewModalTitle">
+        <div class="admin-form-modal-header">
+            <div>
+                <span class="admin-form-modal-eyebrow">External API</span>
+                <h2 class="admin-form-modal-title" id="apiKeyViewModalTitle">View API Key</h2>
+            </div>
+            <button type="button" class="admin-form-modal-close" data-close-api-key-modal aria-label="Close">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="admin-form-modal-body">
+            <div id="apiKeyViewLoading" class="text-muted">Loading API key…</div>
+            <div id="apiKeyViewContent" hidden>
+                <p><strong id="apiKeyViewName"></strong></p>
+                <p id="apiKeyViewDescription" class="text-muted"></p>
+                <dl class="api-key-view-meta">
+                    <div><dt>Status</dt><dd id="apiKeyViewStatus"></dd></div>
+                    <div><dt>Created</dt><dd id="apiKeyViewCreated"></dd></div>
+                    <div><dt>Last used</dt><dd id="apiKeyViewLastUsed"></dd></div>
+                </dl>
+                <div id="apiKeyViewAvailable">
+                    <label for="apiKeyViewValue" class="api-key-copy-label">API key</label>
+                    <div class="api-key-reveal">
+                        <input type="text" id="apiKeyViewValue" class="api-key-copy-input" readonly onclick="this.select()">
+                        <button type="button" class="btn btn-primary btn-sm" id="copyViewApiKey" data-copy-label="Copy API Key">
+                            <i class="fas fa-copy"></i> Copy API Key
+                        </button>
+                    </div>
+                </div>
+                <div id="apiKeyViewUnavailable" class="alert alert-warning" hidden>
+                    <p>This key was created before viewable storage was enabled, so the full value is unavailable.</p>
+                    <p class="text-muted">Regenerate the key to issue a new one that you can view and copy here.</p>
+                    <form method="POST" class="inline-form"
+                        onsubmit="return confirm('Regenerate this API key? The current key will stop working immediately.');">
+                        <?= csrfField() ?>
+                        <input type="hidden" name="action" value="regenerate_key">
+                        <input type="hidden" name="key_id" id="apiKeyRegenerateId" value="">
+                        <button type="submit" class="btn btn-outline btn-sm">
+                            <i class="fas fa-sync-alt"></i> Regenerate Key
+                        </button>
+                    </form>
+                </div>
+            </div>
+            <div id="apiKeyViewError" class="alert alert-error" hidden></div>
+        </div>
+        <div class="admin-form-modal-footer">
+            <button type="button" class="btn btn-outline" data-close-api-key-modal>Close</button>
+        </div>
+    </div>
+</div>
+
 <script>
 (function () {
-    const copyBtn = document.getElementById('copyNewApiKey');
-    const keyEl = document.getElementById('newApiKeyValue');
-    if (!copyBtn || !keyEl) {
-        return;
+    function copyText(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+            return navigator.clipboard.writeText(text);
+        }
+
+        return new Promise(function (resolve, reject) {
+            const helper = document.createElement('textarea');
+            helper.value = text;
+            helper.setAttribute('readonly', '');
+            helper.style.position = 'fixed';
+            helper.style.opacity = '0';
+            document.body.appendChild(helper);
+            helper.select();
+            try {
+                document.execCommand('copy');
+                document.body.removeChild(helper);
+                resolve();
+            } catch (error) {
+                document.body.removeChild(helper);
+                reject(error);
+            }
+        });
     }
-    copyBtn.addEventListener('click', function () {
-        navigator.clipboard.writeText(keyEl.textContent || '').then(function () {
-            copyBtn.innerHTML = '<i class="fas fa-check"></i> Copied';
+
+    function bindCopyButton(button, input) {
+        if (!button || !input) {
+            return;
+        }
+
+        const defaultLabel = button.getAttribute('data-copy-label') || 'Copy API Key';
+        button.addEventListener('click', function () {
+            const value = input.value || '';
+            if (value === '') {
+                return;
+            }
+
+            copyText(value).then(function () {
+                button.innerHTML = '<i class="fas fa-check"></i> Copied';
+                button.classList.add('is-copied');
+                input.select();
+                window.setTimeout(function () {
+                    button.innerHTML = '<i class="fas fa-copy"></i> ' + defaultLabel;
+                    button.classList.remove('is-copied');
+                }, 2000);
+            }).catch(function () {
+                input.focus();
+                input.select();
+                window.alert('Unable to copy automatically. Select the key and press Ctrl+C.');
+            });
+        });
+    }
+
+    bindCopyButton(document.getElementById('copyNewApiKey'), document.getElementById('newApiKeyValue'));
+    bindCopyButton(document.getElementById('copyViewApiKey'), document.getElementById('apiKeyViewValue'));
+
+    const modal = document.getElementById('apiKeyViewModal');
+    const loadingEl = document.getElementById('apiKeyViewLoading');
+    const contentEl = document.getElementById('apiKeyViewContent');
+    const errorEl = document.getElementById('apiKeyViewError');
+    const viewUrl = <?= json_encode(APP_URL . '/admin/api-key-view.php', JSON_UNESCAPED_SLASHES) ?>;
+
+    function closeModal() {
+        if (!modal) {
+            return;
+        }
+        modal.classList.remove('is-open');
+        modal.setAttribute('aria-hidden', 'true');
+    }
+
+    function openModal() {
+        if (!modal) {
+            return;
+        }
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+    }
+
+    function resetModalState() {
+        loadingEl.hidden = false;
+        contentEl.hidden = true;
+        errorEl.hidden = true;
+        errorEl.textContent = '';
+    }
+
+    function populateModal(data) {
+        document.getElementById('apiKeyViewModalTitle').textContent = 'View API Key';
+        document.getElementById('apiKeyViewName').textContent = data.name || '';
+        document.getElementById('apiKeyViewDescription').textContent = data.description || '';
+        document.getElementById('apiKeyViewDescription').hidden = !data.description;
+        document.getElementById('apiKeyViewStatus').textContent = data.is_active ? 'Active' : 'Inactive';
+        document.getElementById('apiKeyViewCreated').textContent = data.created_at || '—';
+        document.getElementById('apiKeyViewLastUsed').textContent = data.last_used_at || '—';
+        document.getElementById('apiKeyRegenerateId').value = String(data.id || '');
+
+        const availableEl = document.getElementById('apiKeyViewAvailable');
+        const unavailableEl = document.getElementById('apiKeyViewUnavailable');
+        const valueInput = document.getElementById('apiKeyViewValue');
+
+        if (data.viewable && data.key) {
+            availableEl.hidden = false;
+            unavailableEl.hidden = true;
+            valueInput.value = data.key;
+        } else {
+            availableEl.hidden = true;
+            unavailableEl.hidden = false;
+            valueInput.value = data.masked_key || '';
+        }
+
+        loadingEl.hidden = true;
+        contentEl.hidden = false;
+    }
+
+    document.querySelectorAll('[data-close-api-key-modal]').forEach(function (el) {
+        el.addEventListener('click', closeModal);
+    });
+
+    document.querySelectorAll('.js-view-api-key').forEach(function (button) {
+        button.addEventListener('click', function () {
+            const keyId = button.getAttribute('data-key-id');
+            if (!keyId) {
+                return;
+            }
+
+            resetModalState();
+            openModal();
+
+            fetch(viewUrl + '?id=' + encodeURIComponent(keyId), {
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json' },
+            })
+                .then(function (response) {
+                    return response.json().then(function (payload) {
+                        if (!response.ok || !payload.ok) {
+                            throw new Error(payload.error || 'Unable to load API key.');
+                        }
+                        return payload.key;
+                    });
+                })
+                .then(populateModal)
+                .catch(function (error) {
+                    loadingEl.hidden = true;
+                    errorEl.hidden = false;
+                    errorEl.textContent = error.message || 'Unable to load API key.';
+                });
         });
     });
 })();

@@ -130,6 +130,10 @@ function runApplicationMigrations(): array {
     ensureAccountingModule();
     $log[] = 'Accounting RBAC role for SOA document assignment';
 
+    require_once __DIR__ . '/includes/external-api.php';
+    ensureExternalApiSchema();
+    $log[] = 'External API keys and request logs';
+
     ensureUploadDirectories();
     $log[] = 'Upload directories';
 

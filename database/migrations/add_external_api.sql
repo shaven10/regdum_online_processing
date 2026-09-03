@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     description TEXT NULL,
     key_prefix VARCHAR(12) NOT NULL,
     key_hash VARCHAR(255) NOT NULL,
+    key_encrypted TEXT NULL,
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     created_by INT UNSIGNED NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

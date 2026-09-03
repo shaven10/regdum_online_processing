@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/compliance.php';
 require_once __DIR__ . '/student.php';
 require_once __DIR__ . '/campuses.php';
@@ -21,6 +23,7 @@ function ensureExternalApiSchema(): void {
         description TEXT NULL,
         key_prefix VARCHAR(12) NOT NULL,
         key_hash VARCHAR(255) NOT NULL,
+        key_encrypted TEXT NULL,
         is_active TINYINT(1) NOT NULL DEFAULT 1,
         created_by INT UNSIGNED NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -30,6 +33,15 @@ function ensureExternalApiSchema(): void {
         INDEX idx_api_keys_active (is_active),
         CONSTRAINT fk_api_keys_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $encryptedCol = $db->query("SHOW COLUMNS FROM api_keys LIKE 'key_encrypted'")->fetch();
+    if (!$encryptedCol) {
+        $db->exec('ALTER TABLE api_keys ADD COLUMN key_encrypted TEXT NULL AFTER key_hash');
+    }
+
+    if (getAppSetting('external_api_encryption_secret', '') === '') {
+        setAppSetting('external_api_encryption_secret', bin2hex(random_bytes(32)));
+    }
 
     if (getAppSetting('external_api_enabled', '') === '') {
         setAppSetting('external_api_enabled', '0');
@@ -101,6 +113,52 @@ function apiKeyPrefix(string $plaintext): string {
     return substr($plaintext, 0, 12);
 }
 
+function externalApiEncryptionKey(): string {
+    ensureExternalApiSchema();
+    $secret = getAppSetting('external_api_encryption_secret', '');
+    if ($secret === '') {
+        $secret = bin2hex(random_bytes(32));
+        setAppSetting('external_api_encryption_secret', $secret);
+    }
+
+    return hash('sha256', $secret, true);
+}
+
+function encryptStoredApiKey(string $plaintext): string {
+    $key = externalApiEncryptionKey();
+    $iv = random_bytes(12);
+    $tag = '';
+    $cipher = openssl_encrypt($plaintext, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+    if ($cipher === false) {
+        throw new RuntimeException('Unable to encrypt API key.');
+    }
+
+    return base64_encode($iv . $tag . $cipher);
+}
+
+function decryptStoredApiKey(string $encrypted): ?string {
+    $raw = base64_decode($encrypted, true);
+    if ($raw === false || strlen($raw) < 28) {
+        return null;
+    }
+
+    $iv = substr($raw, 0, 12);
+    $tag = substr($raw, 12, 16);
+    $cipher = substr($raw, 28);
+    $plaintext = openssl_decrypt($cipher, 'aes-256-gcm', externalApiEncryptionKey(), OPENSSL_RAW_DATA, $iv, $tag);
+
+    return $plaintext === false ? null : $plaintext;
+}
+
+function formatMaskedApiKey(string $prefix): string {
+    $prefix = trim($prefix);
+    if ($prefix === '') {
+        return str_repeat('•', 12);
+    }
+
+    return $prefix . str_repeat('•', max(12, 52 - strlen($prefix)));
+}
+
 function createExternalApiKey(string $name, string $description, int $createdBy): array {
     ensureExternalApiSchema();
 
@@ -111,13 +169,14 @@ function createExternalApiKey(string $name, string $description, int $createdBy)
 
     $plaintext = generateApiKeyPlaintext();
     $db = getDB();
-    $stmt = $db->prepare('INSERT INTO api_keys (name, description, key_prefix, key_hash, created_by)
-        VALUES (?, ?, ?, ?, ?)');
+    $stmt = $db->prepare('INSERT INTO api_keys (name, description, key_prefix, key_hash, key_encrypted, created_by)
+        VALUES (?, ?, ?, ?, ?, ?)');
     $stmt->execute([
         $name,
         trim($description) !== '' ? trim($description) : null,
         apiKeyPrefix($plaintext),
         hashApiKey($plaintext),
+        encryptStoredApiKey($plaintext),
         $createdBy > 0 ? $createdBy : null,
     ]);
 
@@ -127,6 +186,35 @@ function createExternalApiKey(string $name, string $description, int $createdBy)
         'key' => $plaintext,
         'key_prefix' => apiKeyPrefix($plaintext),
     ];
+}
+
+function stashNewExternalApiKeyForDisplay(string $name, string $key): void {
+    $_SESSION['external_api_key_display'] = [
+        'name' => $name,
+        'key' => $key,
+        'created_at' => time(),
+    ];
+}
+
+function pullNewExternalApiKeyForDisplay(): ?array {
+    $data = $_SESSION['external_api_key_display'] ?? null;
+    if (!is_array($data)) {
+        return null;
+    }
+
+    if (time() - (int) ($data['created_at'] ?? 0) > 900) {
+        unset($_SESSION['external_api_key_display']);
+        return null;
+    }
+
+    return [
+        'name' => (string) ($data['name'] ?? ''),
+        'key' => (string) ($data['key'] ?? ''),
+    ];
+}
+
+function clearNewExternalApiKeyDisplay(): void {
+    unset($_SESSION['external_api_key_display']);
 }
 
 function listExternalApiKeys(): array {
@@ -169,13 +257,74 @@ function deleteExternalApiKey(int $id): bool {
     return $stmt->rowCount() > 0;
 }
 
+function getExternalApiKeyForAdminView(int $id): ?array {
+    $key = findExternalApiKeyById($id);
+    if (!$key) {
+        return null;
+    }
+
+    $plaintext = null;
+    if (!empty($key['key_encrypted'])) {
+        $plaintext = decryptStoredApiKey((string) $key['key_encrypted']);
+    }
+
+    return [
+        'id' => (int) ($key['id'] ?? 0),
+        'name' => (string) ($key['name'] ?? ''),
+        'description' => (string) ($key['description'] ?? ''),
+        'key_prefix' => (string) ($key['key_prefix'] ?? ''),
+        'is_active' => !empty($key['is_active']),
+        'created_at' => (string) ($key['created_at'] ?? ''),
+        'last_used_at' => (string) ($key['last_used_at'] ?? ''),
+        'key' => $plaintext,
+        'viewable' => is_string($plaintext) && $plaintext !== '',
+        'masked_key' => formatMaskedApiKey((string) ($key['key_prefix'] ?? '')),
+    ];
+}
+
+function regenerateExternalApiKey(int $id, int $adminId): array {
+    ensureExternalApiSchema();
+    $key = findExternalApiKeyById($id);
+    if (!$key) {
+        throw new InvalidArgumentException('API key not found.');
+    }
+
+    $plaintext = generateApiKeyPlaintext();
+    $db = getDB();
+    $db->prepare('UPDATE api_keys
+        SET key_prefix = ?, key_hash = ?, key_encrypted = ?, last_used_at = NULL
+        WHERE id = ?')
+       ->execute([
+           apiKeyPrefix($plaintext),
+           hashApiKey($plaintext),
+           encryptStoredApiKey($plaintext),
+           $id,
+       ]);
+
+    auditLog('regenerate_api_key', 'api_keys', $id, [
+        'name' => $key['name'] ?? '',
+        'key_prefix' => $key['key_prefix'] ?? '',
+    ], [
+        'name' => $key['name'] ?? '',
+        'key_prefix' => apiKeyPrefix($plaintext),
+        'regenerated_by' => $adminId,
+    ]);
+
+    return [
+        'id' => $id,
+        'name' => (string) ($key['name'] ?? ''),
+        'key' => $plaintext,
+        'key_prefix' => apiKeyPrefix($plaintext),
+    ];
+}
+
 function extractApiKeyFromRequest(): string {
     $headerKey = trim((string) ($_SERVER['HTTP_X_API_KEY'] ?? ''));
     if ($headerKey !== '') {
         return $headerKey;
     }
 
-    $auth = trim((string) ($_SERVER['HTTP_AUTHORIZATION'] ?? ''));
+    $auth = trim((string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? ''));
     if ($auth !== '' && preg_match('/^Bearer\s+(.+)$/i', $auth, $matches)) {
         return trim($matches[1]);
     }

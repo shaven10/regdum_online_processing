@@ -3,4 +3,8 @@ Options -Indexes
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteRule ^uploads/.*\.(php|phtml|php3|php4|php5|phps)$ - [F,L]
+
+    # Pass Authorization header through to PHP (required for Bearer API keys on Apache).
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 </IfModule>
