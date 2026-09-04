@@ -1,6 +1,6 @@
 -- Database backup
 -- Database: regdum_credentials
--- Generated: 2026-09-04 21:18:13
+-- Generated: 2026-09-04 21:48:07
 -- Tables: academic_programs, api_keys, api_request_logs, app_settings, appointments, audit_logs, campuses, chat_messages, clearance_departments, course_prospectuses, database_backups, document_requirements, document_type_enrollment_rules, document_type_requirement_defaults, document_types, faqs, feedback, notifications, payments, prospectus_subjects, request_assigned_requirements, request_authentication_items, request_clearances, request_compliance, request_compliance_summary, request_documents, request_items, request_purpose_document_suggestions, request_purpose_enrollment_settings, request_purposes, request_status_history, requests, requirement_definitions, requirement_subcategories, roles, schema_migrations, student_profiles, student_subject_grades, users
 
 SET FOREIGN_KEY_CHECKS=0;
@@ -83,9 +83,11 @@ CREATE TABLE `app_settings` (
   PRIMARY KEY (`setting_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+INSERT INTO `app_settings` (`setting_key`, `setting_value`, `updated_at`) VALUES ('active_school_year', '2026-2027', '2026-09-04 21:47:43');
+INSERT INTO `app_settings` (`setting_key`, `setting_value`, `updated_at`) VALUES ('active_semester', '1st_semester', '2026-09-04 21:47:43');
 INSERT INTO `app_settings` (`setting_key`, `setting_value`, `updated_at`) VALUES ('auto_apply_requirement_defaults', '1', '2026-07-27 10:13:13');
 INSERT INTO `app_settings` (`setting_key`, `setting_value`, `updated_at`) VALUES ('bank_transfer_details', '{\"bank_name\":\"Landbank of the Philippines\",\"account_name\":\"J.H. Cerilles State College\",\"account_number\":\"2842-1046-64\",\"branch\":\"JHCSC Dumingag Campus\",\"instructions\":\"\"}', '2026-07-27 16:44:52');
-INSERT INTO `app_settings` (`setting_key`, `setting_value`, `updated_at`) VALUES ('external_api_cors_origins', '', '2026-09-04 21:10:24');
+INSERT INTO `app_settings` (`setting_key`, `setting_value`, `updated_at`) VALUES ('external_api_cors_origins', '', '2026-09-04 21:47:06');
 INSERT INTO `app_settings` (`setting_key`, `setting_value`, `updated_at`) VALUES ('external_api_enabled', '0', '2026-09-03 21:57:04');
 INSERT INTO `app_settings` (`setting_key`, `setting_value`, `updated_at`) VALUES ('external_api_encryption_secret', '77931cbf1c89da9f2607868ab7543826b7cc4eeb8325819cf93aeb7c81467ef2', '2026-09-03 21:57:04');
 INSERT INTO `app_settings` (`setting_key`, `setting_value`, `updated_at`) VALUES ('other_enrollment_requirements_opt_in_migrated', '1', '2026-07-27 16:41:30');
@@ -121,7 +123,7 @@ CREATE TABLE `audit_logs` (
   `user_agent` text DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=18 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('2', '4', 'logout', 'users', '4', NULL, NULL, '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36', '2026-09-04 21:08:29');
 INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('3', '4', 'login', 'users', '4', NULL, NULL, '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36', '2026-09-04 21:08:34');
@@ -131,6 +133,14 @@ INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`,
 INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('7', '4', 'login', 'users', '4', NULL, NULL, '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36', '2026-09-04 21:12:52');
 INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('8', '4', 'logout', 'users', '4', NULL, NULL, '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36', '2026-09-04 21:14:51');
 INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('9', '1', 'login', 'users', '1', NULL, NULL, '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36', '2026-09-04 21:14:56');
+INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('10', '1', 'database_backup_create', 'database_backup', '1', NULL, '{\"type\":\"full\",\"filename\":\"full_full_database_backup_20260904_211813.sql\"}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36', '2026-09-04 21:18:14');
+INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('11', '1', 'database_backup_create', 'database_backup', '2', NULL, '{\"type\":\"custom\",\"tables\":[\"academic_programs\",\"api_keys\",\"api_request_logs\",\"app_settings\",\"appointments\",\"audit_logs\",\"campuses\",\"chat_messages\",\"clearance_departments\",\"course_prospectuses\",\"database_backups\",\"document_requirements\",\"document_type_enrollment_rules\",\"document_type_requirement_defaults\",\"document_types\",\"faqs\",\"feedback\",\"notifications\",\"payments\",\"prospectus_subjects\",\"request_assigned_requirements\",\"request_authentication_items\",\"request_clearances\",\"request_compliance\",\"request_compliance_summary\",\"request_documents\",\"request_items\",\"request_purpose_document_suggestions\",\"request_purpose_enrollment_settings\",\"request_purposes\",\"request_status_history\",\"requests\",\"requirement_definitions\",\"requirement_subcategories\",\"roles\",\"schema_migrations\",\"student_profiles\",\"student_subject_grades\",\"users\"],\"filename\":\"custom_backup_20260904_211910.sql\"}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36', '2026-09-04 21:19:11');
+INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('12', NULL, 'database_backup_delete', 'database_backup', '3', '{\"label\":\"Debug Restore Point\",\"filename\":\"restore_point_debug_restore_point_20260904_212201.sql\",\"type\":\"restore_point\"}', NULL, NULL, NULL, '2026-09-04 21:22:02');
+INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('13', '1', 'database_restore_point_create', 'database_backup', '4', NULL, '{\"label\":\"rspoint\",\"filename\":\"restore_point_rspoint_20260904_212316.sql\"}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36', '2026-09-04 21:23:16');
+INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('14', '1', 'update_active_academic_term', 'app_settings', NULL, '{\"active_school_year\":\"2027-2028\",\"active_semester\":\"1st_semester\"}', '{\"active_school_year\":\"2026-2027\",\"active_semester\":\"1st_semester\"}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36', '2026-09-04 21:47:43');
+INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('15', '1', 'database_backup_delete', 'database_backup', '4', '{\"label\":\"rspoint\",\"filename\":\"restore_point_rspoint_20260904_212316.sql\",\"type\":\"restore_point\"}', NULL, '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36', '2026-09-04 21:48:00');
+INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('16', '1', 'database_backup_delete', 'database_backup', '2', '{\"label\":\"backup\",\"filename\":\"custom_backup_20260904_211910.sql\",\"type\":\"custom\"}', NULL, '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36', '2026-09-04 21:48:02');
+INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `entity_type`, `entity_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `created_at`) VALUES ('17', '1', 'database_backup_delete', 'database_backup', '1', '{\"label\":\"Full Database Backup\",\"filename\":\"full_full_database_backup_20260904_211813.sql\",\"type\":\"full\"}', NULL, '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36', '2026-09-04 21:48:04');
 
 DROP TABLE IF EXISTS `campuses`;
 CREATE TABLE `campuses` (
@@ -219,7 +229,7 @@ CREATE TABLE `database_backups` (
   UNIQUE KEY `uq_database_backups_filename` (`filename`),
   KEY `idx_database_backups_type` (`backup_type`),
   KEY `idx_database_backups_created_at` (`created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
 DROP TABLE IF EXISTS `document_requirements`;

@@ -27,6 +27,7 @@ $campuses = getActiveCampuses();
 $yearOptions = schoolYearOptions();
 $semesterChoices = semesterOptions();
 $defaultYear = defaultImportAcademicYear();
+$defaultSemester = defaultImportSemester();
 $defaultCampusId = (int) (($campuses[0]['id'] ?? 0));
 
 if (($_GET['download'] ?? '') === 'template') {
@@ -34,9 +35,9 @@ if (($_GET['download'] ?? '') === 'template') {
     if (!isset($yearOptions[$year])) {
         $year = $defaultYear;
     }
-    $semester = trim((string) ($_GET['semester'] ?? '1st_semester'));
+    $semester = trim((string) ($_GET['semester'] ?? $defaultSemester));
     if (!array_key_exists($semester, $semesterChoices)) {
-        $semester = '1st_semester';
+        $semester = $defaultSemester;
     }
 
     $binary = buildEnrolmentReportTemplateBinary($year, $semester);
@@ -51,7 +52,7 @@ if ($importResult) {
 $errors = [];
 $form = [
     'academic_year' => $defaultYear,
-    'semester' => '1st_semester',
+    'semester' => $defaultSemester,
     'origin_campus_id' => $defaultCampusId,
     'update_existing' => false,
 ];
@@ -66,7 +67,7 @@ if ($isAjaxImport && !verifyCsrf()) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $form['academic_year'] = trim((string) ($_POST['academic_year'] ?? $defaultYear));
-    $form['semester'] = trim((string) ($_POST['semester'] ?? '1st_semester'));
+    $form['semester'] = trim((string) ($_POST['semester'] ?? $defaultSemester));
     $form['origin_campus_id'] = (int) ($_POST['origin_campus_id'] ?? 0);
     $form['update_existing'] = !empty($_POST['update_existing']);
     $progressToken = strtolower(trim((string) ($_POST['progress_token'] ?? '')));

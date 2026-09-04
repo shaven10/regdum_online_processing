@@ -874,6 +874,41 @@ a:hover { text-decoration: underline; }
     margin-bottom: 1.25rem;
 }
 
+.academic-term-current {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+    margin-bottom: 1.25rem;
+    padding: 1rem 1.15rem;
+    border: 1px solid var(--primary-soft-strong, #d1fae5);
+    border-radius: var(--radius);
+    background: var(--primary-soft, #ecfdf5);
+}
+
+.academic-term-current-label {
+    font-size: .75rem;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--gray-500);
+}
+
+.academic-term-current strong {
+    font-size: 1.15rem;
+}
+
+.academic-term-form {
+    margin-bottom: 1.25rem;
+}
+
+.academic-term-note ul {
+    margin: .5rem 0 0.75rem 1.1rem;
+}
+
+.academic-term-note p {
+    margin: 0 0 .5rem;
+}
+
 .api-key-created-alert {
     margin-bottom: 1.25rem;
 }

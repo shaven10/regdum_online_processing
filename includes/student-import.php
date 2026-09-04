@@ -336,8 +336,13 @@ function normalizeImportEmail(string $value, string $studentId): array {
 }
 
 function defaultImportAcademicYear(): string {
-    $options = schoolYearOptions();
-    return (string) array_key_first($options);
+    require_once __DIR__ . '/academic-term.php';
+    return getActiveSchoolYear();
+}
+
+function defaultImportSemester(): string {
+    require_once __DIR__ . '/academic-term.php';
+    return getActiveSemester();
 }
 
 function resolveImportAcademicProgram(string $course): ?array {
@@ -518,7 +523,7 @@ function importActiveStudentsFromRows(array $rows, array $options): array {
     if (!array_key_exists($semester, semesterOptions())) {
         $semester = $meta['semester'] !== '' && array_key_exists($meta['semester'], semesterOptions())
             ? $meta['semester']
-            : '1st_semester';
+            : defaultImportSemester();
     }
 
     $campusId = (int) ($options['origin_campus_id'] ?? 0);
@@ -863,7 +868,7 @@ function upsertImportedStudentProfile(int $userId, array $profile): void {
 
 function buildEnrolmentReportTemplateBinary(?string $academicYear = null, ?string $semester = null): string {
     $academicYear = $academicYear ?: defaultImportAcademicYear();
-    $semesterLabel = semesterLabel($semester ?: '1st_semester');
+    $semesterLabel = semesterLabel($semester ?: defaultImportSemester());
 
     $rows = [
         ['Enrolment Report'],

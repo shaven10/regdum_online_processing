@@ -5,19 +5,13 @@ function enrollmentReportYearColumns(): array {
 }
 
 function defaultEnrollmentReportAcademicYear(): string {
-    $options = schoolYearOptions();
-    return (string) array_key_first($options);
+    require_once __DIR__ . '/academic-term.php';
+    return getActiveSchoolYear();
 }
 
 function defaultEnrollmentReportSemester(): string {
-    $month = (int) date('n');
-    if ($month >= 4 && $month <= 5) {
-        return 'summer';
-    }
-    if ($month >= 6 && $month <= 10) {
-        return '1st_semester';
-    }
-    return '2nd_semester';
+    require_once __DIR__ . '/academic-term.php';
+    return getActiveSemester();
 }
 
 function enrollmentReportSemesterHeading(?string $semester): string {

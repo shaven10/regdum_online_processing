@@ -194,6 +194,10 @@ function runPhpApplicationMigrations(): array {
     ensureAuditLogsSchema();
     $log[] = 'Audit logs nullable columns for logout/login events';
 
+    require_once __DIR__ . '/includes/academic-term.php';
+    ensureAcademicTermSettings();
+    $log[] = 'Active school year and semester settings';
+
     ensureStudentEmploymentFields();
     $log[] = 'Graduate employment profile fields';
     ensureStudentAcademicTermFields();

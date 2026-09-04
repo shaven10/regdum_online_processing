@@ -119,17 +119,6 @@ function yearGraduatedOptions(): array {
 }
 
 function schoolYearOptions(): array {
-    $current = (int) date('Y');
-    $month = (int) date('n');
-    $startYear = $month >= 6 ? $current : $current - 1;
-    $options = [];
-
-    for ($i = 0; $i < 15; $i++) {
-        $from = $startYear - $i;
-        $to = $from + 1;
-        $value = $from . '-' . $to;
-        $options[$value] = $value;
-    }
-
-    return $options;
+    require_once __DIR__ . '/academic-term.php';
+    return buildSchoolYearOptions(getActiveSchoolYear());
 }
