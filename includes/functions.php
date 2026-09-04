@@ -594,6 +594,110 @@ function adminBatchDeleteStudents(array $userIds): array {
     ];
 }
 
+/**
+ * Build WHERE clause pieces for admin student list filters.
+ *
+ * @return array{where: list<string>, params: list<mixed>}
+ */
+function buildAdminStudentFilterQuery(array $filters = []): array {
+    $search = trim((string) ($filters['search'] ?? ''));
+    $enrollmentStatus = trim((string) ($filters['enrollment_status'] ?? ''));
+    $courseId = (int) ($filters['course_id'] ?? 0);
+    $yearLevel = trim((string) ($filters['year_level'] ?? ''));
+    $accountStatus = trim((string) ($filters['account'] ?? ''));
+    $campusId = (int) ($filters['campus_id'] ?? 0);
+
+    $where = ["r.name = 'student'"];
+    $params = [];
+
+    if ($search !== '') {
+        $terms = preg_split('/\s+/', $search, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        foreach ($terms as $term) {
+            $like = '%' . $term . '%';
+            $where[] = '(u.first_name LIKE ? OR u.last_name LIKE ? OR u.middle_name LIKE ?
+                OR u.email LIKE ? OR u.student_id LIKE ? OR u.phone LIKE ?
+                OR sp.course LIKE ? OR CONCAT(u.last_name, " ", u.first_name) LIKE ?
+                OR CONCAT(u.first_name, " ", u.last_name) LIKE ?)';
+            array_push($params, $like, $like, $like, $like, $like, $like, $like, $like, $like);
+        }
+    }
+
+    if ($enrollmentStatus !== '' && array_key_exists($enrollmentStatus, enrollmentStatusOptions())) {
+        $where[] = 'sp.enrollment_status = ?';
+        $params[] = $enrollmentStatus;
+    }
+
+    if ($courseId > 0) {
+        $where[] = 'sp.course_id = ?';
+        $params[] = $courseId;
+    }
+
+    if ($yearLevel !== '') {
+        $where[] = 'sp.year_level = ?';
+        $params[] = $yearLevel;
+    }
+
+    if ($accountStatus === 'active') {
+        $where[] = 'u.is_active = 1';
+    } elseif ($accountStatus === 'inactive') {
+        $where[] = 'u.is_active = 0';
+    }
+
+    if ($campusId > 0) {
+        $where[] = 'sp.origin_campus_id = ?';
+        $params[] = $campusId;
+    }
+
+    return ['where' => $where, 'params' => $params];
+}
+
+/**
+ * @return list<int>
+ */
+function queryAdminStudentIds(array $filters = []): array {
+    $db = getDB();
+    $query = buildAdminStudentFilterQuery($filters);
+    $whereClause = implode(' AND ', $query['where']);
+
+    $stmt = $db->prepare("SELECT u.id
+        FROM users u
+        JOIN roles r ON u.role_id = r.id
+        LEFT JOIN student_profiles sp ON u.id = sp.user_id
+        WHERE {$whereClause}
+        ORDER BY u.id ASC");
+    $stmt->execute($query['params']);
+
+    return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN) ?: []);
+}
+
+function countAdminStudents(array $filters = []): int {
+    $db = getDB();
+    $query = buildAdminStudentFilterQuery($filters);
+    $whereClause = implode(' AND ', $query['where']);
+
+    $stmt = $db->prepare("SELECT COUNT(*)
+        FROM users u
+        JOIN roles r ON u.role_id = r.id
+        LEFT JOIN student_profiles sp ON u.id = sp.user_id
+        WHERE {$whereClause}");
+    $stmt->execute($query['params']);
+
+    return (int) $stmt->fetchColumn();
+}
+
+/**
+ * Permanently delete students matching filters, or all students when $filters is empty.
+ *
+ * @return array{ok:bool,deleted:int,failed:array,requests_deleted:int,matched:int}
+ */
+function adminDeleteStudentsMatchingFilters(array $filters = []): array {
+    $userIds = queryAdminStudentIds($filters);
+    $result = adminBatchDeleteStudents($userIds);
+    $result['matched'] = count($userIds);
+
+    return $result;
+}
+
 function adminBatchUpdateRequestStatus(array $requestIds, string $newStatus, ?string $remarks = null): array {
     $updated = 0;
     $unchanged = 0;

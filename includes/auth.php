@@ -191,11 +191,17 @@ function login(string $email, string $password): bool {
 
 function logout(): void {
     if (isLoggedIn()) {
-        auditLog('logout', 'users', $_SESSION['user_id']);
+        try {
+            auditLog('logout', 'users', (int) $_SESSION['user_id']);
+        } catch (Throwable $e) {
+            // Never block sign-out if audit logging fails.
+        }
     }
     session_unset();
     session_destroy();
-    if (session_status() === PHP_SESSION_NONE) session_start();
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
 }
 
 function register(array $data): int|false {
@@ -267,16 +273,62 @@ function resetPassword(string $token, string $password): bool {
     return true;
 }
 
-function auditLog(string $action, ?string $entityType = null, ?int $entityId = null, ?array $oldValues = null, ?array $newValues = null): void {
+function ensureAuditLogsSchema(): void {
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+
     $db = getDB();
+    $db->exec("CREATE TABLE IF NOT EXISTS audit_logs (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id INT UNSIGNED NULL,
+        action VARCHAR(100) NOT NULL,
+        entity_type VARCHAR(50) NULL,
+        entity_id INT UNSIGNED NULL,
+        old_values JSON NULL,
+        new_values JSON NULL,
+        ip_address VARCHAR(45) NULL,
+        user_agent TEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    // Older installs marked these columns NOT NULL, which breaks logout/login audits.
+    try {
+        $db->exec('ALTER TABLE audit_logs
+            MODIFY old_values LONGTEXT NULL,
+            MODIFY new_values LONGTEXT NULL,
+            MODIFY ip_address VARCHAR(45) NULL,
+            MODIFY user_agent TEXT NULL');
+    } catch (Throwable $e) {
+        // Ignore if privileges or dialect differ; insert path below remains defensive.
+    }
+}
+
+function auditLog(string $action, ?string $entityType = null, ?int $entityId = null, ?array $oldValues = null, ?array $newValues = null): void {
+    ensureAuditLogsSchema();
+    $db = getDB();
+
+    $userId = isset($_SESSION['user_id']) ? (int) $_SESSION['user_id'] : null;
+    if ($userId !== null && $userId > 0) {
+        $exists = $db->prepare('SELECT id FROM users WHERE id = ? LIMIT 1');
+        $exists->execute([$userId]);
+        if (!$exists->fetchColumn()) {
+            $userId = null;
+        }
+    } else {
+        $userId = null;
+    }
+
     $stmt = $db->prepare('INSERT INTO audit_logs (user_id, action, entity_type, entity_id, old_values, new_values, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     $stmt->execute([
-        $_SESSION['user_id'] ?? null,
+        $userId,
         $action,
         $entityType,
         $entityId,
-        $oldValues ? json_encode($oldValues) : null,
-        $newValues ? json_encode($newValues) : null,
+        $oldValues !== null ? json_encode($oldValues) : null,
+        $newValues !== null ? json_encode($newValues) : null,
         $_SERVER['REMOTE_ADDR'] ?? null,
         $_SERVER['HTTP_USER_AGENT'] ?? null,
     ]);

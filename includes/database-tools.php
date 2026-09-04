@@ -162,11 +162,9 @@ function databaseToolsWriteDump(array $tables, string $filepath): int {
 }
 
 function databaseToolsTryMysqldump(array $tables, string $filepath): bool {
-    if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-        return false;
-    }
-
     $candidates = [
+        'D:\\SC30\\mysql\\bin\\mysqldump.exe',
+        'D:\\xammp\\mysql\\bin\\mysqldump.exe',
         'C:\\xampp\\mysql\\bin\\mysqldump.exe',
         'C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysqldump.exe',
         'mysqldump',
@@ -188,8 +186,9 @@ function databaseToolsTryMysqldump(array $tables, string $filepath): bool {
         return false;
     }
 
+    $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
     $args = [
-        escapeshellarg($binary),
+        $isWindows ? '"' . $binary . '"' : escapeshellarg($binary),
         '--host=' . escapeshellarg(DB_HOST),
         '--user=' . escapeshellarg(DB_USER),
         DB_PASS !== '' ? '--password=' . escapeshellarg(DB_PASS) : '',
@@ -205,8 +204,8 @@ function databaseToolsTryMysqldump(array $tables, string $filepath): bool {
         $args[] = escapeshellarg($table);
     }
 
-    $command = implode(' ', array_filter($args)) . ' > ' . escapeshellarg($filepath);
-    if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+    $command = implode(' ', array_filter($args, static fn($v) => $v !== '')) . ' > ' . escapeshellarg($filepath);
+    if ($isWindows) {
         $command = 'cmd /C ' . $command;
     }
 
@@ -228,8 +227,12 @@ function databaseToolsCreateBackup(string $type, string $label, array $tables, i
         };
     }
 
-    if ($type === 'full') {
+    // Full backups and restore points always capture every table.
+    if ($type === 'full' || $type === 'restore_point') {
         $tables = databaseToolsListTables();
+        if ($tables === []) {
+            throw new RuntimeException('No database tables were found to back up.');
+        }
     } else {
         $tables = databaseToolsValidateTables($tables);
         if ($tables === []) {

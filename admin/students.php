@@ -129,6 +129,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         redirect($listUrl);
     }
 
+    if ($action === 'delete_filtered' || $action === 'delete_all') {
+        $confirm = strtoupper(trim((string) ($_POST['confirm_text'] ?? '')));
+        if ($confirm !== 'DELETE') {
+            setFlash('error', 'Type DELETE to confirm this action.', [
+                'title' => 'Confirmation Required',
+            ]);
+            redirect($listUrl);
+        }
+
+        $deleteFilters = [];
+        if ($action === 'delete_filtered') {
+            $deleteFilters = [
+                'search' => trim((string) ($_POST['search'] ?? '')),
+                'enrollment_status' => trim((string) ($_POST['enrollment_status'] ?? '')),
+                'course_id' => (int) ($_POST['course_id'] ?? 0),
+                'year_level' => trim((string) ($_POST['year_level'] ?? '')),
+                'account' => trim((string) ($_POST['account'] ?? '')),
+                'campus_id' => (int) ($_POST['campus_id'] ?? 0),
+            ];
+
+            $hasDeleteFilters = $deleteFilters['search'] !== ''
+                || $deleteFilters['enrollment_status'] !== ''
+                || $deleteFilters['course_id'] > 0
+                || $deleteFilters['year_level'] !== ''
+                || $deleteFilters['account'] !== ''
+                || $deleteFilters['campus_id'] > 0;
+
+            if (!$hasDeleteFilters) {
+                setFlash('error', 'Apply at least one filter before deleting filtered students.', [
+                    'title' => 'No Filters Applied',
+                ]);
+                redirect($listUrl);
+            }
+        }
+
+        $matched = countAdminStudents($deleteFilters);
+        if ($matched <= 0) {
+            setFlash('error', $action === 'delete_all'
+                ? 'There are no student records to delete.'
+                : 'No students match the current filters.', [
+                'title' => 'Nothing to Delete',
+            ]);
+            redirect($action === 'delete_all' ? (APP_URL . '/admin/students.php') : $listUrl);
+        }
+
+        $result = adminDeleteStudentsMatchingFilters($deleteFilters);
+        $deleted = (int) ($result['deleted'] ?? 0);
+        $failed = $result['failed'] ?? [];
+        $requestsDeleted = (int) ($result['requests_deleted'] ?? 0);
+
+        auditLog($action === 'delete_all' ? 'delete_all_students' : 'delete_filtered_students', 'users', null, [
+            'matched' => $matched,
+            'filters' => $deleteFilters,
+        ], [
+            'deleted' => $deleted,
+            'requests_deleted' => $requestsDeleted,
+            'failed' => count($failed),
+        ]);
+
+        if ($deleted > 0) {
+            setFlash('success', $deleted . ' student account' . ($deleted === 1 ? '' : 's') . ' deleted permanently.', [
+                'title' => $action === 'delete_all' ? 'All Students Deleted' : 'Filtered Students Deleted',
+                'context' => array_filter([
+                    'Matched' => (string) $matched,
+                    'Deleted' => (string) $deleted,
+                    'Requests removed' => $requestsDeleted > 0 ? (string) $requestsDeleted : null,
+                    'Failed' => !empty($failed) ? (string) count($failed) : null,
+                ]),
+                'details' => !empty($failed) ? implode(' ', array_slice($failed, 0, 5)) : null,
+            ]);
+        } else {
+            setFlash('error', implode(' ', $failed ?: ['Unable to delete student records.']), [
+                'title' => 'Delete Failed',
+            ]);
+        }
+
+        redirect($action === 'delete_all' ? (APP_URL . '/admin/students.php') : $listUrl);
+    }
+
     setFlash('error', 'Unknown action.', ['title' => 'Action Failed']);
     redirect($listUrl);
 }
@@ -273,7 +352,46 @@ require_once __DIR__ . '/../includes/header.php';
             <?php if ($totalStudents > 0): ?>
                 <span>Showing <?= $from ?>–<?= $to ?></span>
             <?php endif; ?>
+            <?php
+            $totalAllStudents = $hasFilters ? countAdminStudents([]) : $totalStudents;
+            ?>
+            <?php if ($totalAllStudents > 0 || $totalStudents > 0): ?>
+                <div class="students-bulk-delete-actions">
+                    <?php if ($hasFilters && $totalStudents > 0): ?>
+                        <button type="button"
+                            class="btn btn-outline btn-sm btn-danger-outline js-student-mass-delete"
+                            data-action="delete_filtered"
+                            data-count="<?= (int) $totalStudents ?>"
+                            data-title="Delete Filtered Students?"
+                            data-message="Permanently delete all <?= (int) $totalStudents ?> student<?= $totalStudents === 1 ? '' : 's' ?> matching the current filters? Related credential requests will also be removed. Type DELETE to confirm.">
+                            <i class="fas fa-filter"></i> Delete Filtered (<?= (int) $totalStudents ?>)
+                        </button>
+                    <?php endif; ?>
+                    <?php if ($totalAllStudents > 0): ?>
+                        <button type="button"
+                            class="btn btn-danger btn-sm js-student-mass-delete"
+                            data-action="delete_all"
+                            data-count="<?= (int) $totalAllStudents ?>"
+                            data-title="Delete All Students?"
+                            data-message="Permanently delete ALL <?= (int) $totalAllStudents ?> student account<?= $totalAllStudents === 1 ? '' : 's' ?>? This ignores filters and cannot be undone. Type DELETE to confirm.">
+                            <i class="fas fa-trash"></i> Delete All Students
+                        </button>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
         </div>
+
+        <form method="POST" id="adminStudentsMassDeleteForm" class="hidden-form" hidden>
+            <?= csrfField() ?>
+            <input type="hidden" name="action" id="adminStudentsMassDeleteAction" value="">
+            <input type="hidden" name="confirm_text" id="adminStudentsMassDeleteConfirm" value="">
+            <input type="hidden" name="search" value="<?= e($search) ?>">
+            <input type="hidden" name="enrollment_status" value="<?= e($enrollmentStatus) ?>">
+            <input type="hidden" name="course_id" value="<?= $courseId > 0 ? (int) $courseId : '' ?>">
+            <input type="hidden" name="year_level" value="<?= e($yearLevel) ?>">
+            <input type="hidden" name="account" value="<?= e($accountStatus) ?>">
+            <input type="hidden" name="campus_id" value="<?= $campusId > 0 ? (int) $campusId : '' ?>">
+        </form>
 
         <?php if (empty($students)): ?>
             <div class="empty-state"><i class="fas fa-users"></i><p><?= $hasFilters ? 'No students match these filters.' : 'No student accounts found.' ?></p></div>
@@ -389,7 +507,6 @@ require_once __DIR__ . '/../includes/header.php';
 })();
 </script>
 
-<?php if (!empty($students)): ?>
 <div class="confirm-modal" id="studentDeleteConfirmModal" aria-hidden="true">
     <div class="confirm-modal-overlay" data-close-confirm-modal></div>
     <div class="confirm-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="studentDeleteConfirmTitle">
@@ -404,6 +521,10 @@ require_once __DIR__ . '/../includes/header.php';
         <h2 class="confirm-modal-title" id="studentDeleteConfirmTitle">Delete Student?</h2>
         <p class="confirm-modal-message" id="studentDeleteConfirmMessage">This action cannot be undone.</p>
         <dl class="confirm-modal-context" id="studentDeleteConfirmContext" hidden></dl>
+        <div class="confirm-modal-typed" id="studentDeleteConfirmTyped" hidden>
+            <label for="studentDeleteConfirmInput">Type <strong>DELETE</strong> to confirm</label>
+            <input type="text" id="studentDeleteConfirmInput" autocomplete="off" spellcheck="false" placeholder="DELETE">
+        </div>
         <div class="confirm-modal-actions">
             <button type="button" class="btn btn-outline" data-close-confirm-modal>Cancel</button>
             <button type="button" class="btn btn-danger" id="studentDeleteConfirmBtn">
@@ -420,12 +541,18 @@ require_once __DIR__ . '/../includes/header.php';
     const countEl = document.getElementById('adminStudentsBatchSelectedCount');
     const selectAll = document.getElementById('adminSelectAllStudents');
     const deleteBtn = document.getElementById('adminStudentsBatchDeleteBtn');
+    const massForm = document.getElementById('adminStudentsMassDeleteForm');
+    const massActionInput = document.getElementById('adminStudentsMassDeleteAction');
+    const massConfirmInput = document.getElementById('adminStudentsMassDeleteConfirm');
     const modal = document.getElementById('studentDeleteConfirmModal');
     const titleEl = document.getElementById('studentDeleteConfirmTitle');
     const messageEl = document.getElementById('studentDeleteConfirmMessage');
     const contextEl = document.getElementById('studentDeleteConfirmContext');
+    const typedWrap = document.getElementById('studentDeleteConfirmTyped');
+    const typedInput = document.getElementById('studentDeleteConfirmInput');
     const confirmBtn = document.getElementById('studentDeleteConfirmBtn');
     let pendingConfirm = null;
+    let requireTypedDelete = false;
 
     const rowChecks = function () {
         return Array.from(document.querySelectorAll('.admin-student-select'));
@@ -447,17 +574,32 @@ require_once __DIR__ . '/../includes/header.php';
         }
     }
 
+    function syncTypedConfirmState() {
+        if (!confirmBtn) return;
+        if (!requireTypedDelete) {
+            confirmBtn.disabled = false;
+            return;
+        }
+        const value = (typedInput && typedInput.value ? typedInput.value : '').trim().toUpperCase();
+        confirmBtn.disabled = value !== 'DELETE';
+    }
+
     function closeConfirmModal() {
         if (!modal) return;
         modal.classList.remove('is-open');
         modal.setAttribute('aria-hidden', 'true');
         document.body.style.overflow = '';
         pendingConfirm = null;
+        requireTypedDelete = false;
+        if (typedWrap) typedWrap.hidden = true;
+        if (typedInput) typedInput.value = '';
+        syncTypedConfirmState();
     }
 
     function openConfirmModal(options) {
         if (!modal) return;
         pendingConfirm = options.onConfirm || null;
+        requireTypedDelete = !!options.requireTypedDelete;
         if (titleEl) titleEl.textContent = options.title || 'Confirm Deletion';
         if (messageEl) messageEl.textContent = options.message || 'This action cannot be undone.';
         if (contextEl) {
@@ -478,10 +620,17 @@ require_once __DIR__ . '/../includes/header.php';
                 contextEl.hidden = true;
             }
         }
+        if (typedWrap) typedWrap.hidden = !requireTypedDelete;
+        if (typedInput) typedInput.value = '';
+        syncTypedConfirmState();
         modal.classList.add('is-open');
         modal.setAttribute('aria-hidden', 'false');
         document.body.style.overflow = 'hidden';
-        if (confirmBtn) confirmBtn.focus();
+        if (requireTypedDelete && typedInput) {
+            typedInput.focus();
+        } else if (confirmBtn) {
+            confirmBtn.focus();
+        }
     }
 
     if (selectAll) {
@@ -552,6 +701,47 @@ require_once __DIR__ . '/../includes/header.php';
         });
     }
 
+    document.querySelectorAll('.js-student-mass-delete').forEach(function (button) {
+        button.addEventListener('click', function () {
+            if (!massForm || !massActionInput || !massConfirmInput) {
+                return;
+            }
+
+            const action = button.getAttribute('data-action') || '';
+            const count = parseInt(button.getAttribute('data-count') || '0', 10) || 0;
+            if (!action || count <= 0) {
+                return;
+            }
+
+            openConfirmModal({
+                title: button.getAttribute('data-title') || 'Delete Students?',
+                message: button.getAttribute('data-message') || 'This action cannot be undone.',
+                context: {
+                    Records: String(count),
+                    Scope: action === 'delete_all' ? 'All students' : 'Current filters'
+                },
+                requireTypedDelete: true,
+                onConfirm: function (typed) {
+                    massActionInput.value = action;
+                    massConfirmInput.value = typed || 'DELETE';
+                    massForm.submit();
+                }
+            });
+        });
+    });
+
+    if (typedInput) {
+        typedInput.addEventListener('input', syncTypedConfirmState);
+        typedInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (confirmBtn && !confirmBtn.disabled) {
+                    confirmBtn.click();
+                }
+            }
+        });
+    }
+
     if (modal) {
         modal.querySelectorAll('[data-close-confirm-modal]').forEach(function (el) {
             el.addEventListener('click', closeConfirmModal);
@@ -560,10 +750,17 @@ require_once __DIR__ . '/../includes/header.php';
 
     if (confirmBtn) {
         confirmBtn.addEventListener('click', function () {
+            let typed = '';
+            if (requireTypedDelete) {
+                typed = (typedInput && typedInput.value ? typedInput.value : '').trim().toUpperCase();
+                if (typed !== 'DELETE') {
+                    return;
+                }
+            }
             const action = pendingConfirm;
             closeConfirmModal();
             if (typeof action === 'function') {
-                action();
+                action(typed);
             }
         });
     }
@@ -577,6 +774,5 @@ require_once __DIR__ . '/../includes/header.php';
     syncBatchBar();
 })();
 </script>
-<?php endif; ?>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

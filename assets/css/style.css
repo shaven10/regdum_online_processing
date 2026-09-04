@@ -6758,11 +6758,52 @@ hr { border: none; border-top: 1px solid var(--gray-200); margin: 1rem 0; }
 .students-filter-meta {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     gap: .75rem;
     flex-wrap: wrap;
     margin-bottom: 1rem;
     color: var(--gray-600);
     font-size: .8rem;
+}
+
+.students-bulk-delete-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+    margin-left: auto;
+}
+
+.btn-danger-outline {
+    color: var(--danger, #dc2626);
+    border-color: rgba(220, 38, 38, .35);
+    background: #fff;
+}
+
+.btn-danger-outline:hover {
+    background: rgba(220, 38, 38, .08);
+    border-color: var(--danger, #dc2626);
+    color: var(--danger, #b91c1c);
+}
+
+.confirm-modal-typed {
+    text-align: left;
+    margin: 0 0 1.25rem;
+}
+
+.confirm-modal-typed label {
+    display: block;
+    font-size: .85rem;
+    color: var(--gray-600);
+    margin-bottom: .4rem;
+}
+
+.confirm-modal-typed input {
+    width: 100%;
+    padding: .65rem .75rem;
+    border: 1px solid var(--gray-300);
+    border-radius: var(--radius);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    letter-spacing: .04em;
 }
 
 .students-table-wrap {
