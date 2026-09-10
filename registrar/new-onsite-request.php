@@ -51,9 +51,14 @@ $onsiteSectionExpanded = static function (string $section) use ($expandAllOnsite
         return true;
     }
 
+    // Existing student selected: focus on Purpose & type (step 2).
+    if ($selectedStudent) {
+        return $section === 'purpose';
+    }
+
+    // Walk-in / no student yet: open picker + requestor details.
     return match ($section) {
-        'students' => !$selectedStudent,
-        'requestor', 'documents' => true,
+        'students', 'requestor' => true,
         default => false,
     };
 };
@@ -391,6 +396,7 @@ foreach ($purposeOptions as $purposeKey) {
     $purposeSuggestions[$purposeKey] = getSuggestedDocumentIdsForPurpose($purposeKey, $docTypes, $enrollmentStatus);
     $purposeHints[$purposeKey] = purposeSuggestionHint($purposeKey, $enrollmentStatus);
 }
+$frequentDocuments = getFrequentRequestedDocumentTypesForEnrollment($enrollmentStatus, 6);
 $selectedPurpose = (string) ($_POST['purpose'] ?? '');
 $selectedCopyType = (string) ($_POST['copy_request_type'] ?? 'first_request');
 if (!isValidCopyRequestType($selectedCopyType)) {
@@ -831,6 +837,31 @@ require_once __DIR__ . '/../includes/header.php';
                     <label for="purpose_other">Specify purpose</label>
                     <input type="text" id="purpose_other" name="purpose_other" value="<?= e($_POST['purpose_other'] ?? '') ?>" placeholder="Describe the purpose">
                 </div>
+                <?php if ($frequentDocuments !== []): ?>
+                <div class="frequent-documents-panel" id="frequentDocumentsPanel">
+                    <div class="frequent-documents-header">
+                        <i class="fas fa-bolt"></i>
+                        <strong>Frequently requested</strong>
+                    </div>
+                    <p class="frequent-documents-hint">
+                        Quick-select common documents for <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> requestors.
+                        Selected items are checked in step 3.
+                    </p>
+                    <div class="frequent-documents-chips" id="frequentDocumentsChips">
+                        <?php foreach ($frequentDocuments as $frequentDoc): ?>
+                            <button type="button"
+                                class="frequent-doc-chip"
+                                data-frequent-doc-id="<?= (int) $frequentDoc['id'] ?>"
+                                aria-pressed="false">
+                                <span class="frequent-doc-chip-name"><?= e($frequentDoc['name']) ?></span>
+                                <?php if ((int) ($frequentDoc['request_count'] ?? 0) > 0): ?>
+                                    <span class="frequent-doc-chip-count"><?= (int) $frequentDoc['request_count'] ?></span>
+                                <?php endif; ?>
+                            </button>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
                 <div class="purpose-suggestion-panel" id="purposeSuggestionPanel" hidden>
                     <div class="purpose-suggestion-header">
                         <i class="fas fa-lightbulb"></i>
@@ -1358,6 +1389,7 @@ function handleDocumentCheckboxChange(checkbox) {
     setDocumentChecklistItemExpanded(item, checkbox.checked);
     updateFee();
     toggleDocumentExtraFields();
+    syncFrequentDocumentChips();
 }
 
 function initDocumentChecklistToggles() {
@@ -1509,6 +1541,45 @@ function toggleDocumentExtraFields() {
     });
 }
 
+function setOnsiteFormSectionExpanded(section, expanded) {
+    if (!section) {
+        return;
+    }
+    section.classList.toggle('is-expanded', expanded);
+    section.classList.toggle('is-collapsed', !expanded);
+    const toggle = section.querySelector('.form-section-toggle');
+    if (toggle) {
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    }
+}
+
+function expandOnsiteDocumentsSection() {
+    const section = document.getElementById('onsiteSectionDocuments')?.closest('[data-form-section-collapsible]');
+    setOnsiteFormSectionExpanded(section, true);
+}
+
+function syncFrequentDocumentChips() {
+    document.querySelectorAll('[data-frequent-doc-id]').forEach(function (chip) {
+        const checkbox = document.getElementById('doc_type_' + chip.getAttribute('data-frequent-doc-id'));
+        const selected = !!(checkbox && checkbox.checked);
+        chip.classList.toggle('is-selected', selected);
+        chip.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
+}
+
+function toggleFrequentDocument(docId) {
+    const checkbox = document.getElementById('doc_type_' + docId);
+    if (!checkbox) {
+        return;
+    }
+    checkbox.checked = !checkbox.checked;
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    expandOnsiteDocumentsSection();
+    toggleDocumentExtraFields();
+    updateFee();
+    syncFrequentDocumentChips();
+}
+
 function applyPurposeDocumentSelection() {
     const purposeSelect = document.getElementById('purpose');
     const purpose = purposeSelect ? purposeSelect.value : '';
@@ -1525,6 +1596,7 @@ function applyPurposeDocumentSelection() {
 
     toggleDocumentExtraFields();
     updateFee();
+    syncFrequentDocumentChips();
 }
 
 function togglePurposeOtherField() {
@@ -1757,6 +1829,11 @@ document.getElementById('purpose')?.addEventListener('change', function () {
 document.getElementById('applyPurposeSuggestions')?.addEventListener('click', function () {
     applyPurposeSuggestions(true);
 });
+document.querySelectorAll('[data-frequent-doc-id]').forEach(function (chip) {
+    chip.addEventListener('click', function () {
+        toggleFrequentDocument(chip.getAttribute('data-frequent-doc-id'));
+    });
+});
 document.getElementById('requestForm')?.addEventListener('submit', function (event) {
     syncOnsiteCourseIdField();
     syncOnsiteOriginCampusField();
@@ -1774,6 +1851,7 @@ updateFee();
 toggleDocumentExtraFields();
 togglePurposeOtherField();
 updatePurposeSuggestions(false);
+syncFrequentDocumentChips();
 initDocumentChecklistToggles();
 toggleOnsiteAcademicPanels();
 initOnsiteStudentPicker();

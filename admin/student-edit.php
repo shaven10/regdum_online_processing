@@ -1,7 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
-requireRole('student');
-$user = currentUser();
+requireRole('admin');
 
 ensureDeliveryMethods();
 ensureStudentEmploymentFields();
@@ -13,15 +12,21 @@ ensureStudentValidIdField();
 require_once __DIR__ . '/../includes/academic-term.php';
 
 $db = getDB();
-$profile = $db->prepare('SELECT * FROM student_profiles WHERE user_id = ?');
-$profile->execute([$user['id']]);
-$profileData = $profile->fetch() ?: [];
-$programs = getAcademicProgramsForStudent((int) ($profileData['course_id'] ?? 0));
+$studentId = (int) ($_GET['id'] ?? $_POST['user_id'] ?? 0);
+$returnUrl = sanitizeAdminStudentsReturnUrl($_POST['return_url'] ?? $_GET['return'] ?? '');
+
+$student = loadStudentAccountForAdminEdit($studentId);
+if (!$student) {
+    setFlash('error', 'Student account not found.', ['title' => 'Student Not Found']);
+    redirect($returnUrl);
+}
+
+$programs = getAcademicProgramsForStudent((int) ($student['course_id'] ?? 0));
 $majorsByProgram = getAcademicMajorsGroupedByProgram(true);
-$selectedMajorId = (int) ($profileData['major_id'] ?? 0);
+$selectedMajorId = (int) ($student['major_id'] ?? 0);
 if ($selectedMajorId > 0) {
     $selectedMajor = getAcademicMajorById($selectedMajorId);
-    $selectedProgramId = (int) ($profileData['course_id'] ?? 0);
+    $selectedProgramId = (int) ($student['course_id'] ?? 0);
     if ($selectedMajor && $selectedProgramId > 0 && (int) $selectedMajor['program_id'] === $selectedProgramId) {
         $majorsByProgram[$selectedProgramId] ??= [];
         $alreadyListed = array_filter(
@@ -33,48 +38,54 @@ if ($selectedMajorId > 0) {
         }
     }
 }
-$campuses = getCampusesForStudent((int) ($profileData['origin_campus_id'] ?? 0));
-$currentEnrollment = $profileData['enrollment_status'] ?? 'enrolled';
+$campuses = getCampusesForStudent((int) ($student['origin_campus_id'] ?? 0));
+$currentEnrollment = $student['enrollment_status'] ?? 'enrolled';
+$formErrors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
-    $validIdPath = trim($profileData['valid_id_path'] ?? '');
-    $validIdOriginalName = trim($profileData['valid_id_original_name'] ?? '');
+    $validIdPath = trim($student['valid_id_path'] ?? '');
+    $validIdOriginalName = trim($student['valid_id_original_name'] ?? '');
 
     if (!empty($_FILES['valid_id']['name'])) {
-        $uploaded = saveStudentValidIdUpload((int) $user['id'], $_FILES['valid_id']);
+        $uploaded = saveStudentValidIdUpload($studentId, $_FILES['valid_id']);
         if (!$uploaded) {
             setFlash('error', 'Unable to upload Valid ID. Use PDF, JPG, PNG, or DOC up to 5 MB.', [
                 'title' => 'Invalid ID File',
             ]);
-            redirect(APP_URL . '/student/profile.php');
+            redirect(APP_URL . '/admin/student-edit.php?id=' . $studentId . '&return=' . urlencode($returnUrl));
         }
         $validIdPath = $uploaded['path'];
         $validIdOriginalName = $uploaded['original_name'];
     }
 
     $fields = [
-        'first_name'        => normalizePersonName($_POST['first_name'] ?? ''),
-        'last_name'         => normalizePersonName($_POST['last_name'] ?? ''),
-        'middle_name'       => normalizePersonName($_POST['middle_name'] ?? ''),
-        'phone'             => trim($_POST['phone'] ?? ''),
-        'course_id'         => (int) ($_POST['course_id'] ?? 0),
-        'major_id'          => (int) ($_POST['major_id'] ?? 0),
+        'first_name'            => normalizePersonName($_POST['first_name'] ?? ''),
+        'last_name'             => normalizePersonName($_POST['last_name'] ?? ''),
+        'middle_name'           => normalizePersonName($_POST['middle_name'] ?? ''),
+        'student_id'            => substr(trim((string) ($_POST['student_id'] ?? '')), 0, 50),
+        'email'                 => strtolower(trim((string) ($_POST['email'] ?? ''))),
+        'phone'                 => trim($_POST['phone'] ?? ''),
+        'is_active'             => !empty($_POST['is_active']) ? 1 : 0,
+        'course_id'             => (int) ($_POST['course_id'] ?? 0),
+        'major_id'              => (int) ($_POST['major_id'] ?? 0),
         'year_level'            => trim($_POST['year_level'] ?? ''),
         'current_academic_year' => trim($_POST['current_academic_year'] ?? ''),
         'current_semester'      => trim($_POST['current_semester'] ?? ''),
         'year_graduated'        => (int) ($_POST['year_graduated'] ?? 0),
-        'origin_campus_id'  => (int) ($_POST['origin_campus_id'] ?? 0),
-        'last_school_year'  => trim($_POST['last_school_year'] ?? ''),
-        'birth_date'        => trim($_POST['birth_date'] ?? ''),
-        'emergency_contact' => trim($_POST['emergency_contact'] ?? ''),
-        'emergency_phone'   => trim($_POST['emergency_phone'] ?? ''),
-        'enrollment_status' => trim($_POST['enrollment_status'] ?? ''),
-        'employment_status' => trim($_POST['employment_status'] ?? ''),
-        'employer_name'     => trim($_POST['employer_name'] ?? ''),
-        'job_title'         => trim($_POST['job_title'] ?? ''),
-        'employer_address'  => trim($_POST['employer_address'] ?? ''),
+        'origin_campus_id'      => (int) ($_POST['origin_campus_id'] ?? 0),
+        'last_school_year'      => trim($_POST['last_school_year'] ?? ''),
+        'birth_date'            => trim($_POST['birth_date'] ?? ''),
+        'emergency_contact'     => trim($_POST['emergency_contact'] ?? ''),
+        'emergency_phone'       => trim($_POST['emergency_phone'] ?? ''),
+        'enrollment_status'     => trim($_POST['enrollment_status'] ?? ''),
+        'employment_status'     => trim($_POST['employment_status'] ?? ''),
+        'employer_name'         => trim($_POST['employer_name'] ?? ''),
+        'job_title'             => trim($_POST['job_title'] ?? ''),
+        'employer_address'      => trim($_POST['employer_address'] ?? ''),
         'employment_start_date' => trim($_POST['employment_start_date'] ?? ''),
         'valid_id_path'         => $validIdPath,
+        'new_password'          => (string) ($_POST['new_password'] ?? ''),
+        'reset_password_to_id'  => !empty($_POST['reset_password_to_id']),
     ];
 
     if (!array_key_exists($fields['enrollment_status'], enrollmentStatusOptions())) {
@@ -82,8 +93,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     }
 
     $fields = normalizeStudentProfileFields($fields);
-
     $missing = validateStudentProfileFields($fields);
+
+    if ($fields['student_id'] === '') {
+        $missing[] = 'Student ID';
+    }
+    if ($fields['email'] === '' || !filter_var($fields['email'], FILTER_VALIDATE_EMAIL)) {
+        $missing[] = 'Valid email';
+    }
+
     $selectedProgram = resolveAcademicProgramForProfile((int) $fields['course_id']);
     if ((int) $fields['course_id'] > 0 && !$selectedProgram) {
         $missing[] = 'Valid course/program selection';
@@ -94,11 +112,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     if (!empty($programMajors)) {
         $selectedMajor = resolveAcademicMajorForProgram((int) ($selectedProgram['id'] ?? 0), (int) $fields['major_id']);
         if (!$selectedMajor) {
-            // Keep an already-saved inactive major so profile edits still validate.
             $existingMajor = getAcademicMajorById((int) $fields['major_id']);
             if ($existingMajor
                 && (int) $existingMajor['program_id'] === (int) $selectedProgram['id']
-                && (int) $fields['major_id'] === (int) ($profileData['major_id'] ?? 0)) {
+                && (int) $fields['major_id'] === (int) ($student['major_id'] ?? 0)) {
                 $selectedMajor = $existingMajor;
             } else {
                 $missing[] = 'Major';
@@ -114,122 +131,258 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         }
     }
 
-    if (!empty($missing)) {
-        setFlash('error', 'Please complete all required profile fields before saving.', [
-            'title' => 'Profile Incomplete',
-            'next_step' => 'Fill in: ' . implode(', ', $missing),
-        ]);
-    } else {
-        $db->prepare('UPDATE users SET phone = ?, first_name = ?, last_name = ?, middle_name = ? WHERE id = ?')
-           ->execute([$fields['phone'], $fields['first_name'], $fields['last_name'], $fields['middle_name'] ?: null, $user['id']]);
-
-        $db->prepare('UPDATE student_profiles SET course=?, course_id=?, year_level=?, current_academic_year=?, current_semester=?, section=?, major=?, major_id=?, birth_date=?, valid_id_path=?, valid_id_original_name=?, address=?, city=?, province=?, postal_code=?, emergency_contact=?, emergency_phone=?, enrollment_status=?, graduation_date=?, origin_campus_id=?, year_graduated=?, last_school_year=?, employment_status=?, employer_name=?, job_title=?, employer_address=?, employment_start_date=? WHERE user_id=?')
-           ->execute([
-               $selectedProgram['name'], (int) $selectedProgram['id'],
-               isEnrolledEnrollment($fields['enrollment_status']) ? ($fields['year_level'] ?: null) : null,
-               isEnrolledEnrollment($fields['enrollment_status']) ? ($fields['current_academic_year'] ?: null) : null,
-               isEnrolledEnrollment($fields['enrollment_status']) ? ($fields['current_semester'] ?: null) : null,
-               null,
-               $selectedMajor['name'] ?? null,
-               $selectedMajor ? (int) $selectedMajor['id'] : null,
-               $fields['birth_date'] ?: null,
-               $validIdPath ?: null,
-               $validIdOriginalName ?: null,
-               null, null, null, null,
-               $fields['emergency_contact'],
-               $fields['emergency_phone'], $fields['enrollment_status'] ?: 'enrolled',
-               isGraduatedEnrollment($fields['enrollment_status']) && $fields['year_graduated']
-                   ? $fields['year_graduated'] . '-06-01' : null,
-               (isEnrolledEnrollment($fields['enrollment_status'])
-                   || isGraduatedEnrollment($fields['enrollment_status'])
-                   || isInactiveEnrollment($fields['enrollment_status']))
-                   ? ((int) $fields['origin_campus_id'] ?: null) : null,
-               isGraduatedEnrollment($fields['enrollment_status']) ? ((int) $fields['year_graduated'] ?: null) : null,
-               isInactiveEnrollment($fields['enrollment_status']) ? ($fields['last_school_year'] ?: null) : null,
-               isGraduatedEnrollment($fields['enrollment_status']) ? ($fields['employment_status'] ?: null) : null,
-               isGraduatedEnrollment($fields['enrollment_status']) ? ($fields['employer_name'] ?: null) : null,
-               isGraduatedEnrollment($fields['enrollment_status']) ? ($fields['job_title'] ?: null) : null,
-               isGraduatedEnrollment($fields['enrollment_status']) ? ($fields['employer_address'] ?: null) : null,
-               isGraduatedEnrollment($fields['enrollment_status']) && $fields['employment_start_date'] ? $fields['employment_start_date'] : null,
-               $user['id'],
-           ]);
-
-        auditLog('profile_update', 'users', $user['id']);
-        setFlash('success', 'Profile updated successfully. You can now submit document requests.', [
-            'title' => 'Profile Complete',
-            'next_step' => 'Go to New Request to submit a credential request.',
-            'action_url' => APP_URL . '/student/new-request.php',
-            'action_label' => 'New Request',
-        ]);
+    $identityConflicts = studentAccountIdentityConflicts($studentId, $fields['email'], $fields['student_id']);
+    foreach ($identityConflicts as $conflict) {
+        $missing[] = $conflict;
     }
 
-    redirect(APP_URL . '/student/profile.php');
+    $passwordToSet = null;
+    if ($fields['reset_password_to_id']) {
+        if ($fields['student_id'] === '') {
+            $missing[] = 'Student ID (required to reset password)';
+        } else {
+            $passwordToSet = $fields['student_id'];
+        }
+    } elseif (trim($fields['new_password']) !== '') {
+        if (strlen($fields['new_password']) < 6) {
+            $missing[] = 'New password (at least 6 characters)';
+        } else {
+            $passwordToSet = $fields['new_password'];
+        }
+    }
+
+    if (!empty($missing)) {
+        $formErrors = $missing;
+        setFlash('error', 'Please complete all required student fields before saving.', [
+            'title' => 'Unable to Save Student',
+            'next_step' => 'Fix: ' . implode(', ', $missing),
+        ]);
+        $student = array_merge($student, [
+            'first_name' => $fields['first_name'],
+            'last_name' => $fields['last_name'],
+            'middle_name' => $fields['middle_name'],
+            'student_id' => $fields['student_id'],
+            'email' => $fields['email'],
+            'phone' => $fields['phone'],
+            'is_active' => $fields['is_active'],
+            'course_id' => $fields['course_id'],
+            'major_id' => $fields['major_id'],
+            'year_level' => $fields['year_level'],
+            'current_academic_year' => $fields['current_academic_year'],
+            'current_semester' => $fields['current_semester'],
+            'year_graduated' => $fields['year_graduated'] ?: null,
+            'origin_campus_id' => $fields['origin_campus_id'] ?: null,
+            'last_school_year' => $fields['last_school_year'],
+            'birth_date' => $fields['birth_date'],
+            'emergency_contact' => $fields['emergency_contact'],
+            'emergency_phone' => $fields['emergency_phone'],
+            'enrollment_status' => $fields['enrollment_status'],
+            'employment_status' => $fields['employment_status'],
+            'employer_name' => $fields['employer_name'],
+            'job_title' => $fields['job_title'],
+            'employer_address' => $fields['employer_address'],
+            'employment_start_date' => $fields['employment_start_date'],
+            'valid_id_path' => $validIdPath,
+            'valid_id_original_name' => $validIdOriginalName,
+        ]);
+        $currentEnrollment = $fields['enrollment_status'];
+        $programs = getAcademicProgramsForStudent((int) $fields['course_id']);
+        $campuses = getCampusesForStudent((int) $fields['origin_campus_id']);
+    } else {
+        try {
+            ensureStudentProfileRowExists($studentId);
+
+            $userSql = 'UPDATE users SET phone = ?, first_name = ?, last_name = ?, middle_name = ?, email = ?, student_id = ?, is_active = ?';
+            $userParams = [
+                $fields['phone'],
+                $fields['first_name'],
+                $fields['last_name'],
+                $fields['middle_name'] ?: null,
+                $fields['email'],
+                $fields['student_id'],
+                $fields['is_active'],
+            ];
+            if ($passwordToSet !== null) {
+                $userSql .= ', password = ?';
+                $userParams[] = password_hash($passwordToSet, PASSWORD_BCRYPT);
+            }
+            $userSql .= ' WHERE id = ?';
+            $userParams[] = $studentId;
+            $db->prepare($userSql)->execute($userParams);
+
+            $db->prepare('UPDATE student_profiles SET course=?, course_id=?, year_level=?, current_academic_year=?, current_semester=?, section=?, major=?, major_id=?, birth_date=?, valid_id_path=?, valid_id_original_name=?, address=?, city=?, province=?, postal_code=?, emergency_contact=?, emergency_phone=?, enrollment_status=?, graduation_date=?, origin_campus_id=?, year_graduated=?, last_school_year=?, employment_status=?, employer_name=?, job_title=?, employer_address=?, employment_start_date=? WHERE user_id=?')
+               ->execute([
+                   $selectedProgram['name'], (int) $selectedProgram['id'],
+                   isEnrolledEnrollment($fields['enrollment_status']) ? ($fields['year_level'] ?: null) : null,
+                   isEnrolledEnrollment($fields['enrollment_status']) ? ($fields['current_academic_year'] ?: null) : null,
+                   isEnrolledEnrollment($fields['enrollment_status']) ? ($fields['current_semester'] ?: null) : null,
+                   null,
+                   $selectedMajor['name'] ?? null,
+                   $selectedMajor ? (int) $selectedMajor['id'] : null,
+                   $fields['birth_date'] ?: null,
+                   $validIdPath ?: null,
+                   $validIdOriginalName ?: null,
+                   null, null, null, null,
+                   $fields['emergency_contact'],
+                   $fields['emergency_phone'], $fields['enrollment_status'] ?: 'enrolled',
+                   isGraduatedEnrollment($fields['enrollment_status']) && $fields['year_graduated']
+                       ? $fields['year_graduated'] . '-06-01' : null,
+                   (isEnrolledEnrollment($fields['enrollment_status'])
+                       || isGraduatedEnrollment($fields['enrollment_status'])
+                       || isInactiveEnrollment($fields['enrollment_status']))
+                       ? ((int) $fields['origin_campus_id'] ?: null) : null,
+                   isGraduatedEnrollment($fields['enrollment_status']) ? ((int) $fields['year_graduated'] ?: null) : null,
+                   isInactiveEnrollment($fields['enrollment_status']) ? ($fields['last_school_year'] ?: null) : null,
+                   isGraduatedEnrollment($fields['enrollment_status']) ? ($fields['employment_status'] ?: null) : null,
+                   isGraduatedEnrollment($fields['enrollment_status']) ? ($fields['employer_name'] ?: null) : null,
+                   isGraduatedEnrollment($fields['enrollment_status']) ? ($fields['job_title'] ?: null) : null,
+                   isGraduatedEnrollment($fields['enrollment_status']) ? ($fields['employer_address'] ?: null) : null,
+                   isGraduatedEnrollment($fields['enrollment_status']) && $fields['employment_start_date'] ? $fields['employment_start_date'] : null,
+                   $studentId,
+               ]);
+
+            auditLog('admin_student_update', 'users', $studentId, null, [
+                'student_id' => $fields['student_id'],
+                'password_changed' => $passwordToSet !== null,
+                'is_active' => $fields['is_active'],
+            ]);
+
+            $flashContext = [
+                'Student' => trim($fields['last_name'] . ', ' . $fields['first_name']),
+                'Student ID' => $fields['student_id'],
+            ];
+            if ($passwordToSet !== null) {
+                $flashContext['Password'] = $fields['reset_password_to_id']
+                    ? 'Reset to Student ID'
+                    : 'Updated';
+            }
+
+            setFlash('success', 'Student information updated successfully.', [
+                'title' => 'Student Updated',
+                'context' => $flashContext,
+                'action_url' => $returnUrl . (str_contains($returnUrl, '?') ? '&' : '?') . 'view=' . $studentId,
+                'action_label' => 'View Student',
+            ]);
+            redirect($returnUrl);
+        } catch (PDOException $e) {
+            $message = str_contains($e->getMessage(), 'Duplicate')
+                ? 'Email or Student ID is already used by another account.'
+                : 'Unable to save student information.';
+            setFlash('error', $message, ['title' => 'Save Failed']);
+            redirect(APP_URL . '/admin/student-edit.php?id=' . $studentId . '&return=' . urlencode($returnUrl));
+        }
+    }
 }
 
-$user = currentUser();
-$profileCompletion = getStudentProfileCompletion($user['id']);
-$pageTitle = 'My Profile';
-$activeNav = 'profile';
+$displayName = trim(($student['last_name'] ?? '') . ', ' . ($student['first_name'] ?? ''), ' ,');
+if ($displayName === '') {
+    $displayName = $student['student_id'] ?: 'Student';
+}
+$profileCompletion = getStudentProfileCompletion($studentId);
+$pageTitle = 'Edit Student';
+$activeNav = 'students';
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
 <div class="card">
     <div class="card-header">
-        <h2>Profile Information</h2>
+        <div>
+            <a href="<?= e($returnUrl) ?>" class="btn btn-outline btn-sm"><i class="fas fa-arrow-left"></i> Back to Student List</a>
+            <h2 style="margin-top:.75rem">Edit Student Information</h2>
+            <p class="text-muted" style="margin:.35rem 0 0"><?= e($displayName) ?> · <?= e($student['student_id'] ?: 'No student ID') ?></p>
+        </div>
+        <a href="<?= e($returnUrl . (str_contains($returnUrl, '?') ? '&' : '?') . 'view=' . $studentId) ?>" class="btn btn-outline btn-sm">
+            <i class="fas fa-eye"></i> View
+        </a>
     </div>
     <div class="card-body">
         <?= renderStudentRegistrationStatus($profileCompletion, 'inline') ?>
 
+        <?php if ($formErrors !== []): ?>
+            <div class="alert alert-error" style="margin-bottom:1rem">
+                <strong>Fix the following:</strong> <?= e(implode(', ', $formErrors)) ?>
+            </div>
+        <?php endif; ?>
+
         <form method="POST" class="form-grid" enctype="multipart/form-data">
             <?= csrfField() ?>
+            <input type="hidden" name="user_id" value="<?= (int) $studentId ?>">
+            <input type="hidden" name="return_url" value="<?= e($returnUrl) ?>">
+
             <div class="form-section">
-                <h3>Personal Information</h3>
+                <h3>Account</h3>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Student ID *</label>
-                        <input type="text" value="<?= e($user['student_id']) ?>" disabled>
+                        <label for="student_id">Student ID *</label>
+                        <input type="text" id="student_id" name="student_id" value="<?= e($student['student_id'] ?? '') ?>" required maxlength="50">
                     </div>
                     <div class="form-group">
-                        <label>Email *</label>
-                        <input type="email" value="<?= e($user['email']) ?>" disabled>
+                        <label for="email">Email *</label>
+                        <input type="email" id="email" name="email" value="<?= e($student['email'] ?? '') ?>" required>
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" name="is_active" value="1" <?= !empty($student['is_active']) ? 'checked' : '' ?>>
+                            Active account (can sign in)
+                        </label>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="new_password">New Password</label>
+                        <input type="text" id="new_password" name="new_password" minlength="6" autocomplete="new-password" placeholder="Leave blank to keep current password">
+                        <small class="text-muted">Optional. Minimum 6 characters.</small>
+                    </div>
+                    <div class="form-group">
+                        <label>&nbsp;</label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" name="reset_password_to_id" value="1">
+                            Reset password to Student ID
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3>Personal Information</h3>
+                <div class="form-row">
+                    <div class="form-group">
                         <label for="first_name">First Name *</label>
-                        <input type="text" id="first_name" name="first_name" class="input-uppercase" autocapitalize="characters" value="<?= e(normalizePersonName($user['first_name'] ?? '')) ?>" required>
+                        <input type="text" id="first_name" name="first_name" class="input-uppercase" autocapitalize="characters" value="<?= e(normalizePersonName($student['first_name'] ?? '')) ?>" required>
                     </div>
                     <div class="form-group">
                         <label for="middle_name">Middle Name</label>
-                        <input type="text" id="middle_name" name="middle_name" class="input-uppercase" autocapitalize="characters" value="<?= e(normalizePersonName($user['middle_name'] ?? '')) ?>">
+                        <input type="text" id="middle_name" name="middle_name" class="input-uppercase" autocapitalize="characters" value="<?= e(normalizePersonName($student['middle_name'] ?? '')) ?>">
                     </div>
                     <div class="form-group">
                         <label for="last_name">Last Name *</label>
-                        <input type="text" id="last_name" name="last_name" class="input-uppercase" autocapitalize="characters" value="<?= e(normalizePersonName($user['last_name'] ?? '')) ?>" required>
+                        <input type="text" id="last_name" name="last_name" class="input-uppercase" autocapitalize="characters" value="<?= e(normalizePersonName($student['last_name'] ?? '')) ?>" required>
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="phone">Phone *</label>
-                        <input type="tel" id="phone" name="phone" value="<?= e($user['phone'] ?? '') ?>" required>
+                        <input type="tel" id="phone" name="phone" value="<?= e($student['phone'] ?? '') ?>" required>
                     </div>
                     <div class="form-group">
                         <label for="birth_date">Birth Date *</label>
-                        <input type="date" id="birth_date" name="birth_date" value="<?= e($profileData['birth_date'] ?? '') ?>" required>
+                        <input type="date" id="birth_date" name="birth_date" value="<?= e($student['birth_date'] ?? '') ?>" required>
                     </div>
                 </div>
                 <div class="form-group">
-                    <label for="valid_id">Identification ID / Valid ID <span id="valid_id_required_mark"<?= studentValidIdRequired(array_merge($profileData, ['enrollment_status' => $currentEnrollment])) && empty($profileData['valid_id_path']) ? '' : ' hidden' ?>>*</span></label>
-                    <input type="file" id="valid_id" name="valid_id" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" <?= studentValidIdRequired(array_merge($profileData, ['enrollment_status' => $currentEnrollment])) && empty($profileData['valid_id_path']) ? 'required' : '' ?>>
-                    <small class="text-muted" id="valid_id_help">
-                        Upload a clear copy of your school ID or government-issued ID (PDF, JPG, PNG, or DOC up to 5 MB).
-                        Currently enrolled students on the active school year and semester may leave this blank.
+                    <label for="valid_id">Identification ID / Valid ID <span id="valid_id_required_mark"<?= studentValidIdRequired(array_merge($student, ['enrollment_status' => $currentEnrollment])) && empty($student['valid_id_path']) ? '' : ' hidden' ?>>*</span></label>
+                    <input type="file" id="valid_id" name="valid_id" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" <?= studentValidIdRequired(array_merge($student, ['enrollment_status' => $currentEnrollment])) && empty($student['valid_id_path']) ? 'required' : '' ?>>
+                    <small class="text-muted">
+                        PDF, JPG, PNG, or DOC up to 5 MB.
+                        Optional for enrolled students on the active school year and semester.
                     </small>
-                    <?php if (!empty($profileData['valid_id_path'])): ?>
+                    <?php if (!empty($student['valid_id_path'])): ?>
                         <div class="profile-id-preview">
                             <i class="fas fa-id-card"></i>
-                            <a href="<?= e(UPLOAD_URL . '/' . ltrim($profileData['valid_id_path'], '/')) ?>" target="_blank">
-                                <?= e($profileData['valid_id_original_name'] ?? 'View uploaded ID') ?>
+                            <a href="<?= e(UPLOAD_URL . '/' . ltrim($student['valid_id_path'], '/')) ?>" target="_blank">
+                                <?= e($student['valid_id_original_name'] ?? 'View uploaded ID') ?>
                             </a>
                             <small class="text-muted">Upload a new file to replace the current ID.</small>
                         </div>
@@ -249,14 +402,14 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
 
                 <div id="academicEnrolled" class="academic-status-panel">
-                    <p class="text-muted academic-panel-note">Provide your current enrollment details.</p>
+                    <p class="text-muted academic-panel-note">Current enrollment details.</p>
                     <div class="form-row">
                         <div class="form-group">
                             <label for="course_id_enrolled">Current Course/Program *</label>
                             <select id="course_id_enrolled" data-course-select="enrolled">
                                 <option value="">— Select Course / Program —</option>
                                 <?php foreach ($programs as $program): ?>
-                                    <option value="<?= (int) $program['id'] ?>" <?= (int) ($profileData['course_id'] ?? 0) === (int) $program['id'] ? 'selected' : '' ?>>
+                                    <option value="<?= (int) $program['id'] ?>" <?= (int) ($student['course_id'] ?? 0) === (int) $program['id'] ? 'selected' : '' ?>>
                                         <?= e($program['name']) ?> (<?= e($program['code']) ?>)
                                     </option>
                                 <?php endforeach; ?>
@@ -267,7 +420,7 @@ require_once __DIR__ . '/../includes/header.php';
                             <select id="year_level" name="year_level">
                                 <option value="">— Select —</option>
                                 <?php foreach (['1st Year','2nd Year','3rd Year','4th Year'] as $yl): ?>
-                                    <option value="<?= $yl ?>" <?= ($profileData['year_level'] ?? '') === $yl ? 'selected' : '' ?>><?= $yl ?></option>
+                                    <option value="<?= $yl ?>" <?= ($student['year_level'] ?? '') === $yl ? 'selected' : '' ?>><?= $yl ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -276,7 +429,7 @@ require_once __DIR__ . '/../includes/header.php';
                             <select id="origin_campus_id_enrolled" data-campus-select="enrolled">
                                 <option value="">— Select Campus —</option>
                                 <?php foreach ($campuses as $campus): ?>
-                                    <option value="<?= (int) $campus['id'] ?>" <?= (int) ($profileData['origin_campus_id'] ?? 0) === (int) $campus['id'] ? 'selected' : '' ?>>
+                                    <option value="<?= (int) $campus['id'] ?>" <?= (int) ($student['origin_campus_id'] ?? 0) === (int) $campus['id'] ? 'selected' : '' ?>>
                                         <?= e($campus['name']) ?> (<?= e($campus['code']) ?>)
                                     </option>
                                 <?php endforeach; ?>
@@ -289,7 +442,7 @@ require_once __DIR__ . '/../includes/header.php';
                             <select id="current_academic_year" name="current_academic_year">
                                 <option value="">— Select Academic Year —</option>
                                 <?php foreach (currentAcademicYearOptions() as $value => $label): ?>
-                                    <option value="<?= e($value) ?>" <?= ($profileData['current_academic_year'] ?? '') === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                                    <option value="<?= e($value) ?>" <?= ($student['current_academic_year'] ?? '') === $value ? 'selected' : '' ?>><?= e($label) ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -298,7 +451,7 @@ require_once __DIR__ . '/../includes/header.php';
                             <select id="current_semester" name="current_semester">
                                 <option value="">— Select Semester —</option>
                                 <?php foreach (semesterOptions() as $value => $label): ?>
-                                    <option value="<?= e($value) ?>" <?= ($profileData['current_semester'] ?? '') === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                                    <option value="<?= e($value) ?>" <?= ($student['current_semester'] ?? '') === $value ? 'selected' : '' ?>><?= e($label) ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -306,14 +459,14 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
 
                 <div id="academicGraduated" class="academic-status-panel">
-                    <p class="text-muted academic-panel-note">Provide your graduation details.</p>
+                    <p class="text-muted academic-panel-note">Graduation details.</p>
                     <div class="form-row">
                         <div class="form-group">
                             <label for="course_id_graduated">Course/Program *</label>
                             <select id="course_id_graduated" data-course-select="graduated">
                                 <option value="">— Select Course / Program —</option>
                                 <?php foreach ($programs as $program): ?>
-                                    <option value="<?= (int) $program['id'] ?>" <?= (int) ($profileData['course_id'] ?? 0) === (int) $program['id'] ? 'selected' : '' ?>>
+                                    <option value="<?= (int) $program['id'] ?>" <?= (int) ($student['course_id'] ?? 0) === (int) $program['id'] ? 'selected' : '' ?>>
                                         <?= e($program['name']) ?> (<?= e($program['code']) ?>)
                                     </option>
                                 <?php endforeach; ?>
@@ -324,9 +477,9 @@ require_once __DIR__ . '/../includes/header.php';
                             <select id="year_graduated" name="year_graduated">
                                 <option value="">— Select Year —</option>
                                 <?php
-                                $selectedYear = (int) ($profileData['year_graduated'] ?? 0);
-                                if (!$selectedYear && !empty($profileData['graduation_date'])) {
-                                    $selectedYear = (int) date('Y', strtotime($profileData['graduation_date']));
+                                $selectedYear = (int) ($student['year_graduated'] ?? 0);
+                                if (!$selectedYear && !empty($student['graduation_date'])) {
+                                    $selectedYear = (int) date('Y', strtotime($student['graduation_date']));
                                 }
                                 foreach (yearGraduatedOptions() as $value => $label):
                                 ?>
@@ -339,7 +492,7 @@ require_once __DIR__ . '/../includes/header.php';
                             <select id="origin_campus_id_graduated" data-campus-select="graduated">
                                 <option value="">— Select Campus —</option>
                                 <?php foreach ($campuses as $campus): ?>
-                                    <option value="<?= (int) $campus['id'] ?>" <?= (int) ($profileData['origin_campus_id'] ?? 0) === (int) $campus['id'] ? 'selected' : '' ?>>
+                                    <option value="<?= (int) $campus['id'] ?>" <?= (int) ($student['origin_campus_id'] ?? 0) === (int) $campus['id'] ? 'selected' : '' ?>>
                                         <?= e($campus['name']) ?> (<?= e($campus['code']) ?>)
                                     </option>
                                 <?php endforeach; ?>
@@ -349,14 +502,14 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
 
                 <div id="academicInactive" class="academic-status-panel">
-                    <p class="text-muted academic-panel-note">Provide details from your last active enrollment.</p>
+                    <p class="text-muted academic-panel-note">Last active enrollment details.</p>
                     <div class="form-row">
                         <div class="form-group">
                             <label for="course_id_inactive">Last Course/Program Attended *</label>
                             <select id="course_id_inactive" data-course-select="inactive">
                                 <option value="">— Select Course / Program —</option>
                                 <?php foreach ($programs as $program): ?>
-                                    <option value="<?= (int) $program['id'] ?>" <?= (int) ($profileData['course_id'] ?? 0) === (int) $program['id'] ? 'selected' : '' ?>>
+                                    <option value="<?= (int) $program['id'] ?>" <?= (int) ($student['course_id'] ?? 0) === (int) $program['id'] ? 'selected' : '' ?>>
                                         <?= e($program['name']) ?> (<?= e($program['code']) ?>)
                                     </option>
                                 <?php endforeach; ?>
@@ -367,7 +520,7 @@ require_once __DIR__ . '/../includes/header.php';
                             <select id="last_school_year" name="last_school_year">
                                 <option value="">— Select School Year —</option>
                                 <?php foreach (schoolYearOptions() as $value => $label): ?>
-                                    <option value="<?= e($value) ?>" <?= ($profileData['last_school_year'] ?? '') === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                                    <option value="<?= e($value) ?>" <?= ($student['last_school_year'] ?? '') === $value ? 'selected' : '' ?>><?= e($label) ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -376,7 +529,7 @@ require_once __DIR__ . '/../includes/header.php';
                             <select id="origin_campus_id_inactive" data-campus-select="inactive">
                                 <option value="">— Select Campus —</option>
                                 <?php foreach ($campuses as $campus): ?>
-                                    <option value="<?= (int) $campus['id'] ?>" <?= (int) ($profileData['origin_campus_id'] ?? 0) === (int) $campus['id'] ? 'selected' : '' ?>>
+                                    <option value="<?= (int) $campus['id'] ?>" <?= (int) ($student['origin_campus_id'] ?? 0) === (int) $campus['id'] ? 'selected' : '' ?>>
                                         <?= e($campus['name']) ?> (<?= e($campus['code']) ?>)
                                     </option>
                                 <?php endforeach; ?>
@@ -393,8 +546,8 @@ require_once __DIR__ . '/../includes/header.php';
                     <small class="text-muted">Required for programs that offer majors (e.g. BSED).</small>
                 </div>
 
-                <input type="hidden" name="course_id" id="course_id" value="<?= (int) ($profileData['course_id'] ?? 0) ?>">
-                <input type="hidden" name="origin_campus_id" id="origin_campus_id" value="<?= (int) ($profileData['origin_campus_id'] ?? 0) ?>">
+                <input type="hidden" name="course_id" id="course_id" value="<?= (int) ($student['course_id'] ?? 0) ?>">
+                <input type="hidden" name="origin_campus_id" id="origin_campus_id" value="<?= (int) ($student['origin_campus_id'] ?? 0) ?>">
             </div>
 
             <div class="form-section employment-section" id="employmentSection">
@@ -405,7 +558,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <select id="employment_status" name="employment_status" onchange="toggleEmploymentDetails()">
                         <option value="">— Select —</option>
                         <?php foreach (employmentStatusOptions() as $value => $label): ?>
-                            <option value="<?= e($value) ?>" <?= ($profileData['employment_status'] ?? '') === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                            <option value="<?= e($value) ?>" <?= ($student['employment_status'] ?? '') === $value ? 'selected' : '' ?>><?= e($label) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -413,21 +566,21 @@ require_once __DIR__ . '/../includes/header.php';
                     <div class="form-row">
                         <div class="form-group">
                             <label for="employer_name">Employer / Company Name *</label>
-                            <input type="text" id="employer_name" name="employer_name" value="<?= e($profileData['employer_name'] ?? '') ?>">
+                            <input type="text" id="employer_name" name="employer_name" value="<?= e($student['employer_name'] ?? '') ?>">
                         </div>
                         <div class="form-group">
                             <label for="job_title">Job Title / Position *</label>
-                            <input type="text" id="job_title" name="job_title" value="<?= e($profileData['job_title'] ?? '') ?>">
+                            <input type="text" id="job_title" name="job_title" value="<?= e($student['job_title'] ?? '') ?>">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label for="employment_start_date">Employment Start Date *</label>
-                            <input type="date" id="employment_start_date" name="employment_start_date" value="<?= e($profileData['employment_start_date'] ?? '') ?>">
+                            <input type="date" id="employment_start_date" name="employment_start_date" value="<?= e($student['employment_start_date'] ?? '') ?>">
                         </div>
                         <div class="form-group">
                             <label for="employer_address">Employer Address</label>
-                            <input type="text" id="employer_address" name="employer_address" value="<?= e($profileData['employer_address'] ?? '') ?>" placeholder="Office location (optional)">
+                            <input type="text" id="employer_address" name="employer_address" value="<?= e($student['employer_address'] ?? '') ?>" placeholder="Office location (optional)">
                         </div>
                     </div>
                 </div>
@@ -438,16 +591,19 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="form-row">
                     <div class="form-group">
                         <label for="emergency_contact">Contact Name *</label>
-                        <input type="text" id="emergency_contact" name="emergency_contact" value="<?= e($profileData['emergency_contact'] ?? '') ?>" required>
+                        <input type="text" id="emergency_contact" name="emergency_contact" value="<?= e($student['emergency_contact'] ?? '') ?>" required>
                     </div>
                     <div class="form-group">
                         <label for="emergency_phone">Contact Phone *</label>
-                        <input type="tel" id="emergency_phone" name="emergency_phone" value="<?= e($profileData['emergency_phone'] ?? '') ?>" required>
+                        <input type="tel" id="emergency_phone" name="emergency_phone" value="<?= e($student['emergency_phone'] ?? '') ?>" required>
                     </div>
                 </div>
             </div>
 
-            <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Changes</button>
+            <div class="form-row" style="gap:.75rem; align-items:center">
+                <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Student Information</button>
+                <a href="<?= e($returnUrl) ?>" class="btn btn-outline">Cancel</a>
+            </div>
         </form>
     </div>
 </div>
@@ -465,10 +621,10 @@ const majorsByProgram = <?= json_encode(array_map(
     },
     $majorsByProgram
 ), JSON_UNESCAPED_UNICODE) ?>;
-const initialMajorId = <?= (int) ($profileData['major_id'] ?? 0) ?>;
+const initialMajorId = <?= (int) ($student['major_id'] ?? 0) ?>;
 const activeSchoolYear = <?= json_encode(getActiveSchoolYear(), JSON_UNESCAPED_UNICODE) ?>;
 const activeSemester = <?= json_encode(getActiveSemester(), JSON_UNESCAPED_UNICODE) ?>;
-const hasExistingValidId = <?= !empty($profileData['valid_id_path']) ? 'true' : 'false' ?>;
+const hasExistingValidId = <?= !empty($student['valid_id_path']) ? 'true' : 'false' ?>;
 
 function syncValidIdRequirement() {
     const input = document.getElementById('valid_id');
@@ -611,6 +767,18 @@ document.querySelector('form.form-grid')?.addEventListener('submit', function ()
     syncCourseIdField();
     syncOriginCampusField();
     syncValidIdRequirement();
+});
+
+const resetToId = document.querySelector('input[name="reset_password_to_id"]');
+const newPassword = document.getElementById('new_password');
+resetToId?.addEventListener('change', function () {
+    if (!newPassword) return;
+    if (resetToId.checked) {
+        newPassword.value = '';
+        newPassword.disabled = true;
+    } else {
+        newPassword.disabled = false;
+    }
 });
 
 toggleAcademicSections();

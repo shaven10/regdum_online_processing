@@ -512,6 +512,56 @@ function getAvailableDocumentTypesForEnrollment(string $enrollmentStatus): array
     return $stmt->fetchAll();
 }
 
+function getFrequentRequestedDocumentTypesForEnrollment(string $enrollmentStatus, int $limit = 6): array {
+    ensureDocumentEnrollmentRulesSchema();
+    require_once __DIR__ . '/request-items.php';
+    ensureRequestItemsSchema();
+
+    $limit = max(1, min(12, $limit));
+    $available = getAvailableDocumentTypesForEnrollment($enrollmentStatus);
+    if ($available === []) {
+        return [];
+    }
+
+    $availableIds = array_map(static fn($doc) => (int) $doc['id'], $available);
+    $placeholders = implode(',', array_fill(0, count($availableIds), '?'));
+
+    $db = getDB();
+    $sql = "SELECT dt.id, dt.name, dt.code, COUNT(ri.id) AS request_count
+        FROM document_types dt
+        INNER JOIN request_items ri ON ri.document_type_id = dt.id
+        INNER JOIN requests r ON r.id = ri.request_id
+        WHERE dt.id IN ($placeholders)
+          AND dt.is_active = 1
+        GROUP BY dt.id, dt.name, dt.code
+        ORDER BY request_count DESC, dt.name ASC
+        LIMIT {$limit}";
+    $stmt = $db->prepare($sql);
+    $stmt->execute($availableIds);
+    $ranked = $stmt->fetchAll();
+
+    if ($ranked !== []) {
+        return array_map(static function (array $row): array {
+            return [
+                'id' => (int) $row['id'],
+                'name' => (string) $row['name'],
+                'code' => (string) ($row['code'] ?? ''),
+                'request_count' => (int) $row['request_count'],
+            ];
+        }, $ranked);
+    }
+
+    // Fallback when there is little/no request history yet.
+    return array_map(static function (array $doc): array {
+        return [
+            'id' => (int) $doc['id'],
+            'name' => (string) $doc['name'],
+            'code' => (string) ($doc['code'] ?? ''),
+            'request_count' => 0,
+        ];
+    }, array_slice($available, 0, $limit));
+}
+
 function getPubliclyAvailableDocumentTypes(): array {
     ensureDocumentEnrollmentRulesSchema();
     $db = getDB();

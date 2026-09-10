@@ -279,6 +279,9 @@ $to = min($pag['offset'] + $pag['per_page'], $totalStudents);
 $viewId = (int) ($_GET['view'] ?? 0);
 $viewStudent = $viewId > 0 ? loadStudentRecordForView($viewId) : null;
 $viewCloseUrl = studentRecordsPageUrl($listQuery);
+$viewEditUrl = $viewStudent
+    ? (APP_URL . '/admin/student-edit.php?id=' . (int) $viewStudent['id'] . '&return=' . urlencode($listUrl))
+    : null;
 
 $pageTitle = 'Student Records';
 $activeNav = 'students';
@@ -471,6 +474,7 @@ require_once __DIR__ . '/../includes/header.php';
                                 <td class="students-col-requests" data-label="Requests"><?= $requestCount ?></td>
                                 <td data-label="Actions" class="action-cell">
                                     <div class="action-cell-buttons">
+                                        <a href="<?= e(APP_URL . '/admin/student-edit.php?id=' . (int) $s['id'] . '&return=' . urlencode($listUrl)) ?>" <?= adminSettingsIconBtnAttrs('edit') ?>><?= adminSettingsIconBtnContent('edit') ?></a>
                                         <a href="<?= e(APP_URL . '/registrar/grades-evaluation.php?student_user_id=' . (int) $s['id']) ?>" <?= adminSettingsIconBtnAttrs('evaluate') ?>><?= adminSettingsIconBtnContent('evaluate') ?></a>
                                         <?= renderClearStudentGradesForm((int) $s['id'], studentRecordName($s), 'icon') ?>
                                         <form method="POST" class="student-delete-form"
@@ -495,7 +499,7 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
 </div>
 
-<?php renderStudentRecordViewModal($viewStudent, $viewCloseUrl); ?>
+<?php renderStudentRecordViewModal($viewStudent, $viewCloseUrl, $viewEditUrl); ?>
 
 <script>
 (function () {

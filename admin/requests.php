@@ -1,10 +1,15 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/compliance.php';
+require_once __DIR__ . '/../includes/request-items.php';
+require_once __DIR__ . '/../includes/assignment-offices.php';
 requireRole('admin');
 
 ensureRequestStatuses();
+ensureRequestItemsSchema();
+ensureDocumentAssignmentOfficeSchema();
 
+$currentAdmin = currentUser();
 $page = max(1, (int)($_GET['page'] ?? 1));
 $status = $_GET['status'] ?? '';
 $search = trim($_GET['search'] ?? '');
@@ -15,6 +20,15 @@ $listQuery = array_filter([
     'page' => $page > 1 ? (string) $page : '',
 ]);
 $listUrl = APP_URL . '/admin/requests.php' . ($listQuery ? '?' . http_build_query($listQuery) : '');
+
+$releaseTimeOptions = [
+    '09:00:00' => '9:00 AM',
+    '10:00:00' => '10:00 AM',
+    '11:00:00' => '11:00 AM',
+    '13:00:00' => '1:00 PM',
+    '14:00:00' => '2:00 PM',
+    '15:00:00' => '3:00 PM',
+];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $action = $_POST['action'] ?? '';
@@ -28,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     if ($action === 'batch_update_status') {
         $newStatus = trim($_POST['status'] ?? '');
         $remarks = trim($_POST['remarks'] ?? '');
-        $result = adminBatchUpdateRequestStatus($requestIds, $newStatus, $remarks ?: null);
+        $result = batchUpdateRequestStatuses($requestIds, $newStatus, $remarks ?: null);
 
         if (($result['updated'] ?? 0) > 0) {
             setFlash('success', $result['updated'] . ' request(s) updated to ' . ucwords(str_replace('_', ' ', $newStatus)) . '.', [
@@ -43,6 +57,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         } else {
             setFlash('error', implode(' ', $result['failed'] ?? ['Unable to update selected requests.']), [
                 'title' => 'Batch Update Failed',
+            ]);
+        }
+    } elseif ($action === 'batch_assign') {
+        $result = batchAssignRequestsProcessing(
+            $requestIds,
+            (int) ($_POST['assigned_to'] ?? 0),
+            (string) ($_POST['release_date'] ?? ''),
+            (string) ($_POST['release_time'] ?? ''),
+            (int) ($currentAdmin['id'] ?? 0)
+        );
+
+        if (($result['assigned_requests'] ?? 0) > 0) {
+            setFlash('success', $result['assigned_requests'] . ' request(s) assigned (' . (int) $result['assigned_items'] . ' document item' . ((int) $result['assigned_items'] === 1 ? '' : 's') . ').', [
+                'title' => 'Batch Assignment Complete',
+                'context' => array_filter([
+                    'Assigned requests' => (string) $result['assigned_requests'],
+                    'Assigned items' => (string) $result['assigned_items'],
+                    'Skipped' => ((int) ($result['skipped'] ?? 0) > 0) ? (string) $result['skipped'] : null,
+                ]),
+                'details' => array_slice($result['failed'] ?? [], 0, 8),
+            ]);
+        } else {
+            setFlash('error', implode(' ', $result['failed'] ?? ['Unable to assign selected requests. Only payment-verified requests with pending documents can be assigned.']), [
+                'title' => 'Batch Assignment Failed',
             ]);
         }
     } elseif ($action === 'batch_delete') {
@@ -83,6 +121,7 @@ $stmt = $db->prepare("SELECT r.*, dt.name as document_name, u.first_name, u.last
 $stmt->execute($params);
 $requests = $stmt->fetchAll();
 $statusOptions = requestStatusOptions();
+$processors = getAssignableProcessors();
 
 $pageTitle = 'Manage Requests';
 $activeNav = 'requests';
@@ -109,7 +148,10 @@ $activeNav = 'requests';
             <div class="batch-action-bar" id="adminBatchActionBar" hidden>
                 <span class="batch-action-count"><strong id="adminBatchSelectedCount">0</strong> selected</span>
                 <div class="batch-action-buttons">
-                    <button type="button" class="btn btn-primary btn-sm" id="openBatchStatusModal">
+                    <button type="button" class="btn btn-primary btn-sm" id="openBatchAssignModal">
+                        <i class="fas fa-user-tag"></i> Assign Staff
+                    </button>
+                    <button type="button" class="btn btn-outline btn-sm" id="openBatchStatusModal">
                         <i class="fas fa-sync-alt"></i> Change Status
                     </button>
                     <button type="button" class="btn btn-danger btn-sm" id="adminBatchDeleteBtn">
@@ -191,6 +233,44 @@ renderAdminFormModalOpen('Requests', 'Batch Change Status', 'adminBatchStatusMod
 </form>
 <?php renderAdminFormModalClose(); ?>
 
+<?php
+renderAdminFormModalOpen('Requests', 'Batch Assign Staff', 'adminBatchAssignModal');
+?>
+<form method="POST" id="adminBatchAssignForm" class="form-grid">
+    <?= csrfField() ?>
+    <input type="hidden" name="action" value="batch_assign">
+    <div id="adminBatchAssignHiddenIds"></div>
+    <p class="text-muted">
+        Assigns all pending document items on the selected payment-verified requests to one staff member.
+    </p>
+    <div class="form-group">
+        <label for="batch_assigned_to">Assign to *</label>
+        <?php if (empty($processors)): ?>
+            <select id="batch_assigned_to" name="assigned_to" required disabled>
+                <option value="">No active assignees available</option>
+            </select>
+        <?php else: ?>
+            <?= renderAssigneeSelectHtml('assigned_to', $processors, null, true, 'batch_assigned_to') ?>
+        <?php endif; ?>
+    </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label for="batch_release_date">Release Date *</label>
+            <input type="date" id="batch_release_date" name="release_date" value="<?= e(date('Y-m-d')) ?>" min="<?= date('Y-m-d') ?>" required>
+        </div>
+        <div class="form-group">
+            <label for="batch_release_time">Release Time *</label>
+            <select id="batch_release_time" name="release_time" required>
+                <?php foreach ($releaseTimeOptions as $value => $label): ?>
+                    <option value="<?= e($value) ?>" <?= $value === '09:00:00' ? 'selected' : '' ?>><?= e($label) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+    </div>
+    <?php renderAdminFormModalFooter('Assign Selected', 'fa-user-tag'); ?>
+</form>
+<?php renderAdminFormModalClose(); ?>
+
 <script>
 (function () {
     const batchForm = document.getElementById('adminRequestsBatchForm');
@@ -200,9 +280,13 @@ renderAdminFormModalOpen('Requests', 'Batch Change Status', 'adminBatchStatusMod
     const rowChecks = () => Array.from(document.querySelectorAll('.admin-request-select'));
     const statusModal = document.getElementById('adminBatchStatusModal');
     const statusForm = document.getElementById('adminBatchStatusForm');
-    const hiddenIds = document.getElementById('adminBatchStatusHiddenIds');
+    const statusHiddenIds = document.getElementById('adminBatchStatusHiddenIds');
+    const assignModal = document.getElementById('adminBatchAssignModal');
+    const assignForm = document.getElementById('adminBatchAssignForm');
+    const assignHiddenIds = document.getElementById('adminBatchAssignHiddenIds');
     const deleteBtn = document.getElementById('adminBatchDeleteBtn');
     const openStatusBtn = document.getElementById('openBatchStatusModal');
+    const openAssignBtn = document.getElementById('openBatchAssignModal');
 
     function selectedChecks() {
         return rowChecks().filter(function (cb) { return cb.checked; });
@@ -220,6 +304,32 @@ renderAdminFormModalOpen('Requests', 'Batch Change Status', 'adminBatchStatusMod
         }
     }
 
+    function fillHiddenIds(container, selected) {
+        if (!container) return;
+        container.innerHTML = '';
+        selected.forEach(function (cb) {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'request_ids[]';
+            input.value = cb.value;
+            container.appendChild(input);
+        });
+    }
+
+    function openModal(modal) {
+        if (!modal) return;
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeModal(modal) {
+        if (!modal) return;
+        modal.classList.remove('is-open');
+        modal.setAttribute('aria-hidden', 'true');
+        document.body.style.overflow = '';
+    }
+
     if (selectAll) {
         selectAll.addEventListener('change', function () {
             rowChecks().forEach(function (cb) { cb.checked = selectAll.checked; });
@@ -231,42 +341,42 @@ renderAdminFormModalOpen('Requests', 'Batch Change Status', 'adminBatchStatusMod
         cb.addEventListener('change', syncBatchBar);
     });
 
-    if (openStatusBtn && statusModal && statusForm && hiddenIds) {
-        function closeBatchStatusModal() {
-            statusModal.classList.remove('is-open');
-            statusModal.setAttribute('aria-hidden', 'true');
-            document.body.style.overflow = '';
-        }
-
-        statusModal.querySelectorAll('[data-close-admin-form]').forEach(function (el) {
-            el.addEventListener('click', closeBatchStatusModal);
+    [statusModal, assignModal].forEach(function (modal) {
+        if (!modal) return;
+        modal.querySelectorAll('[data-close-admin-form]').forEach(function (el) {
+            el.addEventListener('click', function () { closeModal(modal); });
         });
+    });
 
-        document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape' && statusModal.classList.contains('is-open')) {
-                closeBatchStatusModal();
-            }
-        });
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape') return;
+        if (statusModal && statusModal.classList.contains('is-open')) closeModal(statusModal);
+        if (assignModal && assignModal.classList.contains('is-open')) closeModal(assignModal);
+    });
 
+    if (openStatusBtn && statusModal && statusForm && statusHiddenIds) {
         openStatusBtn.addEventListener('click', function () {
             const selected = selectedChecks();
             if (!selected.length) {
                 alert('Select at least one request.');
                 return;
             }
-            hiddenIds.innerHTML = '';
-            selected.forEach(function (cb) {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'request_ids[]';
-                input.value = cb.value;
-                hiddenIds.appendChild(input);
-            });
-            statusModal.classList.add('is-open');
-            statusModal.setAttribute('aria-hidden', 'false');
-            document.body.style.overflow = 'hidden';
-            const statusField = document.getElementById('batch_status');
-            if (statusField) statusField.focus();
+            fillHiddenIds(statusHiddenIds, selected);
+            openModal(statusModal);
+            document.getElementById('batch_status')?.focus();
+        });
+    }
+
+    if (openAssignBtn && assignModal && assignForm && assignHiddenIds) {
+        openAssignBtn.addEventListener('click', function () {
+            const selected = selectedChecks();
+            if (!selected.length) {
+                alert('Select at least one request.');
+                return;
+            }
+            fillHiddenIds(assignHiddenIds, selected);
+            openModal(assignModal);
+            document.getElementById('batch_assigned_to')?.focus();
         });
     }
 

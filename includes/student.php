@@ -195,6 +195,7 @@ function ensureStudentImportProfileFields(): void {
     $db = getDB();
     $columns = [
         'major'                  => 'VARCHAR(150) NULL AFTER section',
+        'major_id'               => 'SMALLINT UNSIGNED NULL AFTER major',
         'sex'                    => 'VARCHAR(20) NULL AFTER postal_code',
         'civil_status'           => 'VARCHAR(50) NULL AFTER sex',
         'birth_place'            => 'VARCHAR(150) NULL AFTER civil_status',
@@ -402,7 +403,34 @@ function getStudentProfileFieldRequirements(array $profile): array {
         );
     }
 
+    if (!studentValidIdRequired($profile)) {
+        unset($requirements['valid_id_path']);
+    }
+
     return $requirements;
+}
+
+/**
+ * Enrolled students on the system active school year + semester may skip Valid ID.
+ */
+function isStudentOnActiveAcademicTerm(array $profile): bool {
+    if (!isEnrolledEnrollment($profile['enrollment_status'] ?? null)) {
+        return false;
+    }
+
+    require_once __DIR__ . '/academic-term.php';
+
+    $year = trim((string) ($profile['current_academic_year'] ?? ''));
+    $semester = trim((string) ($profile['current_semester'] ?? ''));
+    if ($year === '' || $semester === '') {
+        return false;
+    }
+
+    return $year === getActiveSchoolYear() && $semester === getActiveSemester();
+}
+
+function studentValidIdRequired(array $profile): bool {
+    return !isStudentOnActiveAcademicTerm($profile);
 }
 
 function normalizeStudentProfileFields(array $fields): array {
@@ -712,9 +740,10 @@ function isOnSitePickupMethod(?string $method): bool {
 
 function getStudentProfile(int $userId): array {
     ensureStudentImportProfileFields();
+    ensureAcademicProgramsSchema();
     $db = getDB();
-    $stmt = $db->prepare('SELECT u.id, u.first_name, u.last_name, u.middle_name, u.email, u.student_id, u.phone,
-        sp.course, sp.course_id, sp.year_level, sp.current_academic_year, sp.current_semester, sp.section, sp.major, sp.birth_date, sp.sex, sp.civil_status, sp.birth_place, sp.valid_id_path, sp.valid_id_original_name, sp.address, sp.city, sp.province, sp.postal_code,
+    $stmt = $db->prepare('SELECT u.id, u.first_name, u.last_name, u.middle_name, u.email, u.student_id, u.phone, u.is_active,
+        sp.course, sp.course_id, sp.year_level, sp.current_academic_year, sp.current_semester, sp.section, sp.major, sp.major_id, sp.birth_date, sp.sex, sp.civil_status, sp.birth_place, sp.valid_id_path, sp.valid_id_original_name, sp.address, sp.city, sp.province, sp.postal_code,
         sp.emergency_contact, sp.emergency_relationship, sp.emergency_phone, sp.emergency_address, sp.enrollment_status, sp.graduation_date,
         sp.origin_campus_id, sp.year_graduated, sp.last_school_year,
         sp.employment_status, sp.employer_name, sp.job_title, sp.employer_address, sp.employment_start_date
@@ -723,6 +752,91 @@ function getStudentProfile(int $userId): array {
         WHERE u.id = ?');
     $stmt->execute([$userId]);
     return $stmt->fetch() ?: [];
+}
+
+function loadStudentAccountForAdminEdit(int $userId): ?array {
+    if ($userId <= 0) {
+        return null;
+    }
+
+    ensureStudentImportProfileFields();
+    ensureStudentEmploymentFields();
+    ensureStudentValidIdField();
+    ensureAcademicProgramsSchema();
+    ensureCampusesSchema();
+    ensureEnrollmentStatuses();
+
+    $db = getDB();
+    $stmt = $db->prepare('SELECT u.id, u.first_name, u.last_name, u.middle_name, u.email, u.student_id, u.phone, u.is_active,
+            sp.course, sp.course_id, sp.year_level, sp.current_academic_year, sp.current_semester, sp.section,
+            sp.major, sp.major_id, sp.birth_date, sp.sex, sp.civil_status, sp.birth_place,
+            sp.valid_id_path, sp.valid_id_original_name, sp.address, sp.city, sp.province, sp.postal_code,
+            sp.emergency_contact, sp.emergency_relationship, sp.emergency_phone, sp.emergency_address,
+            sp.enrollment_status, sp.graduation_date, sp.origin_campus_id, sp.year_graduated, sp.last_school_year,
+            sp.employment_status, sp.employer_name, sp.job_title, sp.employer_address, sp.employment_start_date
+        FROM users u
+        JOIN roles r ON u.role_id = r.id
+        LEFT JOIN student_profiles sp ON u.id = sp.user_id
+        WHERE u.id = ? AND r.name = \'student\'');
+    $stmt->execute([$userId]);
+    $student = $stmt->fetch();
+    return $student ?: null;
+}
+
+function studentAccountIdentityConflicts(int $userId, string $email, string $studentId): array {
+    $db = getDB();
+    $conflicts = [];
+
+    $email = trim($email);
+    $studentId = trim($studentId);
+
+    if ($email !== '') {
+        $stmt = $db->prepare('SELECT id FROM users WHERE email = ? AND id != ? LIMIT 1');
+        $stmt->execute([$email, $userId]);
+        if ($stmt->fetch()) {
+            $conflicts[] = 'Email is already used by another account';
+        }
+    }
+
+    if ($studentId !== '') {
+        $stmt = $db->prepare('SELECT id FROM users WHERE student_id = ? AND id != ? LIMIT 1');
+        $stmt->execute([$studentId, $userId]);
+        if ($stmt->fetch()) {
+            $conflicts[] = 'Student ID is already used by another account';
+        }
+    }
+
+    return $conflicts;
+}
+
+function ensureStudentProfileRowExists(int $userId): void {
+    $db = getDB();
+    $exists = $db->prepare('SELECT user_id FROM student_profiles WHERE user_id = ?');
+    $exists->execute([$userId]);
+    if ($exists->fetch()) {
+        return;
+    }
+    $db->prepare('INSERT INTO student_profiles (user_id, enrollment_status) VALUES (?, ?)')
+       ->execute([$userId, 'enrolled']);
+}
+
+function sanitizeAdminStudentsReturnUrl(?string $returnUrl): string {
+    $default = APP_URL . '/admin/students.php';
+    $returnUrl = trim((string) $returnUrl);
+    if ($returnUrl === '') {
+        return $default;
+    }
+
+    $allowedPrefix = APP_URL . '/admin/students.php';
+    if (str_starts_with($returnUrl, $allowedPrefix)) {
+        return $returnUrl;
+    }
+
+    if (preg_match('#^/admin/students\.php(?:\?.*)?$#', $returnUrl)) {
+        return APP_URL . $returnUrl;
+    }
+
+    return $default;
 }
 
 function studentProfileFieldRequirements(): array {

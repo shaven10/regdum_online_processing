@@ -699,6 +699,15 @@ function adminDeleteStudentsMatchingFilters(array $filters = []): array {
 }
 
 function adminBatchUpdateRequestStatus(array $requestIds, string $newStatus, ?string $remarks = null): array {
+    return batchUpdateRequestStatuses($requestIds, $newStatus, $remarks);
+}
+
+/**
+ * Batch-update request workflow statuses (admin or registrar).
+ *
+ * @return array{updated:int,unchanged:int,failed:array,ok:bool}
+ */
+function batchUpdateRequestStatuses(array $requestIds, string $newStatus, ?string $remarks = null): array {
     $updated = 0;
     $unchanged = 0;
     $failed = [];

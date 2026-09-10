@@ -68,6 +68,30 @@ INSERT INTO academic_programs (code, name, description, sort_order) VALUES
 ('BSCPE', 'BS Computer Engineering', 'Computer Engineering program', 7),
 ('BSHM', 'BS Hospitality Management', 'Hospitality Management program', 8);
 
+CREATE TABLE academic_majors (
+    id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    program_id TINYINT UNSIGNED NOT NULL,
+    code VARCHAR(30) NOT NULL,
+    name VARCHAR(150) NOT NULL,
+    description TEXT,
+    is_active TINYINT(1) DEFAULT 1,
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_academic_majors_program_code (program_id, code),
+    KEY idx_academic_majors_program (program_id),
+    CONSTRAINT fk_academic_majors_program
+        FOREIGN KEY (program_id) REFERENCES academic_programs(id)
+        ON DELETE CASCADE
+);
+
+INSERT INTO academic_majors (program_id, code, name, description, sort_order)
+SELECT id, 'ENGLISH', 'English', 'Bachelor of Secondary Education major in English', 1
+FROM academic_programs WHERE code = 'BSED'
+UNION ALL
+SELECT id, 'MATHEMATICS', 'Mathematics', 'Bachelor of Secondary Education major in Mathematics', 2
+FROM academic_programs WHERE code = 'BSED';
+
 CREATE TABLE campuses (
     id TINYINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     code VARCHAR(20) NOT NULL UNIQUE,
@@ -95,6 +119,7 @@ CREATE TABLE student_profiles (
     current_semester ENUM('1st_semester','2nd_semester','summer') NULL,
     section VARCHAR(50),
     major VARCHAR(150) NULL,
+    major_id SMALLINT UNSIGNED NULL,
     birth_date DATE,
     sex VARCHAR(20) NULL,
     civil_status VARCHAR(50) NULL,

@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/compliance.php';
 require_once __DIR__ . '/../includes/request-items.php';
 require_once __DIR__ . '/../includes/assignment-offices.php';
+require_once __DIR__ . '/../includes/ui.php';
 requireRole('registrar');
 
 $user = currentUser();
@@ -77,6 +78,35 @@ if ($requestId > 0) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $action = $_POST['action'] ?? '';
     $postRequestId = (int) ($_POST['request_id'] ?? 0);
+
+    if ($action === 'batch_assign') {
+        $listUrl = APP_URL . '/registrar/assignments.php' . ($search !== '' ? '?search=' . urlencode($search) : '');
+        $requestIds = normalizeAdminBatchRequestIds($_POST['request_ids'] ?? []);
+        $result = batchAssignRequestsProcessing(
+            $requestIds,
+            (int) ($_POST['assigned_to'] ?? 0),
+            (string) ($_POST['release_date'] ?? ''),
+            (string) ($_POST['release_time'] ?? ''),
+            (int) ($user['id'] ?? 0)
+        );
+
+        if (($result['assigned_requests'] ?? 0) > 0) {
+            setFlash('success', $result['assigned_requests'] . ' request(s) assigned (' . (int) $result['assigned_items'] . ' document item' . ((int) $result['assigned_items'] === 1 ? '' : 's') . ').', [
+                'title' => 'Batch Assignment Complete',
+                'context' => array_filter([
+                    'Assigned requests' => (string) $result['assigned_requests'],
+                    'Assigned items' => (string) $result['assigned_items'],
+                    'Skipped' => ((int) ($result['skipped'] ?? 0) > 0) ? (string) $result['skipped'] : null,
+                ]),
+                'details' => array_slice($result['failed'] ?? [], 0, 8),
+            ]);
+        } else {
+            setFlash('error', implode(' ', $result['failed'] ?? ['Unable to assign selected requests.']), [
+                'title' => 'Batch Assignment Failed',
+            ]);
+        }
+        redirect($listUrl);
+    }
 
     if ($action === 'assign_processing' && $postRequestId > 0) {
         $itemAssignments = $_POST['item_assignments'] ?? [];
@@ -313,51 +343,177 @@ require_once __DIR__ . '/../includes/header.php';
                 <p>No requests are waiting for staff assignment.</p>
             </div>
         <?php else: ?>
-            <div class="table-wrap">
-                <table class="data-table data-table-responsive">
-                    <thead>
-                        <tr>
-                            <th>Request #</th>
-                            <th>Student</th>
-                            <th>Documents</th>
-                            <th>Pending Items</th>
-                            <th>Amount</th>
-                            <th>Paid / Updated</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($assignmentRequests as $req): ?>
+            <form method="POST" id="assignmentBatchForm">
+                <?= csrfField() ?>
+                <input type="hidden" name="action" value="batch_assign">
+
+                <div class="batch-action-bar" id="assignmentBatchActionBar" hidden>
+                    <span class="batch-action-count"><strong id="assignmentBatchSelectedCount">0</strong> selected</span>
+                    <div class="batch-action-buttons">
+                        <button type="button" class="btn btn-primary btn-sm" id="openAssignmentBatchAssignModal">
+                            <i class="fas fa-user-tag"></i> Assign Selected
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-wrap">
+                    <table class="data-table data-table-responsive">
+                        <thead>
                             <tr>
-                                <td data-label="Request #"><strong><?= e($req['request_number']) ?></strong></td>
-                                <td data-label="Student">
-                                    <?= e($req['first_name'] . ' ' . $req['last_name']) ?>
-                                    <br><small class="text-muted"><?= e($req['student_id'] ?? '') ?></small>
-                                </td>
-                                <td data-label="Documents">
-                                    <?= e($req['document_name'] ?? '—') ?>
-                                    <?php if ((int) ($req['document_count'] ?? 0) > 1): ?>
-                                        <br><small class="text-muted"><?= (int) $req['document_count'] ?> documents</small>
-                                    <?php endif; ?>
-                                </td>
-                                <td data-label="Pending Items">
-                                    <span class="badge badge-review">
-                                        <?= max(1, (int) ($req['pending_assignment_count'] ?? 0)) ?> to assign
-                                    </span>
-                                </td>
-                                <td data-label="Amount"><?= formatMoney((float) ($req['total_amount'] ?? 0)) ?></td>
-                                <td data-label="Paid / Updated"><?= formatDateTime($req['updated_at'] ?? $req['created_at']) ?></td>
-                                <td data-label="Action" class="action-cell-buttons">
-                                    <a href="assignments.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-primary">
-                                        <i class="fas fa-user-tag"></i> Assign Staff
-                                    </a>
-                                    <a href="verify-request.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-outline">Review</a>
-                                </td>
+                                <th class="batch-select-col">
+                                    <label class="checkbox-label batch-select-all-label">
+                                        <input type="checkbox" id="assignmentSelectAllRequests" aria-label="Select all requests">
+                                    </label>
+                                </th>
+                                <th>Request #</th>
+                                <th>Student</th>
+                                <th>Documents</th>
+                                <th>Pending Items</th>
+                                <th>Amount</th>
+                                <th>Paid / Updated</th>
+                                <th>Action</th>
                             </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($assignmentRequests as $req): ?>
+                                <tr>
+                                    <td class="batch-select-col" data-label="Select">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" class="assignment-request-select" name="request_ids[]" value="<?= (int) $req['id'] ?>">
+                                        </label>
+                                    </td>
+                                    <td data-label="Request #"><strong><?= e($req['request_number']) ?></strong></td>
+                                    <td data-label="Student">
+                                        <?= e($req['first_name'] . ' ' . $req['last_name']) ?>
+                                        <br><small class="text-muted"><?= e($req['student_id'] ?? '') ?></small>
+                                    </td>
+                                    <td data-label="Documents">
+                                        <?= e($req['document_name'] ?? '—') ?>
+                                        <?php if ((int) ($req['document_count'] ?? 0) > 1): ?>
+                                            <br><small class="text-muted"><?= (int) $req['document_count'] ?> documents</small>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td data-label="Pending Items">
+                                        <span class="badge badge-review">
+                                            <?= max(1, (int) ($req['pending_assignment_count'] ?? 0)) ?> to assign
+                                        </span>
+                                    </td>
+                                    <td data-label="Amount"><?= formatMoney((float) ($req['total_amount'] ?? 0)) ?></td>
+                                    <td data-label="Paid / Updated"><?= formatDateTime($req['updated_at'] ?? $req['created_at']) ?></td>
+                                    <td data-label="Action" class="action-cell-buttons">
+                                        <a href="assignments.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-primary">
+                                            <i class="fas fa-user-tag"></i> Assign Staff
+                                        </a>
+                                        <a href="verify-request.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-outline">Review</a>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </form>
+
+            <?php renderAdminFormModalOpen('Staff Assignment', 'Batch Assign Staff', 'assignmentBatchAssignModal'); ?>
+            <form method="POST" id="assignmentBatchAssignForm" class="form-grid">
+                <?= csrfField() ?>
+                <input type="hidden" name="action" value="batch_assign">
+                <div id="assignmentBatchAssignHiddenIds"></div>
+                <p class="text-muted">Assign all pending documents on the selected requests to one staff member.</p>
+                <div class="form-group">
+                    <label for="assignment_batch_assigned_to">Assign to *</label>
+                    <?php if (empty($processors)): ?>
+                        <select id="assignment_batch_assigned_to" name="assigned_to" required disabled>
+                            <option value="">No active assignees available</option>
+                        </select>
+                    <?php else: ?>
+                        <?= renderAssigneeSelectHtml('assigned_to', $processors, null, true, 'assignment_batch_assigned_to') ?>
+                    <?php endif; ?>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="assignment_batch_release_date">Release Date *</label>
+                        <input type="date" id="assignment_batch_release_date" name="release_date" value="<?= e(date('Y-m-d')) ?>" min="<?= date('Y-m-d') ?>" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="assignment_batch_release_time">Release Time *</label>
+                        <select id="assignment_batch_release_time" name="release_time" required>
+                            <?php foreach ($releaseTimeOptions as $value => $label): ?>
+                                <option value="<?= e($value) ?>" <?= $value === '09:00:00' ? 'selected' : '' ?>><?= e($label) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+                <?php renderAdminFormModalFooter('Assign Selected', 'fa-user-tag'); ?>
+            </form>
+            <?php renderAdminFormModalClose(); ?>
+
+            <script>
+            (function () {
+                const batchBar = document.getElementById('assignmentBatchActionBar');
+                const countEl = document.getElementById('assignmentBatchSelectedCount');
+                const selectAll = document.getElementById('assignmentSelectAllRequests');
+                const rowChecks = () => Array.from(document.querySelectorAll('.assignment-request-select'));
+                const modal = document.getElementById('assignmentBatchAssignModal');
+                const hiddenIds = document.getElementById('assignmentBatchAssignHiddenIds');
+
+                function selectedChecks() {
+                    return rowChecks().filter(function (cb) { return cb.checked; });
+                }
+
+                function syncBatchBar() {
+                    const selected = selectedChecks();
+                    const count = selected.length;
+                    if (countEl) countEl.textContent = String(count);
+                    if (batchBar) batchBar.hidden = count === 0;
+                    if (selectAll) {
+                        const all = rowChecks();
+                        selectAll.checked = all.length > 0 && count === all.length;
+                        selectAll.indeterminate = count > 0 && count < all.length;
+                    }
+                }
+
+                if (selectAll) {
+                    selectAll.addEventListener('change', function () {
+                        rowChecks().forEach(function (cb) { cb.checked = selectAll.checked; });
+                        syncBatchBar();
+                    });
+                }
+                rowChecks().forEach(function (cb) {
+                    cb.addEventListener('change', syncBatchBar);
+                });
+
+                modal?.querySelectorAll('[data-close-admin-form]').forEach(function (el) {
+                    el.addEventListener('click', function () {
+                        modal.classList.remove('is-open');
+                        modal.setAttribute('aria-hidden', 'true');
+                        document.body.style.overflow = '';
+                    });
+                });
+
+                document.getElementById('openAssignmentBatchAssignModal')?.addEventListener('click', function () {
+                    const selected = selectedChecks();
+                    if (!selected.length) {
+                        alert('Select at least one request.');
+                        return;
+                    }
+                    if (!hiddenIds || !modal) return;
+                    hiddenIds.innerHTML = '';
+                    selected.forEach(function (cb) {
+                        const input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = 'request_ids[]';
+                        input.value = cb.value;
+                        hiddenIds.appendChild(input);
+                    });
+                    modal.classList.add('is-open');
+                    modal.setAttribute('aria-hidden', 'false');
+                    document.body.style.overflow = 'hidden';
+                    document.getElementById('assignment_batch_assigned_to')?.focus();
+                });
+
+                syncBatchBar();
+            })();
+            </script>
         <?php endif; ?>
     </div>
 </div>

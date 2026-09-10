@@ -70,7 +70,7 @@ function loadStudentRecordForView(int $userId): ?array {
     $stmt = $db->prepare('SELECT u.id, u.first_name, u.last_name, u.middle_name, u.email, u.student_id, u.phone,
             u.is_active, u.created_at AS account_created_at, u.last_login,
             sp.course, sp.course_id, sp.year_level, sp.current_academic_year, sp.current_semester,
-            sp.section, sp.major, sp.birth_date, sp.sex, sp.civil_status, sp.birth_place,
+            sp.section, sp.major, sp.major_id, sp.birth_date, sp.sex, sp.civil_status, sp.birth_place,
             sp.valid_id_path, sp.valid_id_original_name, sp.address, sp.city, sp.province, sp.postal_code,
             sp.emergency_contact, sp.emergency_relationship, sp.emergency_phone, sp.emergency_address,
             sp.enrollment_status, sp.graduation_date, sp.origin_campus_id, sp.year_graduated, sp.last_school_year,
@@ -147,7 +147,7 @@ function studentEnrollmentBadge(?string $status): string {
     return '<span class="badge ' . $class . '">' . e(enrollmentStatusLabel($status)) . '</span>';
 }
 
-function renderStudentRecordViewModal(?array $student, string $closeUrl): void {
+function renderStudentRecordViewModal(?array $student, string $closeUrl, ?string $editUrl = null): void {
     if (!$student) {
         return;
     }
@@ -167,6 +167,7 @@ function renderStudentRecordViewModal(?array $student, string $closeUrl): void {
         || trim((string) ($student['employer_name'] ?? '')) !== ''
         || trim((string) ($student['job_title'] ?? '')) !== '';
     $recentRequests = $student['recent_requests'] ?? [];
+    $editUrl = $editUrl !== null ? trim($editUrl) : '';
     ?>
 <div class="student-view-modal is-open" id="studentRecordViewModal" aria-hidden="false" data-close-url="<?= e($closeUrl) ?>">
     <a class="student-view-overlay" href="<?= e($closeUrl) ?>" aria-label="Close student information"></a>
@@ -310,8 +311,13 @@ function renderStudentRecordViewModal(?array $student, string $closeUrl): void {
             </section>
         </div>
         <div class="student-view-footer">
+            <?php if ($editUrl !== '' && function_exists('hasRole') && hasRole('admin')): ?>
+                <a href="<?= e($editUrl) ?>" class="btn btn-primary">
+                    <i class="fas fa-edit"></i> Edit Information
+                </a>
+            <?php endif; ?>
             <?php if (function_exists('hasRole') && hasRole('admin', 'registrar')): ?>
-                <a href="<?= e(APP_URL . '/registrar/grades-evaluation.php?student_user_id=' . (int) $student['id']) ?>" class="btn btn-primary">
+                <a href="<?= e(APP_URL . '/registrar/grades-evaluation.php?student_user_id=' . (int) $student['id']) ?>" class="btn <?= $editUrl !== '' ? 'btn-outline' : 'btn-primary' ?>">
                     <i class="fas fa-clipboard-list"></i> Grades Evaluation
                 </a>
                 <?= renderClearStudentGradesForm((int) $student['id'], studentRecordDisplayName($student)) ?>

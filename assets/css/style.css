@@ -2680,6 +2680,84 @@ a.feature-card-link:hover {
     background: var(--primary-light, #ecfdf5);
 }
 
+.frequent-documents-panel {
+    margin-top: 1rem;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--gray-200, #e2e8f0);
+    border-radius: var(--radius-md, 10px);
+    background: var(--gray-50, #f8fafc);
+}
+
+.frequent-documents-header {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin-bottom: .35rem;
+    color: var(--gray-800, #1e293b);
+}
+
+.frequent-documents-header i {
+    color: var(--primary, #059669);
+}
+
+.frequent-documents-header strong {
+    flex: 1;
+}
+
+.frequent-documents-hint {
+    margin: 0 0 .75rem;
+    font-size: .85rem;
+    color: var(--gray-500, #64748b);
+}
+
+.frequent-documents-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+}
+
+.frequent-doc-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .45rem;
+    padding: .45rem .75rem;
+    border: 1px solid var(--gray-300, #cbd5e1);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--gray-800, #1e293b);
+    font: inherit;
+    font-size: .875rem;
+    cursor: pointer;
+    transition: border-color .15s ease, background-color .15s ease, color .15s ease;
+}
+
+.frequent-doc-chip:hover {
+    border-color: var(--primary, #059669);
+    color: var(--primary, #059669);
+}
+
+.frequent-doc-chip.is-selected {
+    border-color: var(--primary, #059669);
+    background: var(--primary-light, #ecfdf5);
+    color: var(--primary, #059669);
+}
+
+.frequent-doc-chip-count {
+    min-width: 1.35rem;
+    padding: .1rem .35rem;
+    border-radius: 999px;
+    background: var(--gray-100, #f1f5f9);
+    color: var(--gray-600, #475569);
+    font-size: .75rem;
+    font-weight: 600;
+    text-align: center;
+}
+
+.frequent-doc-chip.is-selected .frequent-doc-chip-count {
+    background: rgba(5, 150, 105, .15);
+    color: var(--primary, #059669);
+}
+
 .purpose-suggestion-header {
     display: flex;
     align-items: center;

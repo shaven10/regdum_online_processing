@@ -375,6 +375,46 @@ function resolveImportAcademicProgram(string $course): ?array {
     return null;
 }
 
+function resolveImportAcademicMajor(?array $program, string $major): ?array {
+    $major = normalizeImportBlank($major);
+    if ($major === '' || !$program) {
+        return null;
+    }
+
+    $programId = (int) ($program['id'] ?? 0);
+    if ($programId <= 0) {
+        return null;
+    }
+
+    static $majorsByProgram = null;
+    if ($majorsByProgram === null) {
+        $majorsByProgram = getAcademicMajorsGroupedByProgram(false);
+    }
+
+    $candidates = $majorsByProgram[$programId] ?? [];
+    if (!$candidates) {
+        return null;
+    }
+
+    $needle = strtoupper(preg_replace('/\s+/', '', $major) ?? $major);
+
+    foreach ($candidates as $row) {
+        $code = strtoupper(preg_replace('/\s+/', '', (string) ($row['code'] ?? '')) ?? '');
+        if ($code !== '' && $code === $needle) {
+            return $row;
+        }
+    }
+
+    foreach ($candidates as $row) {
+        $name = strtoupper(preg_replace('/\s+/', '', (string) ($row['name'] ?? '')) ?? '');
+        if ($name !== '' && ($name === $needle || str_contains($name, $needle) || str_contains($needle, $name))) {
+            return $row;
+        }
+    }
+
+    return null;
+}
+
 function studentRoleId(): int {
     static $id = null;
     if ($id === null) {
@@ -548,6 +588,7 @@ function importActiveStudentsFromRows(array $rows, array $options): array {
         'semester' => $semester,
         'warnings' => [],
         'errors' => [],
+        'failed_rows' => [],
         'unmatched_courses' => [],
     ];
 
@@ -616,6 +657,27 @@ function importActiveStudentsFromRows(array $rows, array $options): array {
             $label = $studentId !== '' ? $studentId : ('Row ' . $excelRow);
         }
 
+        $failedFields = studentImportFailedRowFields(
+            $lastName,
+            $firstName,
+            $middleName,
+            $address,
+            $sex,
+            $civilStatus,
+            $birthDate,
+            $birthPlace,
+            $emergencyContact,
+            $emergencyRelationship,
+            $emergencyPhone,
+            $emergencyAddress,
+            $courseCode,
+            $yearLevel,
+            $major,
+            $phone,
+            $rawEmail,
+            $studentId
+        );
+
         if ($processed === 1 || $processed === $totalRows || ($processed % $progressStep) === 0) {
             $percent = 12 + (int) floor(($processed / max(1, $totalRows)) * 86);
             $reportProgress([
@@ -626,32 +688,28 @@ function importActiveStudentsFromRows(array $rows, array $options): array {
         }
 
         if ($lastName === '' || $firstName === '') {
-            $result['failed']++;
-            $result['errors'][] = 'Row ' . $excelRow . ': Family Name and Given Name are required.';
+            recordStudentImportFailure($result, $excelRow, 'Family Name and Given Name are required.', $failedFields);
             continue;
         }
 
         if ($studentId === '') {
-            $result['failed']++;
-            $result['errors'][] = 'Row ' . $excelRow . ' (' . $label . '): ID No. is required.';
+            recordStudentImportFailure($result, $excelRow, 'ID No. is required.', $failedFields, $label);
             continue;
         }
 
         [$email, $emailGenerated] = normalizeImportEmail($rawEmail, $studentId);
+        $failedFields['email'] = $rawEmail !== '' ? $rawEmail : $email;
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $result['failed']++;
-            $result['errors'][] = 'Row ' . $excelRow . ' (' . $label . '): Invalid email address.';
+            recordStudentImportFailure($result, $excelRow, 'Invalid email address.', $failedFields, $label);
             continue;
         }
 
         if (isset($seenIds[$studentId])) {
-            $result['failed']++;
-            $result['errors'][] = 'Row ' . $excelRow . ' (' . $label . '): Duplicate ID No. in this file.';
+            recordStudentImportFailure($result, $excelRow, 'Duplicate ID No. in this file.', $failedFields, $label);
             continue;
         }
         if (isset($seenEmails[$email])) {
-            $result['failed']++;
-            $result['errors'][] = 'Row ' . $excelRow . ' (' . $label . '): Duplicate email in this file.';
+            recordStudentImportFailure($result, $excelRow, 'Duplicate email in this file.', $failedFields, $label);
             continue;
         }
         $seenIds[$studentId] = true;
@@ -664,6 +722,10 @@ function importActiveStudentsFromRows(array $rows, array $options): array {
             $result['unmatched_courses'][$courseCode] = ($result['unmatched_courses'][$courseCode] ?? 0) + 1;
         }
 
+        $matchedMajor = resolveImportAcademicMajor($program, $major);
+        $majorName = $matchedMajor['name'] ?? ($major !== '' ? $major : null);
+        $majorId = $matchedMajor ? (int) $matchedMajor['id'] : null;
+
         if ($emailGenerated) {
             $result['warnings'][] = 'Row ' . $excelRow . ' (' . $label . '): No email in the file. A placeholder email was assigned.';
         }
@@ -674,7 +736,8 @@ function importActiveStudentsFromRows(array $rows, array $options): array {
             'year_level' => $yearLevel !== '' ? $yearLevel : null,
             'current_academic_year' => $academicYear !== '' ? $academicYear : null,
             'current_semester' => $semester,
-            'major' => $major !== '' ? $major : null,
+            'major' => $majorName,
+            'major_id' => $majorId,
             'birth_date' => $birthDate,
             'sex' => $sex !== '' ? $sex : null,
             'civil_status' => $civilStatus !== '' ? $civilStatus : null,
@@ -692,8 +755,13 @@ function importActiveStudentsFromRows(array $rows, array $options): array {
             $existing = findUserByStudentIdOrEmail($studentId, $email);
             if ($existing) {
                 if (($existing['role_name'] ?? '') !== 'student') {
-                    $result['failed']++;
-                    $result['errors'][] = 'Row ' . $excelRow . ' (' . $label . '): ID or email belongs to a non-student account.';
+                    recordStudentImportFailure(
+                        $result,
+                        $excelRow,
+                        'ID or email belongs to a non-student account.',
+                        $failedFields,
+                        $label
+                    );
                     continue;
                 }
 
@@ -753,14 +821,12 @@ function importActiveStudentsFromRows(array $rows, array $options): array {
             ]);
             $result['created']++;
         } catch (PDOException $e) {
-            $result['failed']++;
             $message = str_contains($e->getMessage(), 'Duplicate')
                 ? 'A student with this ID or email already exists.'
                 : 'Unable to save this record.';
-            $result['errors'][] = 'Row ' . $excelRow . ' (' . $label . '): ' . $message;
+            recordStudentImportFailure($result, $excelRow, $message, $failedFields, $label);
         } catch (Throwable $e) {
-            $result['failed']++;
-            $result['errors'][] = 'Row ' . $excelRow . ' (' . $label . '): Unable to save this record.';
+            recordStudentImportFailure($result, $excelRow, 'Unable to save this record.', $failedFields, $label);
         }
     }
 
@@ -772,6 +838,7 @@ function importActiveStudentsFromRows(array $rows, array $options): array {
 
     $result['errors'] = array_slice($result['errors'], 0, 100);
     $result['warnings'] = array_slice($result['warnings'], 0, 50);
+    // Keep every failed row for the downloadable error report.
 
     $reportProgress([
         'status'    => 'complete',
@@ -829,11 +896,125 @@ function updateImportedStudentUser(int $userId, string $email, string $studentId
 
 function importedStudentProfileColumns(): array {
     return [
-        'course', 'course_id', 'year_level', 'current_academic_year', 'current_semester', 'major',
+        'course', 'course_id', 'year_level', 'current_academic_year', 'current_semester', 'major', 'major_id',
         'birth_date', 'sex', 'civil_status', 'birth_place', 'address',
         'emergency_contact', 'emergency_relationship', 'emergency_phone', 'emergency_address',
         'enrollment_status', 'origin_campus_id',
     ];
+}
+
+function studentImportErrorReportHeaders(): array {
+    return [
+        'Excel Row',
+        'Error',
+        'Family Name',
+        'Given Name',
+        'Middle Name',
+        'Home Address',
+        'Sex',
+        'CS',
+        'Birthdate',
+        'Birth Place',
+        'Contact Person',
+        'Relationship',
+        'Contact #',
+        'Contact Address',
+        'Course',
+        'Year',
+        'Major',
+        'Mobile #',
+        'Email Address',
+        'ID No.',
+    ];
+}
+
+function studentImportFailedRowFields(
+    string $lastName,
+    string $firstName,
+    string $middleName,
+    string $address,
+    string $sex,
+    string $civilStatus,
+    ?string $birthDate,
+    string $birthPlace,
+    string $emergencyContact,
+    string $emergencyRelationship,
+    string $emergencyPhone,
+    string $emergencyAddress,
+    string $courseCode,
+    string $yearLevel,
+    string $major,
+    string $phone,
+    string $email,
+    string $studentId
+): array {
+    return [
+        'last_name' => $lastName,
+        'first_name' => $firstName,
+        'middle_name' => $middleName,
+        'address' => $address,
+        'sex' => $sex,
+        'civil_status' => $civilStatus,
+        'birth_date' => $birthDate ?? '',
+        'birth_place' => $birthPlace,
+        'emergency_contact' => $emergencyContact,
+        'emergency_relationship' => $emergencyRelationship,
+        'emergency_phone' => $emergencyPhone,
+        'emergency_address' => $emergencyAddress,
+        'course' => $courseCode,
+        'year_level' => $yearLevel,
+        'major' => $major,
+        'phone' => $phone,
+        'email' => $email,
+        'student_id' => $studentId,
+    ];
+}
+
+function recordStudentImportFailure(array &$result, int $excelRow, string $reason, array $fields, ?string $label = null): void {
+    $result['failed']++;
+    $prefix = 'Row ' . $excelRow;
+    if ($label !== null && $label !== '') {
+        $prefix .= ' (' . $label . ')';
+    }
+    $message = $prefix . ': ' . $reason;
+    $result['errors'][] = $message;
+    $result['failed_rows'][] = array_merge([
+        'excel_row' => $excelRow,
+        'error' => $reason,
+    ], $fields);
+}
+
+function buildStudentImportErrorReportSheetRows(array $failedRows): array {
+    $sheet = [studentImportErrorReportHeaders()];
+    foreach ($failedRows as $row) {
+        $sheet[] = [
+            (string) ($row['excel_row'] ?? ''),
+            (string) ($row['error'] ?? ''),
+            (string) ($row['last_name'] ?? ''),
+            (string) ($row['first_name'] ?? ''),
+            (string) ($row['middle_name'] ?? ''),
+            (string) ($row['address'] ?? ''),
+            (string) ($row['sex'] ?? ''),
+            (string) ($row['civil_status'] ?? ''),
+            (string) ($row['birth_date'] ?? ''),
+            (string) ($row['birth_place'] ?? ''),
+            (string) ($row['emergency_contact'] ?? ''),
+            (string) ($row['emergency_relationship'] ?? ''),
+            (string) ($row['emergency_phone'] ?? ''),
+            (string) ($row['emergency_address'] ?? ''),
+            (string) ($row['course'] ?? ''),
+            (string) ($row['year_level'] ?? ''),
+            (string) ($row['major'] ?? ''),
+            (string) ($row['phone'] ?? ''),
+            (string) ($row['email'] ?? ''),
+            (string) ($row['student_id'] ?? ''),
+        ];
+    }
+    return $sheet;
+}
+
+function buildStudentImportErrorReportBinary(array $failedRows): string {
+    return buildSimpleXlsxWorkbook('Import Errors', buildStudentImportErrorReportSheetRows($failedRows));
 }
 
 function insertImportedStudentProfile(int $userId, array $profile): void {

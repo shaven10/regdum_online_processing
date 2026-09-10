@@ -404,6 +404,120 @@ function assignRequestItemProcessing(
     return true;
 }
 
+/**
+ * Assign all pending document items on each selected request to one staff member.
+ *
+ * @return array{ok:bool,assigned_requests:int,assigned_items:int,skipped:int,failed:array<int,string>}
+ */
+function batchAssignRequestsProcessing(
+    array $requestIds,
+    int $staffId,
+    string $releaseDate,
+    string $releaseTime,
+    int $assignedBy
+): array {
+    if (!function_exists('normalizeAdminBatchRequestIds')) {
+        require_once __DIR__ . '/functions.php';
+    }
+
+    $result = [
+        'ok' => false,
+        'assigned_requests' => 0,
+        'assigned_items' => 0,
+        'skipped' => 0,
+        'failed' => [],
+    ];
+
+    $requestIds = normalizeAdminBatchRequestIds($requestIds);
+    $releaseDate = trim($releaseDate);
+    $releaseTime = trim($releaseTime);
+
+    if ($requestIds === []) {
+        $result['failed'][] = 'Select at least one request.';
+        return $result;
+    }
+    if ($staffId <= 0) {
+        $result['failed'][] = 'Select a staff assignee.';
+        return $result;
+    }
+    if ($releaseDate === '' || $releaseTime === '') {
+        $result['failed'][] = 'Release date and time are required.';
+        return $result;
+    }
+
+    $db = getDB();
+    $assignee = $db->prepare('SELECT u.id FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ? AND u.is_active = 1');
+    $assignee->execute([$staffId]);
+    if (!$assignee->fetch()) {
+        $result['failed'][] = 'Selected assignee is not available.';
+        return $result;
+    }
+
+    foreach ($requestIds as $requestId) {
+        $reqStmt = $db->prepare('SELECT id, status, request_number FROM requests WHERE id = ?');
+        $reqStmt->execute([$requestId]);
+        $request = $reqStmt->fetch();
+        if (!$request) {
+            $result['failed'][] = 'Request #' . $requestId . ' not found.';
+            continue;
+        }
+
+        $canAssign = $request['status'] === 'payment_verified'
+            || ($request['status'] === 'processing' && requestHasPendingAssignmentItems($requestId));
+        if (!$canAssign) {
+            $result['skipped']++;
+            $result['failed'][] = ($request['request_number'] ?? ('#' . $requestId))
+                . ' is not awaiting staff assignment.';
+            continue;
+        }
+
+        $items = getRequestItems($requestId);
+        $pendingItems = array_values(array_filter(
+            $items,
+            static fn(array $item): bool => ($item['item_status'] ?? '') === 'pending_assignment'
+        ));
+        if ($pendingItems === [] && count($items) === 1 && ($items[0]['item_status'] ?? '') === 'processing' && empty($items[0]['assigned_to'])) {
+            $pendingItems = $items;
+        }
+        if ($pendingItems === []) {
+            $result['skipped']++;
+            $result['failed'][] = ($request['request_number'] ?? ('#' . $requestId))
+                . ' has no documents waiting for assignment.';
+            continue;
+        }
+
+        $assignedForRequest = 0;
+        foreach ($pendingItems as $item) {
+            if (assignRequestItemProcessing((int) $item['id'], $staffId, $releaseDate, $releaseTime, $assignedBy)) {
+                $assignedForRequest++;
+                $result['assigned_items']++;
+            }
+        }
+
+        if ($assignedForRequest > 0) {
+            $result['assigned_requests']++;
+            auditLog('request_batch_assigned', 'requests', $requestId, null, [
+                'items_assigned' => $assignedForRequest,
+                'assigned_to' => $staffId,
+                'batch' => true,
+            ]);
+        } else {
+            $result['failed'][] = ($request['request_number'] ?? ('#' . $requestId))
+                . ' could not be assigned (check document office rules).';
+        }
+    }
+
+    $result['ok'] = $result['assigned_requests'] > 0;
+    // Keep failure list useful but not huge when many skips.
+    if (count($result['failed']) > 20) {
+        $extra = count($result['failed']) - 20;
+        $result['failed'] = array_slice($result['failed'], 0, 20);
+        $result['failed'][] = '…and ' . $extra . ' more issue' . ($extra === 1 ? '' : 's') . '.';
+    }
+
+    return $result;
+}
+
 function updateRequestItemStatus(int $itemId, string $status): bool {
     if (!in_array($status, ['processing', 'ready_for_pickup', 'completed'], true)) {
         return false;

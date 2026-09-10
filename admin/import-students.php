@@ -44,10 +44,32 @@ if (($_GET['download'] ?? '') === 'template') {
     downloadXlsxFile('enrolment-report-template.xlsx', $binary);
 }
 
+if (($_GET['download'] ?? '') === 'import-errors') {
+    $failedRows = $_SESSION['student_import_error_report']['failed_rows'] ?? null;
+    if (!is_array($failedRows) || $failedRows === []) {
+        setFlash('error', 'No import error report is available. Run an import that has failed rows first.', [
+            'title' => 'Error Report Unavailable',
+        ]);
+        redirect(APP_URL . '/admin/import-students.php');
+    }
+
+    $stamp = date('Ymd-His');
+    $binary = buildStudentImportErrorReportBinary($failedRows);
+    downloadXlsxFile('student-import-errors-' . $stamp . '.xlsx', $binary);
+}
+
 $importResult = $_SESSION['student_import_result'] ?? null;
 if ($importResult) {
     unset($_SESSION['student_import_result']);
 }
+
+$errorReportMeta = $_SESSION['student_import_error_report'] ?? null;
+$errorReportAvailable = is_array($errorReportMeta)
+    && !empty($errorReportMeta['failed_rows'])
+    && is_array($errorReportMeta['failed_rows']);
+$errorReportFailedCount = $errorReportAvailable
+    ? count($errorReportMeta['failed_rows'])
+    : 0;
 
 $errors = [];
 $form = [
@@ -114,6 +136,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
             $_SESSION['student_import_result'] = $result;
 
+            $failedRows = $result['failed_rows'] ?? [];
+            if (is_array($failedRows) && $failedRows !== []) {
+                $_SESSION['student_import_error_report'] = [
+                    'generated_at' => date('c'),
+                    'academic_year' => $result['academic_year'] ?? null,
+                    'semester' => $result['semester'] ?? null,
+                    'failed' => (int) ($result['failed'] ?? count($failedRows)),
+                    'failed_rows' => $failedRows,
+                ];
+            } else {
+                unset($_SESSION['student_import_error_report']);
+            }
+
             $created = (int) $result['created'];
             $updated = (int) $result['updated'];
             $skipped = (int) $result['skipped'];
@@ -136,9 +171,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                     'Semester' => semesterLabel($result['semester'] ?? null),
                 ]),
                 'details' => array_slice(array_merge($result['errors'] ?? [], $result['warnings'] ?? []), 0, 12),
-                'next_step' => 'Imported students can sign in with their Student ID as the initial password, then complete remaining profile fields.',
-                'action_url' => APP_URL . '/admin/students.php',
-                'action_label' => 'View Students',
+                'next_step' => $failed > 0
+                    ? 'Download the error report from Last Import Result, fix the listed rows, then re-import.'
+                    : 'Imported students can sign in with their Student ID as the initial password, then complete remaining profile fields.',
+                'action_url' => $failed > 0
+                    ? (APP_URL . '/admin/import-students.php?download=import-errors')
+                    : (APP_URL . '/admin/students.php'),
+                'action_label' => $failed > 0 ? 'Download Error Report' : 'View Students',
             ]);
 
             if ($isAjaxImport) {
@@ -301,47 +340,80 @@ $templateColumns = enrolmentReportTemplateHeaders();
         </div>
     </div>
 
-    <?php if (is_array($importResult)): ?>
+    <?php if (is_array($importResult) || $errorReportAvailable): ?>
         <?php
         $created = (int) ($importResult['created'] ?? 0);
         $updated = (int) ($importResult['updated'] ?? 0);
         $skipped = (int) ($importResult['skipped'] ?? 0);
-        $failed = (int) ($importResult['failed'] ?? 0);
-        $issues = array_merge($importResult['errors'] ?? [], $importResult['warnings'] ?? []);
+        $failed = (int) (is_array($importResult)
+            ? ($importResult['failed'] ?? 0)
+            : ($errorReportMeta['failed'] ?? $errorReportFailedCount));
+        $issues = is_array($importResult)
+            ? array_merge($importResult['errors'] ?? [], $importResult['warnings'] ?? [])
+            : [];
+        $resultSemester = is_array($importResult)
+            ? ($importResult['semester'] ?? null)
+            : ($errorReportMeta['semester'] ?? null);
+        $resultYear = is_array($importResult)
+            ? ($importResult['academic_year'] ?? '—')
+            : ($errorReportMeta['academic_year'] ?? '—');
         ?>
         <div class="card">
             <div class="card-header">
                 <h2><i class="fas fa-clipboard-check"></i> Last Import Result</h2>
+                <?php if ($errorReportAvailable): ?>
+                    <a class="btn btn-outline btn-sm" href="?download=import-errors">
+                        <i class="fas fa-file-excel"></i> Download Error Report
+                        (<?= (int) $errorReportFailedCount ?>)
+                    </a>
+                <?php endif; ?>
             </div>
             <div class="card-body">
-                <div class="import-result-stats">
-                    <div class="import-result-stat"><strong><?= $created ?></strong><span>Created</span></div>
-                    <div class="import-result-stat"><strong><?= $updated ?></strong><span>Updated</span></div>
-                    <div class="import-result-stat"><strong><?= $skipped ?></strong><span>Skipped</span></div>
-                    <div class="import-result-stat"><strong><?= $failed ?></strong><span>Failed</span></div>
-                </div>
-                <p class="text-muted">
-                    <?= e(semesterLabel($importResult['semester'] ?? null)) ?>
-                    · S.Y. <?= e($importResult['academic_year'] ?? '—') ?>
-                    · Initial password for new accounts is the Student ID.
-                </p>
-                <?php if ($issues !== []): ?>
-                    <div class="table-responsive">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Notes</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($issues as $issue): ?>
-                                    <tr>
-                                        <td><?= e($issue) ?></td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
+                <?php if (is_array($importResult)): ?>
+                    <div class="import-result-stats">
+                        <div class="import-result-stat"><strong><?= $created ?></strong><span>Created</span></div>
+                        <div class="import-result-stat"><strong><?= $updated ?></strong><span>Updated</span></div>
+                        <div class="import-result-stat"><strong><?= $skipped ?></strong><span>Skipped</span></div>
+                        <div class="import-result-stat"><strong><?= $failed ?></strong><span>Failed</span></div>
                     </div>
+                    <p class="text-muted">
+                        <?= e(semesterLabel($resultSemester)) ?>
+                        · S.Y. <?= e((string) $resultYear) ?>
+                        · Initial password for new accounts is the Student ID.
+                    </p>
+                    <?php if ($issues !== []): ?>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Notes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($issues as $issue): ?>
+                                        <tr>
+                                            <td><?= e($issue) ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                        <?php if ($failed > count($importResult['errors'] ?? [])): ?>
+                            <p class="text-muted" style="margin-top:.75rem">
+                                Showing the first <?= count($importResult['errors'] ?? []) ?> error notes.
+                                Download the error report for the full list of failed rows.
+                            </p>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                <?php elseif ($errorReportAvailable): ?>
+                    <p class="text-muted">
+                        <?= (int) $errorReportFailedCount ?> failed row<?= $errorReportFailedCount === 1 ? '' : 's' ?>
+                        from the last import
+                        <?php if (!empty($errorReportMeta['academic_year']) || !empty($errorReportMeta['semester'])): ?>
+                            (<?= e(semesterLabel($resultSemester)) ?> · S.Y. <?= e((string) $resultYear) ?>)
+                        <?php endif; ?>
+                        are ready to download.
+                    </p>
                 <?php endif; ?>
             </div>
         </div>
@@ -362,6 +434,7 @@ $templateColumns = enrolmentReportTemplateHeaders();
                 <li>New accounts are created as <strong>Enrolled</strong> and can sign in with <strong>Student ID</strong> as the initial password.</li>
                 <li>Year values <strong>I–IV</strong> are stored as 1st–4th Year. Course codes are matched to Courses &amp; Programs when possible.</li>
                 <li>Rows already in the system are skipped unless “Update existing students” is checked.</li>
+                <li>If any rows fail, download the <strong>Error Report</strong> from Last Import Result. It includes the Excel row number, error reason, and the row values.</li>
             </ul>
         </div>
     </div>
