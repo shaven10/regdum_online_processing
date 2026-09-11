@@ -141,13 +141,40 @@ function getRequestItemCount(int $requestId): int {
     return (int) $stmt->fetchColumn();
 }
 
+/**
+ * School year / semester suffix for a request line item (or legacy request row).
+ */
+function formatRequestItemTermSuffix(array $item): string {
+    if (!function_exists('semesterLabel')) {
+        require_once __DIR__ . '/student.php';
+    }
+
+    $schoolYear = trim((string) ($item['request_school_year'] ?? ''));
+    $semester = trim((string) ($item['request_semester'] ?? ''));
+    $parts = [];
+    if ($schoolYear !== '') {
+        $parts[] = $schoolYear;
+    }
+    if ($semester !== '') {
+        $parts[] = semesterLabel($semester);
+    }
+
+    return $parts !== [] ? ' (' . implode(' · ', $parts) . ')' : '';
+}
+
+/**
+ * @param int $maxNames Max document names to show; 0 or less shows all
+ */
 function formatRequestItemsSummary(array $items, int $maxNames = 2): string {
     if (empty($items)) {
         return '—';
     }
 
-    $names = array_map(static fn(array $item): string => (string) ($item['document_name'] ?? 'Document'), $items);
-    if (count($names) <= $maxNames) {
+    $names = array_map(static function (array $item): string {
+        return (string) ($item['document_name'] ?? 'Document') . formatRequestItemTermSuffix($item);
+    }, $items);
+
+    if ($maxNames <= 0 || count($names) <= $maxNames) {
         return implode(', ', $names);
     }
 

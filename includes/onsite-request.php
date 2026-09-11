@@ -705,7 +705,8 @@ function fetchOnsiteRequestSlipData(int $requestId): ?array {
     $db = getDB();
     $stmt = $db->prepare('SELECT r.*,
             u.first_name, u.last_name, u.student_id, u.email, u.phone,
-            sp.course, sp.year_level, sp.enrollment_status
+            sp.course, sp.year_level, sp.enrollment_status,
+            sp.current_academic_year, sp.current_semester, sp.year_graduated, sp.last_school_year
         FROM requests r
         JOIN users u ON r.user_id = u.id
         LEFT JOIN student_profiles sp ON u.id = sp.user_id
@@ -828,20 +829,25 @@ function buildOnsiteRequestSlipRows(array $data): array {
         . (!empty($request['year_level']) ? ' · ' . $request['year_level'] : '')
     );
 
-    $documentSummary = formatRequestItemsSummary($items, 3);
+    $documentSummary = formatRequestItemsSummary($items, 0);
     if ($documentSummary === '—' && !empty($request['document_name'])) {
-        $documentSummary = (string) $request['document_name'];
+        $documentSummary = (string) $request['document_name'] . formatRequestItemTermSuffix($request);
     }
 
-    return [
+    $rows = [
         ['Requestor', $studentName !== '' ? $studentName : '—'],
         ['Requestor ID', $request['student_id'] ?? '—'],
         ['Course / Year', $courseYear !== '' ? $courseYear : '—'],
+    ];
+    foreach (studentAcademicSlipRows($request) as $academicRow) {
+        $rows[] = $academicRow;
+    }
+    return array_merge($rows, [
         ['Documents', $documentSummary],
         ['Request Type', copyRequestTypeLabel($request['copy_request_type'] ?? null)],
         ['Purpose', purposeLabel($request['purpose'] ?? '') . (!empty($request['purpose_other']) ? ' — ' . $request['purpose_other'] : '')],
         ['Amount Due', formatMoney((float) $data['amount'])],
-    ];
+    ]);
 }
 
 function renderOnsiteRequestSlipSheetHtml(array $data): void {

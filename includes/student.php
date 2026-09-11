@@ -367,6 +367,46 @@ function isEnrolledEnrollment(?string $enrollmentStatus): bool {
     return ($enrollmentStatus ?? 'enrolled') === 'enrolled';
 }
 
+/**
+ * Label/value rows for cashier slip and claim stub based on enrollment status.
+ * Inactive last-semester is stored in student_profiles.current_semester.
+ *
+ * @param array<string,mixed> $profile Student profile fields (or joined request row)
+ * @return list<array{0:string,1:string}>
+ */
+function studentAcademicSlipRows(array $profile): array {
+    $status = $profile['enrollment_status'] ?? null;
+
+    if (isGraduatedEnrollment($status)) {
+        $year = (int) ($profile['year_graduated'] ?? 0);
+        return $year > 0 ? [['Year Graduated', (string) $year]] : [];
+    }
+
+    if (isInactiveEnrollment($status)) {
+        $rows = [];
+        $lastSchoolYear = trim((string) ($profile['last_school_year'] ?? ''));
+        $lastSemester = trim((string) ($profile['current_semester'] ?? ''));
+        if ($lastSchoolYear !== '') {
+            $rows[] = ['Last School Year', $lastSchoolYear];
+        }
+        if ($lastSemester !== '') {
+            $rows[] = ['Last Semester', semesterLabel($lastSemester)];
+        }
+        return $rows;
+    }
+
+    $rows = [];
+    $schoolYear = trim((string) ($profile['current_academic_year'] ?? ''));
+    $semester = trim((string) ($profile['current_semester'] ?? ''));
+    if ($schoolYear !== '') {
+        $rows[] = ['School Year', $schoolYear];
+    }
+    if ($semester !== '') {
+        $rows[] = ['Semester', semesterLabel($semester)];
+    }
+    return $rows;
+}
+
 function studentAcademicFieldRequirements(?string $enrollmentStatus): array {
     return match ($enrollmentStatus) {
         'graduated' => [

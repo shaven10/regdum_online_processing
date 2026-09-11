@@ -7,7 +7,8 @@ function fetchClaimStubData(int $requestId): ?array {
     $db = getDB();
     $stmt = $db->prepare('SELECT r.*, dt.name as document_name, dt.code as document_code,
         u.first_name, u.last_name, u.student_id, u.email, u.phone,
-        sp.course, sp.year_level, sp.section,
+        sp.course, sp.year_level, sp.section, sp.enrollment_status,
+        sp.current_academic_year, sp.current_semester, sp.year_graduated, sp.last_school_year,
         s.first_name as staff_first, s.last_name as staff_last
         FROM requests r
         LEFT JOIN document_types dt ON r.document_type_id = dt.id
@@ -63,9 +64,9 @@ function buildClaimStubRows(array $data): array {
         . (!empty($request['year_level']) ? ' · ' . $request['year_level'] : '')
     );
 
-    $documentSummary = formatRequestItemsSummary($items, 2);
+    $documentSummary = formatRequestItemsSummary($items, 0);
     if ($documentSummary === '—' && !empty($request['document_name'])) {
-        $documentSummary = (string) $request['document_name'];
+        $documentSummary = (string) $request['document_name'] . formatRequestItemTermSuffix($request);
         if (!empty($request['copies'])) {
             $documentSummary .= ' × ' . (int) $request['copies'];
         }
@@ -92,11 +93,16 @@ function buildClaimStubRows(array $data): array {
         ['Student', $studentName !== '' ? $studentName : '—'],
         ['Student ID', $request['student_id'] ?? '—'],
         ['Course / Year', $courseYear !== '' ? $courseYear : '—'],
+    ];
+    foreach (studentAcademicSlipRows($request) as $academicRow) {
+        $rows[] = $academicRow;
+    }
+    $rows = array_merge($rows, [
         ['Documents', $documentSummary],
         ['Delivery', deliveryMethodLabel($request['delivery_method'] ?? null)],
         ['Release', $releaseSchedule],
         ['Amount Paid', formatMoney((float) $request['total_amount'])],
-    ];
+    ]);
 
     if (($request['delivery_method'] ?? '') === 'authorized_representative' && !empty($request['representative_name'])) {
         $rows[] = ['Representative', (string) $request['representative_name']];
