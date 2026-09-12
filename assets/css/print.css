@@ -83,11 +83,17 @@
 }
 
 .onsite-slip-combined-page,
-.onsite-slip-combined-page .onsite-slip-sheet {
+.onsite-slip-combined-page .onsite-slip-sheet,
+.claim-stub-combined-page,
+.claim-stub-combined-page .claim-stub-sheet {
     --regdum-slip-width: 4.25in;
     --regdum-slip-height: 13in;
     --regdum-slip-pad-y: .28in;
     --regdum-slip-pad-x: .3in;
+}
+
+.claim-stub-batch-page .claim-stub-sheet + .claim-stub-sheet {
+    margin-top: 1.25rem;
 }
 
 .onsite-combined-slip-sheet .onsite-slip-heading {
@@ -418,7 +424,8 @@
     }
 
     /* Batch slips stack in the flow so each requestor prints on their own page. */
-    body.onsite-slip-page.onsite-slip-batch-page .onsite-slip-sheet {
+    body.onsite-slip-page.onsite-slip-batch-page .onsite-slip-sheet,
+    body.claim-stub-page.claim-stub-batch-page .claim-stub-sheet {
         position: static !important;
         top: auto !important;
         left: auto !important;
@@ -427,12 +434,14 @@
         break-after: page;
     }
 
-    body.onsite-slip-page.onsite-slip-batch-page .onsite-slip-sheet:last-of-type {
+    body.onsite-slip-page.onsite-slip-batch-page .onsite-slip-sheet:last-of-type,
+    body.claim-stub-page.claim-stub-batch-page .claim-stub-sheet:last-of-type {
         page-break-after: auto;
         break-after: auto;
     }
 
-    body.onsite-slip-page.onsite-slip-combined-page .onsite-slip-sheet {
+    body.onsite-slip-page.onsite-slip-combined-page .onsite-slip-sheet,
+    body.claim-stub-page.claim-stub-combined-page .claim-stub-sheet {
         position: static !important;
         top: auto !important;
         left: auto !important;
@@ -444,6 +453,11 @@
 }
 
 @page onsite-combined-slip {
+    size: 4.25in 13in;
+    margin: 0;
+}
+
+@page claim-combined-slip {
     size: 4.25in 13in;
     margin: 0;
 }
@@ -468,4 +482,8 @@ body.onsite-slip-page {
 
 body.onsite-slip-combined-page {
     page: onsite-combined-slip;
+}
+
+body.claim-stub-combined-page {
+    page: claim-combined-slip;
 }

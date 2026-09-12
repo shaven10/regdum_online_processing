@@ -99,7 +99,7 @@ function loadOnsiteBatchPaymentMeta(array $batchKeys): array {
     }
 
     $placeholders = implode(',', array_fill(0, count($batchKeys), '?'));
-    $stmt = getDB()->prepare("SELECT r.onsite_batch_key, p.id, p.status
+    $stmt = getDB()->prepare("SELECT r.onsite_batch_key, r.id AS request_id, p.id, p.status
         FROM requests r
         JOIN payments p ON p.request_id = r.id
         WHERE r.onsite_batch_key IN ($placeholders)
@@ -110,7 +110,11 @@ function loadOnsiteBatchPaymentMeta(array $batchKeys): array {
     foreach ($stmt->fetchAll() as $row) {
         $key = (string) $row['onsite_batch_key'];
         if (!isset($meta[$key])) {
-            $meta[$key] = ['size' => 0, 'pending_ids' => []];
+            $meta[$key] = ['size' => 0, 'pending_ids' => [], 'request_ids' => []];
+        }
+        $requestId = (int) ($row['request_id'] ?? 0);
+        if ($requestId > 0) {
+            $meta[$key]['request_ids'][$requestId] = $requestId;
         }
         $meta[$key]['size']++;
         if (($row['status'] ?? '') === 'pending') {
@@ -169,11 +173,14 @@ function decoratePaymentsWithBatchMeta(array $payments): array {
     $meta = loadOnsiteBatchPaymentMeta($keys);
     foreach ($payments as &$payment) {
         $key = trim((string) ($payment['onsite_batch_key'] ?? ''));
-        $info = $meta[$key] ?? ['size' => 1, 'pending_ids' => []];
+        $info = $meta[$key] ?? ['size' => 1, 'pending_ids' => [], 'request_ids' => []];
         $payment['batch_size'] = $key !== '' ? (int) $info['size'] : 1;
         $payment['batch_pending_ids'] = $key !== ''
             ? array_values(array_map('intval', $info['pending_ids']))
             : [(int) ($payment['id'] ?? 0)];
+        $payment['batch_request_ids'] = $key !== ''
+            ? array_values(array_map('intval', $info['request_ids'] ?? []))
+            : [(int) ($payment['request_id'] ?? 0)];
         $payment['is_multiple'] = paymentIsMultipleRequest($payment);
     }
     unset($payment);
@@ -913,6 +920,7 @@ function processPaymentAction(int $paymentId, string $action, int $verifierId, s
         updateRequestStatus($payment['request_id'], 'payment_verified', "Payment verified by $roleLabel");
         require_once __DIR__ . '/request-items.php';
         prepareRequestItemsAfterPayment((int) $payment['request_id']);
+        ensureSimpleVerificationCode((int) $payment['request_id']);
         sendNotification(
             $payment['user_id'],
             'Payment Verified',
@@ -954,7 +962,7 @@ function processPaymentAction(int $paymentId, string $action, int $verifierId, s
  * Verify several pending payments under one OR number and payment date.
  *
  * @param list<int> $paymentIds
- * @return array{ok:bool,verified:int,failed:int,ids:list<int>,error?:string}
+ * @return array{ok:bool,verified:int,failed:int,ids:list<int>,request_ids:list<int>,error?:string}
  */
 function processSharedOrPaymentVerification(
     array $paymentIds,
@@ -966,12 +974,12 @@ function processSharedOrPaymentVerification(
 ): array {
     $ids = expandPendingOnsiteBatchPaymentIds($paymentIds);
     if ($ids === []) {
-        return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => [], 'error' => 'Select at least one payment to verify.'];
+        return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => [], 'request_ids' => [], 'error' => 'Select at least one payment to verify.'];
     }
 
     $validationError = validatePaymentVerificationFields($orNumber, $paymentDate);
     if ($validationError) {
-        return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => $ids, 'error' => $validationError];
+        return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => $ids, 'request_ids' => [], 'error' => $validationError];
     }
 
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
@@ -981,24 +989,31 @@ function processSharedOrPaymentVerification(
     $stmt->execute($ids);
     $rows = $stmt->fetchAll();
     if (count($rows) !== count($ids)) {
-        return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => $ids, 'error' => 'One or more selected payments could not be found.'];
+        return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => $ids, 'request_ids' => [], 'error' => 'One or more selected payments could not be found.'];
     }
 
+    $requestIdByPayment = [];
     foreach ($rows as $row) {
+        $requestIdByPayment[(int) $row['id']] = (int) $row['request_id'];
         if (($row['status'] ?? '') !== 'pending') {
-            return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => $ids, 'error' => 'One or more selected payments are no longer pending.'];
+            return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => $ids, 'request_ids' => [], 'error' => 'One or more selected payments are no longer pending.'];
         }
         $clearanceBlock = paymentVerificationBlockedByClearance((int) $row['request_id']);
         if ($clearanceBlock !== null) {
-            return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => $ids, 'error' => $clearanceBlock];
+            return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => $ids, 'request_ids' => [], 'error' => $clearanceBlock];
         }
     }
 
     $verified = 0;
     $failed = 0;
+    $requestIds = [];
     foreach ($ids as $id) {
         if (processPaymentAction($id, 'verify', $verifierId, $verifierRole, $notes, $orNumber, $paymentDate)) {
             $verified++;
+            $requestId = (int) ($requestIdByPayment[$id] ?? 0);
+            if ($requestId > 0 && !in_array($requestId, $requestIds, true)) {
+                $requestIds[] = $requestId;
+            }
         } else {
             $failed++;
         }
@@ -1018,6 +1033,7 @@ function processSharedOrPaymentVerification(
         'verified' => $verified,
         'failed' => $failed,
         'ids' => $ids,
+        'request_ids' => $requestIds,
         'error' => $failed > 0 ? 'Some payments could not be verified.' : null,
     ];
 }

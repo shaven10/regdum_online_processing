@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/onsite-request.php';
+require_once __DIR__ . '/../includes/claim-stub.php';
 requireRole('registrar');
 
 ensureOnsiteRequestSchema();
@@ -23,11 +24,15 @@ if ($slips === []) {
 }
 
 $printableIds = [];
+$verifiedClaimIds = [];
 $batchTotal = 0.0;
 foreach ($slips as $slip) {
     $batchTotal += (float) $slip['amount'];
     if (!empty($slip['payment_code'])) {
         $printableIds[] = (int) $slip['request']['id'];
+    }
+    if (($slip['payment']['status'] ?? '') === 'verified') {
+        $verifiedClaimIds[] = (int) $slip['request']['id'];
     }
 }
 
@@ -64,6 +69,21 @@ require_once __DIR__ . '/../includes/header.php';
                    target="_blank"
                    rel="noopener">
                     <i class="fas fa-copy"></i> Print All Slips
+                </a>
+            <?php endif; ?>
+            <?php if (count($verifiedClaimIds) > 1): ?>
+                <a href="<?= e(registrarClaimStubUrl($verifiedClaimIds, 'combined', true)) ?>"
+                   class="btn btn-primary btn-sm"
+                   target="_blank"
+                   rel="noopener">
+                    <i class="fas fa-ticket-alt"></i> Print Combined Claim Slip
+                </a>
+            <?php elseif (count($verifiedClaimIds) === 1): ?>
+                <a href="<?= e(registrarClaimStubUrl($verifiedClaimIds, '', true)) ?>"
+                   class="btn btn-primary btn-sm"
+                   target="_blank"
+                   rel="noopener">
+                    <i class="fas fa-ticket-alt"></i> Print Claim Slip
                 </a>
             <?php endif; ?>
             <a href="<?= APP_URL ?>/registrar/onsite-requests.php" class="btn btn-outline btn-sm">
@@ -132,6 +152,7 @@ require_once __DIR__ . '/../includes/header.php';
                                             <i class="fas fa-print"></i> Slip
                                         </a>
                                     <?php endif; ?>
+                                    <?= renderRegistrarClaimSlipButtonsHtml($request, true, $slip['payment'] ?? null) ?>
                                     <a class="btn btn-sm btn-outline" href="<?= APP_URL ?>/registrar/verify-request.php?id=<?= $requestId ?>">
                                         <i class="fas fa-eye"></i> View
                                     </a>

@@ -609,6 +609,13 @@ function syncRequestBatchStatus(int $requestId): void {
 }
 
 function getStaffAssignedItems(int $staffId, string $status = ''): array {
+    require_once __DIR__ . '/payments.php';
+    if (!function_exists('ensureOnsiteRequestSchema')) {
+        require_once __DIR__ . '/onsite-request.php';
+    }
+    ensurePaymentVerificationSchema();
+    ensureOnsiteRequestSchema();
+
     $db = getDB();
     $where = ['ri.assigned_to = ?'];
     $params = [$staffId];
@@ -621,6 +628,8 @@ function getStaffAssignedItems(int $staffId, string $status = ''): array {
     }
 
     $sql = 'SELECT ri.*, dt.name as document_name, dt.code as document_code, r.request_number, r.status as request_status,
+            r.request_channel, r.onsite_batch_key,
+            r.request_school_year AS request_level_school_year, r.request_semester AS request_level_semester,
             u.first_name, u.last_name, u.middle_name, u.student_id,
             sp.course, sp.year_level, sp.enrollment_status,
             ap.code AS program_code, ap.name AS program_name
@@ -635,7 +644,280 @@ function getStaffAssignedItems(int $staffId, string $status = ''): array {
 
     $stmt = $db->prepare($sql);
     $stmt->execute($params);
-    return $stmt->fetchAll();
+    return decorateAssignedItemsWithPaymentMethod(decorateAssignedItemsWithRequestDocuments($stmt->fetchAll()));
+}
+
+function assignedRequestDocumentName(array $item): string {
+    $name = trim((string) ($item['document_name'] ?? 'Document'));
+    if ($name === '') {
+        $name = 'Document';
+    }
+    $copies = (int) ($item['copies'] ?? 1);
+    if ($copies > 1) {
+        $name .= ' ×' . $copies;
+    }
+
+    return $name;
+}
+
+function assignedItemTermLabel(array $item): string {
+    $year = assignedItemSchoolYear($item);
+    $semester = assignedItemSemester($item);
+    $parts = [];
+    if ($year !== '—') {
+        $parts[] = $year;
+    }
+    if ($semester !== '—') {
+        $parts[] = $semester;
+    }
+
+    return implode(' · ', $parts);
+}
+
+/**
+ * @return list<array{name:string,term:string,label:string}>
+ */
+function assignedRequestDocumentEntries(array $items): array {
+    $entries = [];
+    foreach ($items as $item) {
+        $name = assignedRequestDocumentName($item);
+        $term = assignedItemTermLabel($item);
+        $entries[] = [
+            'name' => $name,
+            'term' => $term,
+            'label' => $term !== '' ? $name . ' (' . $term . ')' : $name,
+        ];
+    }
+
+    return $entries;
+}
+
+/**
+ * @return list<string>
+ */
+function assignedRequestDocumentLabels(array $items): array {
+    return array_map(
+        static fn(array $entry): string => $entry['label'],
+        assignedRequestDocumentEntries($items)
+    );
+}
+
+function assignedItemSchoolYear(array $item): string {
+    $value = trim((string) ($item['request_school_year'] ?? ''));
+    if ($value === '') {
+        $value = trim((string) ($item['request_level_school_year'] ?? ''));
+    }
+
+    return $value !== '' ? $value : '—';
+}
+
+function assignedItemSemester(array $item): string {
+    if (!function_exists('semesterLabel')) {
+        require_once __DIR__ . '/student.php';
+    }
+
+    $value = trim((string) ($item['request_semester'] ?? ''));
+    if ($value === '') {
+        $value = trim((string) ($item['request_level_semester'] ?? ''));
+    }
+    if ($value === '') {
+        return '—';
+    }
+
+    $label = semesterLabel($value);
+    return $label !== '—' ? $label : $value;
+}
+
+function assignedItemDocumentSummary(array $item): string {
+    $summary = trim((string) ($item['document_summary'] ?? ''));
+    if ($summary !== '') {
+        return $summary;
+    }
+
+    $labels = $item['document_labels'] ?? [];
+    if ($labels !== []) {
+        return implode(', ', $labels);
+    }
+
+    $name = trim((string) ($item['document_name'] ?? ''));
+    return $name !== '' ? $name : '—';
+}
+
+function renderAssignedDocumentLabelsHtml(array $item): string {
+    $entries = $item['document_entries'] ?? [];
+    if ($entries === []) {
+        $labels = $item['document_labels'] ?? [];
+        if ($labels === []) {
+            return e(assignedItemDocumentSummary($item));
+        }
+        $entries = array_map(
+            static fn(string $label): array => ['name' => $label, 'term' => '', 'label' => $label],
+            $labels
+        );
+    }
+
+    $html = '<div class="assigned-document-list">';
+    foreach ($entries as $entry) {
+        $html .= '<div class="assigned-document-item">';
+        $html .= '<div class="assigned-document-name">' . e((string) ($entry['name'] ?? $entry['label'] ?? 'Document')) . '</div>';
+        $term = trim((string) ($entry['term'] ?? ''));
+        if ($term !== '') {
+            $html .= '<small class="assigned-document-term text-muted">' . e($term) . '</small>';
+        }
+        $html .= '</div>';
+    }
+    $html .= '</div>';
+
+    return $html;
+}
+
+/**
+ * @param list<array<string,mixed>> $rows
+ * @return list<array<string,mixed>>
+ */
+function decorateAssignedItemsWithRequestDocuments(array $rows): array {
+    $requestIds = array_values(array_unique(array_filter(array_map(
+        static fn(array $row): int => (int) ($row['request_id'] ?? 0),
+        $rows
+    ))));
+
+    $itemsByRequest = [];
+    if ($requestIds !== []) {
+        $db = getDB();
+        $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
+        $stmt = $db->prepare(
+            "SELECT ri.request_id, ri.copies, ri.request_school_year, ri.request_semester, dt.name AS document_name
+             FROM request_items ri
+             JOIN document_types dt ON ri.document_type_id = dt.id
+             WHERE ri.request_id IN ($placeholders)
+             ORDER BY ri.request_id, ri.sort_order, ri.id"
+        );
+        $stmt->execute($requestIds);
+        foreach ($stmt->fetchAll() as $item) {
+            $itemsByRequest[(int) $item['request_id']][] = $item;
+        }
+    }
+
+    foreach ($rows as &$row) {
+        $requestId = (int) ($row['request_id'] ?? 0);
+        $sourceItems = $itemsByRequest[$requestId] ?? [];
+        if ($sourceItems === [] && trim((string) ($row['document_name'] ?? '')) !== '') {
+            $sourceItems = [$row];
+        }
+        $entries = assignedRequestDocumentEntries($sourceItems);
+        $row['document_entries'] = $entries;
+        $row['document_labels'] = array_map(
+            static fn(array $entry): string => $entry['label'],
+            $entries
+        );
+        $row['document_summary'] = $row['document_labels'] !== []
+            ? implode(', ', $row['document_labels'])
+            : '—';
+    }
+    unset($row);
+
+    return $rows;
+}
+
+/**
+ * Attach the latest payment method (and Single/Multiple scope) to assignment rows.
+ *
+ * @param list<array<string,mixed>> $rows
+ * @return list<array<string,mixed>>
+ */
+function decorateAssignedItemsWithPaymentMethod(array $rows): array {
+    require_once __DIR__ . '/payments.php';
+
+    $requestIds = array_values(array_unique(array_filter(array_map(
+        static fn(array $row): int => (int) ($row['request_id'] ?? 0),
+        $rows
+    ))));
+
+    $paymentsByRequest = [];
+    if ($requestIds !== []) {
+        $db = getDB();
+        $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
+        $stmt = $db->prepare(
+            "SELECT p.id, p.request_id, p.payment_method, p.status, r.onsite_batch_key, r.request_channel
+             FROM payments p
+             JOIN requests r ON r.id = p.request_id
+             WHERE p.request_id IN ($placeholders)
+             ORDER BY (p.status = 'verified') DESC, p.id DESC"
+        );
+        $stmt->execute($requestIds);
+        foreach ($stmt->fetchAll() as $payment) {
+            $requestId = (int) ($payment['request_id'] ?? 0);
+            if ($requestId > 0 && !isset($paymentsByRequest[$requestId])) {
+                $paymentsByRequest[$requestId] = $payment;
+            }
+        }
+        $decorated = decoratePaymentsWithBatchMeta(array_values($paymentsByRequest));
+        $paymentsByRequest = [];
+        foreach ($decorated as $payment) {
+            $paymentsByRequest[(int) $payment['request_id']] = $payment;
+        }
+    }
+
+    foreach ($rows as &$row) {
+        $payment = $paymentsByRequest[(int) ($row['request_id'] ?? 0)] ?? null;
+        if ($payment === null && trim((string) ($row['payment_method'] ?? '')) !== '') {
+            $payment = $row;
+        }
+
+        if ($payment) {
+            $row['payment_method'] = $payment['payment_method'] ?? ($row['payment_method'] ?? null);
+            $row['is_multiple'] = !empty($payment['is_multiple']);
+            $row['batch_size'] = (int) ($payment['batch_size'] ?? 1);
+            $row['payment_method_label'] = paymentMethodLabel($row['payment_method'] ?? null);
+            $row['payment_scope_label'] = paymentScopeLabel($payment);
+            $row['payment_method_scope_label'] = paymentMethodScopeLabel($payment);
+        } else {
+            $row['payment_method_label'] = '—';
+            $row['payment_scope_label'] = '';
+            $row['payment_method_scope_label'] = '—';
+            $row['is_multiple'] = false;
+            $row['batch_size'] = 1;
+        }
+    }
+    unset($row);
+
+    return $rows;
+}
+
+function assignedItemMethodLabel(array $item): string {
+    $label = trim((string) ($item['payment_method_scope_label'] ?? ''));
+    if ($label !== '') {
+        return $label;
+    }
+
+    if (trim((string) ($item['payment_method'] ?? '')) !== '') {
+        require_once __DIR__ . '/payments.php';
+        return paymentMethodLabel($item['payment_method'] ?? null);
+    }
+
+    return '—';
+}
+
+function renderAssignedItemMethodHtml(array $item): string {
+    $method = trim((string) ($item['payment_method_label'] ?? ''));
+    if ($method === '' || $method === '—') {
+        return '—';
+    }
+
+    $scope = trim((string) ($item['payment_scope_label'] ?? ''));
+    $html = '<div class="assigned-method">';
+    $html .= '<div class="assigned-method-name">' . e($method) . '</div>';
+    if ($scope !== '') {
+        $scopeText = !empty($item['is_multiple'])
+            ? 'Multiple · ' . max(2, (int) ($item['batch_size'] ?? 2)) . ' requestors'
+            : 'Single request';
+        $html .= '<small class="payment-scope-pill ' . (!empty($item['is_multiple']) ? 'is-multiple' : 'is-single') . '">'
+            . e($scopeText)
+            . '</small>';
+    }
+    $html .= '</div>';
+
+    return $html;
 }
 
 function assignedStudentCourseLabel(array $item): string {
@@ -653,9 +935,82 @@ function assignedStudentYearLabel(array $item): string {
     return $year !== '' ? $year : '—';
 }
 
+function assignedStudentCourseYearLabel(array $item): string {
+    $course = assignedStudentCourseLabel($item);
+    $year = assignedStudentYearLabel($item);
+    $parts = [];
+    if ($course !== '—') {
+        $parts[] = $course;
+    }
+    if ($year !== '—') {
+        $parts[] = $year;
+    }
+
+    return $parts !== [] ? implode(' · ', $parts) : '—';
+}
+
+function renderAssignedStudentCourseYearHtml(array $item): string {
+    $course = assignedStudentCourseLabel($item);
+    $year = assignedStudentYearLabel($item);
+    if ($course === '—' && $year === '—') {
+        return '—';
+    }
+    if ($year === '—') {
+        return e($course);
+    }
+    if ($course === '—') {
+        return e($year);
+    }
+
+    return '<div class="assigned-course-year">'
+        . '<div class="assigned-course-year-course">' . e($course) . '</div>'
+        . '<small class="assigned-course-year-year text-muted">' . e($year) . '</small>'
+        . '</div>';
+}
+
 function assignedStudentNameLabel(array $item): string {
     $name = studentRecordName($item);
     return $name !== '' ? $name : '—';
+}
+
+function assignedStudentIdLabel(array $item): string {
+    $studentId = trim((string) ($item['student_id'] ?? ''));
+    return $studentId !== '' ? $studentId : '—';
+}
+
+function assignedStudentNameIdLabel(array $item): string {
+    $name = assignedStudentNameLabel($item);
+    $studentId = assignedStudentIdLabel($item);
+    if ($name === '—' && $studentId === '—') {
+        return '—';
+    }
+    if ($studentId === '—') {
+        return $name;
+    }
+    if ($name === '—') {
+        return $studentId;
+    }
+
+    return $name . ' (' . $studentId . ')';
+}
+
+function renderAssignedStudentNameIdHtml(array $item): string {
+    $name = assignedStudentNameLabel($item);
+    $studentId = assignedStudentIdLabel($item);
+    if ($name === '—' && $studentId === '—') {
+        return '—';
+    }
+    if ($studentId === '—') {
+        return e($name);
+    }
+    if ($name === '—') {
+        return e($studentId);
+    }
+
+    return '<div class="assigned-student-name-id">'
+        . '<div class="assigned-student-name">' . e($name) . '</div>'
+        . '<small class="assigned-student-id text-muted">' . e($studentId) . '</small>'
+        . '</div>';
 }
 
 function exportAssignedDocumentsCsv(array $items, string $filename = 'my_assignments.csv'): void {
@@ -664,11 +1019,9 @@ function exportAssignedDocumentsCsv(array $items, string $filename = 'my_assignm
     foreach ($items as $item) {
         $rows[] = [
             (string) ($item['request_number'] ?? ''),
-            (string) ($item['document_name'] ?? ''),
-            assignedStudentNameLabel($item),
-            (string) ($item['student_id'] ?? ''),
-            assignedStudentCourseLabel($item),
-            assignedStudentYearLabel($item),
+            assignedItemDocumentSummary($item),
+            assignedStudentNameIdLabel($item),
+            assignedStudentCourseYearLabel($item),
             enrollmentStatusLabel($item['enrollment_status'] ?? null),
             (string) (int) ($item['copies'] ?? 0),
             requestItemStatusLabel((string) ($item['item_status'] ?? '')),
@@ -677,7 +1030,7 @@ function exportAssignedDocumentsCsv(array $items, string $filename = 'my_assignm
     }
 
     exportCSV(
-        ['Request #', 'Document', 'Student', 'Student ID', 'Course', 'Year', 'Enrollment Status', 'Copies', 'Item Status', 'Batch Status'],
+        ['Request #', 'Document/s Requested', 'Student', 'Course / Year', 'Enrollment Status', 'Copies', 'Item Status', 'Batch Status'],
         $rows,
         $filename
     );

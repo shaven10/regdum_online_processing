@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/onsite-request.php';
+require_once __DIR__ . '/../includes/claim-stub.php';
 requireRole('registrar');
 
 ensureOnsiteRequestSchema();
@@ -124,6 +125,11 @@ require_once __DIR__ . '/../includes/header.php';
                                     <a href="<?= APP_URL ?>/registrar/onsite-request-slip.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-outline" target="_blank">
                                         <i class="fas fa-print"></i> Slip
                                     </a>
+                                    <?= renderRegistrarClaimSlipButtonsHtml(
+                                        $req,
+                                        true,
+                                        !empty($req['payment_status']) ? ['status' => $req['payment_status']] : null
+                                    ) ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

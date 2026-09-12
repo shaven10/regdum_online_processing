@@ -5,6 +5,7 @@ require_once __DIR__ . '/../includes/compliance.php';
 require_once __DIR__ . '/../includes/request-items.php';
 require_once __DIR__ . '/../includes/assignment-offices.php';
 require_once __DIR__ . '/../includes/ui.php';
+require_once __DIR__ . '/../includes/claim-stub.php';
 requireRole('registrar');
 
 $user = currentUser();
@@ -156,9 +157,12 @@ require_once __DIR__ . '/../includes/header.php';
             </a>
             <h2 style="margin-top:.75rem">Assign Staff — <?= e($request['request_number']) ?></h2>
         </div>
-        <a href="verify-request.php?id=<?= (int) $request['id'] ?>" class="btn btn-outline btn-sm">
-            <i class="fas fa-clipboard-check"></i> Open Full Review
-        </a>
+        <div class="card-header-actions">
+            <?= renderRegistrarClaimSlipButtonsHtml($request, true) ?>
+            <a href="verify-request.php?id=<?= (int) $request['id'] ?>" class="btn btn-outline btn-sm">
+                <i class="fas fa-clipboard-check"></i> Open Full Review
+            </a>
+        </div>
     </div>
     <div class="card-body">
         <div class="detail-grid" style="margin-bottom:1.25rem">
@@ -405,6 +409,7 @@ require_once __DIR__ . '/../includes/header.php';
                                             <i class="fas fa-user-tag"></i> Assign Staff
                                         </a>
                                         <a href="verify-request.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-outline">Review</a>
+                                        <?= renderRegistrarClaimSlipButtonsHtml($req, true) ?>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>

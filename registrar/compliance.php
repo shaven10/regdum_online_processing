@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/compliance.php';
 require_once __DIR__ . '/../includes/request-items.php';
 require_once __DIR__ . '/../includes/assignment-offices.php';
 require_once __DIR__ . '/../includes/ui.php';
+require_once __DIR__ . '/../includes/claim-stub.php';
 requireRole('registrar');
 
 $user = currentUser();
@@ -324,6 +325,7 @@ require_once __DIR__ . '/../includes/header.php';
                                             <?php else: ?>
                                                 <a href="verify-request.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-primary">Open</a>
                                             <?php endif; ?>
+                                            <?= renderRegistrarClaimSlipButtonsHtml($req, true) ?>
                                             <a href="view-attachments.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-outline" title="View attachments">
                                                 <i class="fas fa-paperclip"></i>
                                             </a>

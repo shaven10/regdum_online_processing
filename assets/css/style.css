@@ -1294,6 +1294,35 @@ a.status-bar-item {
     margin-top: .2rem;
 }
 
+.assigned-documents-table .assigned-documents-docs,
+.assigned-document-list {
+    max-width: 20rem;
+    line-height: 1.35;
+}
+
+.assigned-document-item + .assigned-document-item {
+    margin-top: .35rem;
+}
+
+.assigned-document-term {
+    display: block;
+    margin-top: .1rem;
+}
+
+.assigned-course-year-year {
+    display: block;
+    margin-top: .1rem;
+}
+
+.assigned-student-id {
+    display: block;
+    margin-top: .1rem;
+}
+
+.assigned-method .payment-scope-pill {
+    margin-top: .2rem;
+}
+
 .stat-info h3 { font-size: 1.5rem; font-weight: 700; }
 .stat-info p { color: var(--gray-500); font-size: .875rem; }
 

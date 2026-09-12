@@ -932,7 +932,7 @@ function getOnsiteRequestsList(string $status = '', string $search = '', int $li
     }
 
     $sql = 'SELECT r.id, r.request_number, r.status, r.purpose, r.copy_request_type, r.total_amount,
-                   r.created_at, r.created_by,
+                   r.created_at, r.created_by, r.onsite_batch_key,
                    u.first_name, u.last_name, u.student_id, u.email,
                    dt.name as document_name,
                    p.reference_number as payment_code, p.status as payment_status, p.amount as payment_amount,

@@ -162,15 +162,17 @@ $printedAt = date('M d, Y h:i A');
         .assignments-print-table tbody td { line-height: 1.3; }
         .assignments-print-table .col-no { width: 4%; text-align: center; }
         .assignments-print-table .col-request { width: 10%; text-align: center; font-weight: 700; }
-        .assignments-print-table .col-document { width: 14%; text-align: left; }
-        .assignments-print-table .col-student { width: 12%; text-align: left; }
-        .assignments-print-table .col-id { width: 10%; text-align: center; }
-        .assignments-print-table .col-course { width: 9%; text-align: center; }
-        .assignments-print-table .col-year { width: 6%; text-align: center; }
-        .assignments-print-table .col-enrollment { width: 10%; text-align: center; }
+        .assignments-print-table .col-document { width: 20%; text-align: left; }
+        .assignments-print-table .col-student { width: 16%; text-align: left; }
+        .assignments-print-table .col-course { width: 10%; text-align: center; }
+        .assignments-print-table .assigned-student-id { display: block; font-size: 7pt; }
+        .assignments-print-table .assigned-course-year-year { display: block; font-size: 7pt; }
+        .assignments-print-table .col-enrollment { width: 9%; text-align: center; }
         .assignments-print-table .col-copies { width: 5%; text-align: center; }
         .assignments-print-table .col-item,
-        .assignments-print-table .col-batch { width: 10%; text-align: center; }
+        .assignments-print-table .col-batch { width: 8.5%; text-align: center; }
+        .assignments-print-table .assigned-document-item + .assigned-document-item { margin-top: .1rem; }
+        .assignments-print-table .assigned-document-term { display: block; font-size: 7pt; }
         .assignments-print-summary {
             display: flex;
             justify-content: space-between;
@@ -271,11 +273,9 @@ $printedAt = date('M d, Y h:i A');
                     <tr>
                         <th class="col-no">#</th>
                         <th class="col-request">Request #</th>
-                        <th class="col-document">Document</th>
+                        <th class="col-document">Document/s Requested</th>
                         <th class="col-student">Student</th>
-                        <th class="col-id">Student ID</th>
-                        <th class="col-course">Course</th>
-                        <th class="col-year">Year</th>
+                        <th class="col-course">Course / Year</th>
                         <th class="col-enrollment">Enrollment</th>
                         <th class="col-copies">Copies</th>
                         <th class="col-item">Item Status</th>
@@ -287,11 +287,9 @@ $printedAt = date('M d, Y h:i A');
                         <tr>
                             <td class="col-no"><?= $index + 1 ?></td>
                             <td class="col-request"><?= e($item['request_number']) ?></td>
-                            <td class="col-document"><?= e($item['document_name']) ?></td>
-                            <td class="col-student"><?= e(assignedStudentNameLabel($item)) ?></td>
-                            <td class="col-id"><?= e($item['student_id'] ?? '—') ?></td>
-                            <td class="col-course"><?= e(assignedStudentCourseLabel($item)) ?></td>
-                            <td class="col-year"><?= e(assignedStudentYearLabel($item)) ?></td>
+                            <td class="col-document"><?= renderAssignedDocumentLabelsHtml($item) ?></td>
+                            <td class="col-student"><?= renderAssignedStudentNameIdHtml($item) ?></td>
+                            <td class="col-course"><?= renderAssignedStudentCourseYearHtml($item) ?></td>
                             <td class="col-enrollment"><?= e(enrollmentStatusLabel($item['enrollment_status'] ?? null)) ?></td>
                             <td class="col-copies"><?= (int) $item['copies'] ?></td>
                             <td class="col-item"><?= e(requestItemStatusLabel((string) ($item['item_status'] ?? ''))) ?></td>

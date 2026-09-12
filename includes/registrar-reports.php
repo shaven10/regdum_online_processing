@@ -3,6 +3,7 @@
 require_once __DIR__ . '/payments.php';
 require_once __DIR__ . '/onsite-request.php';
 require_once __DIR__ . '/request-items.php';
+require_once __DIR__ . '/claim-stub.php';
 
 /**
  * @return list<string>
@@ -34,17 +35,25 @@ function registrarRequestDocumentUrl(array $row): ?string {
         return null;
     }
 
+    if (isClaimStubPrintableStatus((string) ($row['status'] ?? ''))) {
+        return registrarClaimStubUrl([$id]);
+    }
+
     if (isOnsiteRequestChannel($row['request_channel'] ?? null)) {
         return APP_URL . '/registrar/onsite-request-slip.php?id=' . $id;
     }
 
-    return APP_URL . '/registrar/claim-stub.php?id=' . $id;
+    return null;
 }
 
 function registrarRequestDocumentLabel(array $row): string {
+    if (isClaimStubPrintableStatus((string) ($row['status'] ?? ''))) {
+        return 'Claim Slip';
+    }
+
     return isOnsiteRequestChannel($row['request_channel'] ?? null)
         ? 'Onsite Request Slip'
-        : 'Claim Stub';
+        : 'Claim Slip';
 }
 
 /**

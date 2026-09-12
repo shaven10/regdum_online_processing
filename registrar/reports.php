@@ -193,7 +193,7 @@ require_once __DIR__ . '/../includes/header.php';
                                     <td data-label="Slip / Stub">
                                         <?php if (!empty($req['document_link'])): ?>
                                             <a href="<?= e($req['document_link']) ?>" target="_blank" class="btn btn-outline btn-sm">
-                                                <i class="fas <?= $isOnsite ? 'fa-receipt' : 'fa-ticket-alt' ?>"></i>
+                                                <i class="fas <?= isClaimStubPrintableStatus((string) ($req['status'] ?? '')) ? 'fa-ticket-alt' : 'fa-receipt' ?>"></i>
                                                 <?= e($req['document_link_label']) ?>
                                             </a>
                                         <?php else: ?>

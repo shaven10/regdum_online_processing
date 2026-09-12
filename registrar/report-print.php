@@ -290,7 +290,7 @@ $backQuery = array_filter([
         </table>
 
         <div class="payment-report-print-footer">
-            <div>Onsite rows link to Onsite Request Slip. Online rows link to Claim Stub.</div>
+            <div>Verified payments link to Claim Slip. Unpaid onsite rows link to Onsite Request Slip.</div>
             <div><?= e(APP_NAME) ?> · Registrar Report</div>
         </div>
     </div>

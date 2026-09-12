@@ -6,6 +6,7 @@ require_once __DIR__ . '/../includes/attachments.php';
 require_once __DIR__ . '/../includes/request-items.php';
 require_once __DIR__ . '/../includes/clearance.php';
 require_once __DIR__ . '/../includes/assignment-offices.php';
+require_once __DIR__ . '/../includes/claim-stub.php';
 requireRole('registrar');
 
 $user = currentUser();
@@ -316,6 +317,7 @@ $attachmentGroups = getRequestAttachmentsGrouped($requestId);
 $payment = $db->prepare('SELECT * FROM payments WHERE request_id = ? ORDER BY created_at DESC LIMIT 1');
 $payment->execute([$requestId]);
 $paymentData = $payment->fetch();
+$canPrintRegistrarClaimSlip = requestHasVerifiedPaymentForClaimSlip($request, $paymentData ?: null);
 
 $canModifyRequestFees = canModifyRequestItemAmounts($request['status'] ?? null)
     && !($paymentData && ($paymentData['status'] ?? '') === 'verified');
@@ -513,6 +515,11 @@ require_once __DIR__ . '/../includes/header.php';
                             <i class="fas fa-print"></i> Print Request Slip
                         </a>
                     <?php endif; ?>
+                <?php endif; ?>
+                <?php if ($canPrintRegistrarClaimSlip): ?>
+                    <div class="registrar-claim-slip-actions" style="margin-top:.75rem">
+                        <?= renderRegistrarClaimSlipButtonsHtml($request, true, $paymentData ?: null) ?>
+                    </div>
                 <?php endif; ?>
 
             <?php endif; ?>
@@ -1182,6 +1189,14 @@ require_once __DIR__ . '/../includes/header.php';
 
                 </form>
 
+                <?php if ($canPrintRegistrarClaimSlip): ?>
+                    <div class="alert alert-success" style="margin-top:1rem">
+                        <i class="fas fa-print"></i>
+                        Payment is verified. You can print the claim slip now, even before staff assignment.
+                    </div>
+                    <?= renderRegistrarClaimSlipButtonsHtml($request, false, $paymentData ?: null) ?>
+                <?php endif; ?>
+
             <?php elseif ($phase === 6 && (isOnSitePickupMethod($request['delivery_method']) || isPickupOptionPending($request['delivery_method'] ?? null)) && in_array($request['status'], ['processing', 'ready_for_pickup'], true)): ?>
 
                 <div class="alert alert-info">
@@ -1234,20 +1249,23 @@ require_once __DIR__ . '/../includes/header.php';
                     </div>
                 </form>
 
+                <?php if ($canPrintRegistrarClaimSlip): ?>
+                    <div class="alert alert-success" style="margin-top:1rem">
+                        <i class="fas fa-print"></i>
+                        Payment is verified. Print the claim slip for the student to present when claiming the document.
+                    </div>
+                    <?= renderRegistrarClaimSlipButtonsHtml($request, false, $paymentData ?: null) ?>
+                <?php endif; ?>
+
             <?php else: ?>
 
-                <?php if (in_array($request['status'], ['processing', 'ready_for_pickup', 'shipped', 'completed'], true)): ?>
+                <?php if ($canPrintRegistrarClaimSlip): ?>
 
                     <div class="alert alert-success">
                         <i class="fas fa-print"></i>
-                        This request is in processing. Print the claim stub for the student to present when claiming the document.
+                        Payment is verified. Print the claim slip for the student to present when claiming the document.
                     </div>
-                    <a href="claim-stub.php?id=<?= $requestId ?>&print=1" target="_blank" class="btn btn-primary">
-                        <i class="fas fa-print"></i> Print Claim Stub
-                    </a>
-                    <a href="claim-stub.php?id=<?= $requestId ?>" target="_blank" class="btn btn-outline">
-                        <i class="fas fa-eye"></i> Preview Claim Stub
-                    </a>
+                    <?= renderRegistrarClaimSlipButtonsHtml($request, false, $paymentData ?: null) ?>
 
                 <?php else: ?>
 
