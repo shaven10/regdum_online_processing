@@ -3,8 +3,32 @@ require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/onsite-request.php';
 requireRole('registrar');
 
-$requestId = (int) ($_GET['id'] ?? 0);
+$user = currentUser();
 $autoPrint = isset($_GET['print']);
+$batchIds = normalizeOnsiteRequestIdList($_GET['ids'] ?? '');
+
+if ($batchIds !== []) {
+    $slips = fetchOnsiteRequestSlipBatch($batchIds, $user);
+    $slips = array_values(array_filter($slips, static function (array $slip): bool {
+        return !empty($slip['payment_code']);
+    }));
+
+    if ($slips === []) {
+        setFlash('error', 'No printable onsite request slips were found for that batch.');
+        redirect(APP_URL . '/registrar/onsite-requests.php');
+    }
+
+    $layout = (string) ($_GET['layout'] ?? 'separate');
+    if ($layout === 'combined') {
+        renderOnsiteRequestCombinedSlipDocument($slips, $autoPrint);
+        exit;
+    }
+
+    renderOnsiteRequestSlipBatchDocument($slips, $autoPrint);
+    exit;
+}
+
+$requestId = (int) ($_GET['id'] ?? 0);
 $data = fetchOnsiteRequestSlipData($requestId);
 
 if (!$data) {
@@ -12,7 +36,6 @@ if (!$data) {
     redirect(APP_URL . '/registrar/new-onsite-request.php');
 }
 
-$user = currentUser();
 if (!canViewOnsiteRequestSlip($user, $data['request'])) {
     setFlash('error', 'You are not allowed to view this request slip.');
     redirect(dashboardUrl());

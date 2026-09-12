@@ -5,15 +5,20 @@ requireRole('cashier');
 
 $period = $_GET['period'] ?? 'daily';
 $date = trim($_GET['date'] ?? date('Y-m-d'));
+$dateFrom = trim((string) ($_GET['date_from'] ?? ''));
+$dateTo = trim((string) ($_GET['date_to'] ?? ''));
 $status = trim($_GET['status'] ?? '');
 $search = trim($_GET['search'] ?? '');
 $method = trim($_GET['method'] ?? '');
 $page = max(1, (int) ($_GET['page'] ?? 1));
+$perPage = normalizePaymentReportPerPage((int) ($_GET['per_page'] ?? ITEMS_PER_PAGE));
 $export = $_GET['export'] ?? '';
 
 $filters = [
     'period' => $period,
     'date' => $date,
+    'date_from' => $dateFrom,
+    'date_to' => $dateTo,
     'status' => $status,
     'search' => $search,
     'method' => $method,
@@ -22,14 +27,20 @@ $filters = [
 $queryBase = array_filter([
     'period' => $period,
     'date' => $date,
+    'date_from' => $dateFrom,
+    'date_to' => $dateTo,
     'status' => $status,
     'search' => $search,
     'method' => $method,
+    'per_page' => $perPage !== ITEMS_PER_PAGE ? $perPage : '',
 ], static fn($v) => $v !== '' && $v !== null);
 
 if ($export === 'excel' || $export === 'csv') {
     $exportData = getPaymentReportData($filters, null, null);
-    $filenameBase = 'payment_report_' . ($exportData['period']['period'] ?? 'daily') . '_' . ($exportData['period']['from'] ?? date('Y-m-d'));
+    $filenameBase = 'cashier_transactions_'
+        . ($exportData['period']['from'] ?? date('Y-m-d'))
+        . '_to_'
+        . ($exportData['period']['to'] ?? date('Y-m-d'));
 
     if ($export === 'excel') {
         exportPaymentReportExcel(
@@ -48,11 +59,15 @@ if ($export === 'excel' || $export === 'csv') {
     exportCSV(paymentReportExportHeaders(), $rows, $filenameBase . '.csv');
 }
 
-$report = getPaymentReportData($filters, $page, ITEMS_PER_PAGE);
+$report = getPaymentReportData($filters, $page, $perPage);
 $summary = $report['summary'];
 $periodInfo = $report['period'];
 $payments = $report['rows'];
 $pag = $report['pagination'];
+
+$queryBase['date_from'] = $periodInfo['from'];
+$queryBase['date_to'] = $periodInfo['to'];
+$queryBase = array_filter($queryBase, static fn($v) => $v !== '' && $v !== null);
 
 $listQuery = $queryBase;
 $paginationQuery = $queryBase;
@@ -60,7 +75,7 @@ $exportQuery = $queryBase;
 $printQuery = $queryBase;
 $printQuery['print'] = '1';
 
-$pageTitle = 'Payment Reports';
+$pageTitle = 'Transaction Reports';
 $activeNav = 'reports';
 require_once __DIR__ . '/../includes/header.php';
 ?>
@@ -69,8 +84,10 @@ require_once __DIR__ . '/../includes/header.php';
     <div class="card no-print">
         <div class="card-header">
             <div>
-                <h2>Payment Reports</h2>
-                <p class="text-muted" style="margin:.35rem 0 0">Detailed cashier collection report with period filters and exports.</p>
+                <h2>Transaction Reports</h2>
+                <p class="text-muted" style="margin:.35rem 0 0">
+                    Filter cashier transactions by status and date, then print or export the matching records.
+                </p>
             </div>
             <div class="payment-report-actions">
                 <a href="report-print.php?<?= e(http_build_query($printQuery)) ?>" target="_blank" class="btn btn-outline btn-sm">
@@ -88,38 +105,72 @@ require_once __DIR__ . '/../includes/header.php';
             </div>
         </div>
         <div class="card-body">
-            <form method="GET" class="filter-bar payment-report-filters">
-                <div class="payment-report-period-tabs">
-                    <?php foreach (['daily' => 'Daily', 'weekly' => 'Weekly', 'monthly' => 'Monthly'] as $key => $label): ?>
+            <form method="GET" class="filter-bar payment-report-filters" id="cashierReportFilterForm">
+                <input type="hidden" name="period" id="reportPeriod" value="<?= e($periodInfo['period']) ?>">
+
+                <div class="payment-report-period-tabs" role="group" aria-label="Quick date range">
+                    <?php foreach (['daily' => 'Today', 'weekly' => 'This week', 'monthly' => 'This month'] as $key => $label): ?>
                         <label class="payment-report-period-option">
-                            <input type="radio" name="period" value="<?= e($key) ?>" <?= $periodInfo['period'] === $key ? 'checked' : '' ?>>
+                            <input type="radio"
+                                name="period_preset"
+                                value="<?= e($key) ?>"
+                                <?= $periodInfo['period'] === $key && $dateFrom === '' && $dateTo === '' ? 'checked' : '' ?>
+                                data-report-period="<?= e($key) ?>">
                             <span><?= e($label) ?></span>
                         </label>
                     <?php endforeach; ?>
                 </div>
 
-                <input type="date" name="date" value="<?= e($periodInfo['date']) ?>" title="Anchor date for the selected period">
+                <label class="payment-report-filter-field">
+                    <span>Status</span>
+                    <select name="status" aria-label="Filter by status">
+                        <option value="">All statuses</option>
+                        <?php foreach (['pending' => 'Pending', 'verified' => 'Verified', 'rejected' => 'Rejected'] as $value => $label): ?>
+                            <option value="<?= e($value) ?>" <?= $status === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
 
-                <select name="status">
-                    <option value="">All Statuses</option>
-                    <?php foreach (['pending', 'verified', 'rejected', 'refunded'] as $s): ?>
-                        <option value="<?= e($s) ?>" <?= $status === $s ? 'selected' : '' ?>><?= e(ucfirst($s)) ?></option>
-                    <?php endforeach; ?>
-                </select>
+                <label class="payment-report-filter-field">
+                    <span>Date from</span>
+                    <input type="date" name="date_from" id="reportDateFrom" value="<?= e($periodInfo['from']) ?>" max="<?= e(date('Y-m-d')) ?>">
+                </label>
 
-                <select name="method">
-                    <option value="">All Methods</option>
-                    <?php foreach (paymentMethodOptions() as $value => $label): ?>
-                        <option value="<?= e($value) ?>" <?= $method === $value ? 'selected' : '' ?>><?= e($label) ?></option>
-                    <?php endforeach; ?>
-                </select>
+                <label class="payment-report-filter-field">
+                    <span>Date to</span>
+                    <input type="date" name="date_to" id="reportDateTo" value="<?= e($periodInfo['to']) ?>" max="<?= e(date('Y-m-d')) ?>">
+                </label>
 
-                <input type="text" name="search" placeholder="Search request, student, OR, reference..." value="<?= e($search) ?>">
+                <label class="payment-report-filter-field">
+                    <span>Method</span>
+                    <select name="method" aria-label="Filter by method">
+                        <option value="">All methods</option>
+                        <?php foreach (paymentMethodOptions() as $value => $label): ?>
+                            <option value="<?= e($value) ?>" <?= $method === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
 
-                <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-filter"></i> Apply</button>
-                <?php if ($search !== '' || $status !== '' || $method !== '' || $periodInfo['period'] !== 'daily' || $periodInfo['date'] !== date('Y-m-d')): ?>
-                    <a href="reports.php" class="btn btn-outline btn-sm">Reset</a>
-                <?php endif; ?>
+                <label class="payment-report-filter-field payment-report-filter-search">
+                    <span>Search</span>
+                    <input type="text" name="search" placeholder="Request #, student, document, OR, reference..." value="<?= e($search) ?>">
+                </label>
+
+                <label class="payment-report-filter-field">
+                    <span>Per page</span>
+                    <select name="per_page" aria-label="Records per page" onchange="this.form.submit()">
+                        <?php foreach (paymentReportPerPageOptions() as $option): ?>
+                            <option value="<?= (int) $option ?>" <?= $perPage === $option ? 'selected' : '' ?>><?= (int) $option ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+
+                <div class="payment-report-filter-actions">
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-filter"></i> Apply</button>
+                    <?php if ($search !== '' || $status !== '' || $method !== '' || $periodInfo['from'] !== date('Y-m-d') || $periodInfo['to'] !== date('Y-m-d') || $perPage !== ITEMS_PER_PAGE): ?>
+                        <a href="reports.php" class="btn btn-outline btn-sm">Reset</a>
+                    <?php endif; ?>
+                </div>
             </form>
         </div>
     </div>
@@ -180,10 +231,11 @@ require_once __DIR__ . '/../includes/header.php';
     <div class="card">
         <div class="card-header">
             <div>
-                <h2>Detailed Payment Records</h2>
+                <h2>Transaction Records</h2>
                 <p class="text-muted" style="margin:.35rem 0 0">
                     Showing <?= count($payments) ?> of <?= (int) $pag['total'] ?> record<?= (int) $pag['total'] === 1 ? '' : 's' ?>
                     <?= (int) $pag['total_pages'] > 1 ? ' · Page ' . (int) $pag['page'] . ' of ' . (int) $pag['total_pages'] : '' ?>
+                    · <?= e($periodInfo['from']) ?> to <?= e($periodInfo['to']) ?>
                 </p>
             </div>
         </div>
@@ -197,6 +249,7 @@ require_once __DIR__ . '/../includes/header.php';
                             <tr>
                                 <th>Request #</th>
                                 <th>Student</th>
+                                <th>Document/s Requested</th>
                                 <th>Method</th>
                                 <th>Amount</th>
                                 <th>Reference / OR</th>
@@ -223,7 +276,16 @@ require_once __DIR__ . '/../includes/header.php';
                                         <?= e($studentName) ?>
                                         <br><small class="text-muted"><?= e($p['student_id'] ?? '—') ?></small>
                                     </td>
-                                    <td data-label="Method"><?= e(paymentMethodLabel($p['payment_method'] ?? null)) ?></td>
+                                    <td data-label="Document/s Requested" class="payment-report-documents">
+                                        <?php if (empty($p['document_labels'])): ?>
+                                            —
+                                        <?php else: ?>
+                                            <?php foreach ($p['document_labels'] as $documentLabel): ?>
+                                                <div><?= e($documentLabel) ?></div>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td data-label="Method"><?= e(paymentMethodScopeLabel($p)) ?></td>
                                     <td data-label="Amount"><strong><?= e(formatMoney((float) $p['amount'])) ?></strong></td>
                                     <td data-label="Reference / OR">
                                         <?= e($p['reference_number'] ?? '—') ?>
@@ -246,5 +308,65 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
     </div>
 </div>
+
+<script>
+(function () {
+    const form = document.getElementById('cashierReportFilterForm');
+    const periodInput = document.getElementById('reportPeriod');
+    const fromInput = document.getElementById('reportDateFrom');
+    const toInput = document.getElementById('reportDateTo');
+    if (!form || !fromInput || !toInput) {
+        return;
+    }
+
+    function isoDate(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return year + '-' + month + '-' + day;
+    }
+
+    function applyPreset(period) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        let from = new Date(today);
+        let to = new Date(today);
+
+        if (period === 'weekly') {
+            const weekday = today.getDay() === 0 ? 6 : today.getDay() - 1;
+            from.setDate(today.getDate() - weekday);
+            to = new Date(from);
+            to.setDate(from.getDate() + 6);
+        } else if (period === 'monthly') {
+            from = new Date(today.getFullYear(), today.getMonth(), 1);
+            to = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        }
+
+        fromInput.value = isoDate(from);
+        toInput.value = isoDate(to);
+        if (periodInput) {
+            periodInput.value = period;
+        }
+        form.submit();
+    }
+
+    form.querySelectorAll('[data-report-period]').forEach(function (input) {
+        input.addEventListener('change', function () {
+            applyPreset(input.getAttribute('data-report-period') || 'daily');
+        });
+    });
+
+    [fromInput, toInput].forEach(function (input) {
+        input.addEventListener('change', function () {
+            if (periodInput) {
+                periodInput.value = 'custom';
+            }
+            form.querySelectorAll('[data-report-period]').forEach(function (radio) {
+                radio.checked = false;
+            });
+        });
+    });
+})();
+</script>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

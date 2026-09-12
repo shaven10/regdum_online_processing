@@ -66,7 +66,12 @@ renderDashboardActions([
                                 <td data-label="Request #"><strong><?= e($p['request_number']) ?></strong></td>
                                 <td data-label="Student"><?= e($p['first_name'] . ' ' . $p['last_name']) ?></td>
                                 <td data-label="Amount"><strong><?= formatMoney((float)$p['amount']) ?></strong></td>
-                                <td data-label="Method"><?= e(paymentMethodLabel($p['payment_method'])) ?></td>
+                                <td data-label="Method">
+                                    <?= e(paymentMethodLabel($p['payment_method'])) ?>
+                                    <br><small class="payment-scope-pill <?= !empty($p['is_multiple']) ? 'is-multiple' : 'is-single' ?>">
+                                        <?= !empty($p['is_multiple']) ? 'Multiple' : 'Single' ?>
+                                    </small>
+                                </td>
                                 <td data-label="Submitted"><?= formatDateTime($p['created_at']) ?></td>
                                 <td data-label="Action"><a href="payments.php?status=pending#payment-<?= $p['id'] ?>" class="btn btn-sm btn-primary">Review</a></td>
                             </tr>

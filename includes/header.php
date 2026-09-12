@@ -119,7 +119,7 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/cashier/payments.php" class="<?= $activeNav === 'payments' ? 'active' : '' ?>"><i class="fas fa-credit-card"></i> Verify Payments</a>
                 <a href="<?= APP_URL ?>/cashier/payments.php?status=pending" class="<?= $activeNav === 'pending' ? 'active' : '' ?>"><i class="fas fa-clock"></i> Pending</a>
                 <a href="<?= APP_URL ?>/cashier/documents.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-file-invoice"></i> Assigned Documents</a>
-                <a href="<?= APP_URL ?>/cashier/reports.php" class="<?= $activeNav === 'reports' ? 'active' : '' ?>"><i class="fas fa-receipt"></i> Payment Reports</a>
+                <a href="<?= APP_URL ?>/cashier/reports.php" class="<?= $activeNav === 'reports' ? 'active' : '' ?>"><i class="fas fa-receipt"></i> Transaction Reports</a>
                 <a href="<?= APP_URL ?>/cashier/bank-settings.php" class="<?= $activeNav === 'bank-settings' ? 'active' : '' ?>"><i class="fas fa-university"></i> Bank Settings</a>
             <?php elseif (hasRole('accounting')): ?>
                 <a href="<?= APP_URL ?>/accounting/dashboard.php" class="<?= $activeNav === 'dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Dashboard</a>

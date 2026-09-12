@@ -7,6 +7,8 @@ requireRole('cashier');
 $user = currentUser();
 $period = $_GET['period'] ?? 'daily';
 $date = trim($_GET['date'] ?? date('Y-m-d'));
+$dateFrom = trim((string) ($_GET['date_from'] ?? ''));
+$dateTo = trim((string) ($_GET['date_to'] ?? ''));
 $status = trim($_GET['status'] ?? '');
 $search = trim($_GET['search'] ?? '');
 $method = trim($_GET['method'] ?? '');
@@ -15,6 +17,8 @@ $autoPdf = !empty($_GET['pdf']);
 $filters = [
     'period' => $period,
     'date' => $date,
+    'date_from' => $dateFrom,
+    'date_to' => $dateTo,
     'status' => $status,
     'search' => $search,
     'method' => $method,
@@ -29,6 +33,8 @@ $generatedAt = date('M d, Y h:i A');
 $backQuery = array_filter([
     'period' => $periodInfo['period'],
     'date' => $periodInfo['date'],
+    'date_from' => $periodInfo['from'],
+    'date_to' => $periodInfo['to'],
     'status' => $status,
     'search' => $search,
     'method' => $method,
@@ -39,7 +45,7 @@ $backQuery = array_filter([
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Payment Report — <?= e($periodInfo['label']) ?></title>
+    <title>Transaction Report — <?= e($periodInfo['label']) ?></title>
     <link rel="icon" type="image/png" href="<?= e(APP_LOGO) ?>">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css">
@@ -195,7 +201,7 @@ $backQuery = array_filter([
                 <?= renderAppLogo('default') ?>
                 <div>
                     <h1><?= e(APP_NAME) ?></h1>
-                    <p>Cashier Payment Report · <?= e(ucfirst($periodInfo['period'])) ?></p>
+                    <p>Cashier Transaction Report</p>
                 </div>
             </div>
             <div class="payment-report-print-meta">
@@ -250,13 +256,14 @@ $backQuery = array_filter([
             </table>
         <?php endif; ?>
 
-        <h3 style="margin:0 0 .5rem;font-size:1rem;">Payment Details (<?= count($payments) ?>)</h3>
+        <h3 style="margin:0 0 .5rem;font-size:1rem;">Transactions (<?= count($payments) ?>)</h3>
         <table class="payment-report-print-table">
             <thead>
                 <tr>
                     <th>#</th>
                     <th>Request</th>
                     <th>Student</th>
+                    <th>Document/s Requested</th>
                     <th>Method</th>
                     <th>Amount</th>
                     <th>Reference</th>
@@ -268,7 +275,7 @@ $backQuery = array_filter([
             </thead>
             <tbody>
                 <?php if (empty($payments)): ?>
-                    <tr><td colspan="10">No payment records found for this period.</td></tr>
+                    <tr><td colspan="11">No payment records found for this period.</td></tr>
                 <?php else: ?>
                     <?php foreach ($payments as $i => $p): ?>
                         <?php
@@ -279,7 +286,10 @@ $backQuery = array_filter([
                             <td><?= $i + 1 ?></td>
                             <td><?= e($p['request_number']) ?></td>
                             <td><?= e($studentName) ?><br><small><?= e($p['student_id'] ?? '') ?></small></td>
-                            <td><?= e(paymentMethodLabel($p['payment_method'] ?? null)) ?></td>
+                            <td><?= !empty($p['document_labels'])
+                                ? implode('<br>', array_map(static fn(string $label): string => e($label), $p['document_labels']))
+                                : e($p['document_summary'] ?? '—') ?></td>
+                            <td><?= e(paymentMethodScopeLabel($p)) ?></td>
                             <td><?= e(formatMoney((float) $p['amount'])) ?></td>
                             <td><?= e($p['reference_number'] ?? '—') ?></td>
                             <td><?= e($p['or_number'] ?? '—') ?></td>

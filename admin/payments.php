@@ -155,7 +155,7 @@ require_once __DIR__ . '/../includes/header.php';
                                 </td>
                                 <td data-label="Request #"><strong><?= e($p['request_number']) ?></strong></td>
                                 <td data-label="Student"><?= e($studentName) ?></td>
-                                <td data-label="Method"><?= e(paymentMethodLabel($p['payment_method'])) ?></td>
+                                <td data-label="Method"><?= e(paymentMethodScopeLabel($p)) ?></td>
                                 <td data-label="Amount"><?= formatMoney((float) $p['amount']) ?></td>
                                 <td data-label="Reference"><?= e($p['reference_number'] ?? '—') ?></td>
                                 <td data-label="Status"><?= statusBadge($p['status']) ?></td>

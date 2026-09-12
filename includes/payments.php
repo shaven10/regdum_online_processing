@@ -71,6 +71,159 @@ function isOnsitePaymentMethod(?string $method): bool {
     return ($method ?? '') === 'onsite_payment';
 }
 
+function paymentIsMultipleRequest(array $payment): bool {
+    $key = trim((string) ($payment['onsite_batch_key'] ?? ''));
+    $size = (int) ($payment['batch_size'] ?? 0);
+    return $key !== '' && $size > 1;
+}
+
+function paymentScopeLabel(array $payment): string {
+    return paymentIsMultipleRequest($payment) ? 'Multiple' : 'Single';
+}
+
+function paymentMethodScopeLabel(array $payment): string {
+    return paymentMethodLabel($payment['payment_method'] ?? null) . ' · ' . paymentScopeLabel($payment);
+}
+
+/**
+ * @param list<string> $batchKeys
+ * @return array<string,array{size:int,pending_ids:list<int>}>
+ */
+function loadOnsiteBatchPaymentMeta(array $batchKeys): array {
+    $batchKeys = array_values(array_unique(array_filter(array_map(
+        static fn ($key): string => trim((string) $key),
+        $batchKeys
+    ))));
+    if ($batchKeys === []) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($batchKeys), '?'));
+    $stmt = getDB()->prepare("SELECT r.onsite_batch_key, p.id, p.status
+        FROM requests r
+        JOIN payments p ON p.request_id = r.id
+        WHERE r.onsite_batch_key IN ($placeholders)
+        ORDER BY p.id ASC");
+    $stmt->execute($batchKeys);
+
+    $meta = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $key = (string) $row['onsite_batch_key'];
+        if (!isset($meta[$key])) {
+            $meta[$key] = ['size' => 0, 'pending_ids' => []];
+        }
+        $meta[$key]['size']++;
+        if (($row['status'] ?? '') === 'pending') {
+            $meta[$key]['pending_ids'][] = (int) $row['id'];
+        }
+    }
+
+    return $meta;
+}
+
+function listOnsiteBatchPaymentMembers(string $batchKey): array {
+    $batchKey = trim($batchKey);
+    if ($batchKey === '') {
+        return [];
+    }
+
+    $stmt = getDB()->prepare('SELECT p.id, p.amount, p.status, p.reference_number, p.request_id,
+            r.request_number, r.onsite_batch_key,
+            u.first_name, u.last_name, u.student_id
+        FROM payments p
+        JOIN requests r ON r.id = p.request_id
+        JOIN users u ON u.id = r.user_id
+        WHERE r.onsite_batch_key = ?
+        ORDER BY p.id ASC');
+    $stmt->execute([$batchKey]);
+
+    $members = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $members[] = [
+            'id' => (int) $row['id'],
+            'request_id' => (int) $row['request_id'],
+            'request_number' => (string) $row['request_number'],
+            'name' => trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? '')),
+            'student_id' => (string) ($row['student_id'] ?? ''),
+            'reference' => (string) ($row['reference_number'] ?? ''),
+            'amount' => (float) $row['amount'],
+            'amount_label' => formatMoney((float) $row['amount']),
+            'status' => (string) $row['status'],
+            'blocked' => ($row['status'] ?? '') === 'pending'
+                && paymentVerificationBlockedByClearance((int) $row['request_id']) !== null,
+        ];
+    }
+
+    return $members;
+}
+
+function decoratePaymentsWithBatchMeta(array $payments): array {
+    $keys = [];
+    foreach ($payments as $payment) {
+        $key = trim((string) ($payment['onsite_batch_key'] ?? ''));
+        if ($key !== '') {
+            $keys[] = $key;
+        }
+    }
+
+    $meta = loadOnsiteBatchPaymentMeta($keys);
+    foreach ($payments as &$payment) {
+        $key = trim((string) ($payment['onsite_batch_key'] ?? ''));
+        $info = $meta[$key] ?? ['size' => 1, 'pending_ids' => []];
+        $payment['batch_size'] = $key !== '' ? (int) $info['size'] : 1;
+        $payment['batch_pending_ids'] = $key !== ''
+            ? array_values(array_map('intval', $info['pending_ids']))
+            : [(int) ($payment['id'] ?? 0)];
+        $payment['is_multiple'] = paymentIsMultipleRequest($payment);
+    }
+    unset($payment);
+
+    return $payments;
+}
+
+/**
+ * @param list<int> $paymentIds
+ * @return list<int>
+ */
+function expandPendingOnsiteBatchPaymentIds(array $paymentIds): array {
+    if (!function_exists('normalizeAdminBatchRequestIds')) {
+        require_once __DIR__ . '/functions.php';
+    }
+    $ids = normalizeAdminBatchRequestIds($paymentIds);
+    if ($ids === []) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $stmt = getDB()->prepare("SELECT p.id, r.onsite_batch_key
+        FROM payments p
+        JOIN requests r ON r.id = p.request_id
+        WHERE p.id IN ($placeholders)");
+    $stmt->execute($ids);
+    $rows = $stmt->fetchAll();
+
+    $expanded = [];
+    $batchKeys = [];
+    foreach ($rows as $row) {
+        $id = (int) $row['id'];
+        $key = trim((string) ($row['onsite_batch_key'] ?? ''));
+        if ($key === '') {
+            $expanded[$id] = $id;
+            continue;
+        }
+        $batchKeys[$key] = $key;
+    }
+
+    $meta = loadOnsiteBatchPaymentMeta(array_values($batchKeys));
+    foreach ($meta as $info) {
+        foreach ($info['pending_ids'] as $pendingId) {
+            $expanded[$pendingId] = $pendingId;
+        }
+    }
+
+    return array_values($expanded);
+}
+
 function isBankTransferPaymentMethod(?string $method): bool {
     return ($method ?? '') === 'bank_transfer';
 }
@@ -234,6 +387,8 @@ function validateStudentPaymentSubmission(string $method, ?string $referenceNumb
 }
 
 function findPaymentByOnsiteReference(string $code): ?array {
+    require_once __DIR__ . '/onsite-request.php';
+    ensureOnsiteRequestSchema();
     $code = trim($code);
     if (!preg_match('/^\d{6}$/', $code)) {
         return null;
@@ -241,6 +396,7 @@ function findPaymentByOnsiteReference(string $code): ?array {
 
     $db = getDB();
     $stmt = $db->prepare('SELECT p.*, r.request_number, r.total_amount as request_amount, r.status as request_status,
+            r.onsite_batch_key,
             u.first_name, u.last_name, u.student_id, u.email,
             v.first_name as verifier_first, v.last_name as verifier_last
         FROM payments p
@@ -252,8 +408,12 @@ function findPaymentByOnsiteReference(string $code): ?array {
         LIMIT 1');
     $stmt->execute(['onsite_payment', $code, 'pending']);
     $payment = $stmt->fetch();
+    if (!$payment) {
+        return null;
+    }
 
-    return $payment ?: null;
+    $decorated = decoratePaymentsWithBatchMeta([$payment]);
+    return $decorated[0] ?? $payment;
 }
 
 function validatePaymentVerificationFields(?string $orNumber, ?string $paymentDate): ?string {
@@ -674,6 +834,8 @@ function getPaymentStats(): array {
 }
 
 function getPaymentsList(string $status = '', string $search = ''): array {
+    require_once __DIR__ . '/onsite-request.php';
+    ensureOnsiteRequestSchema();
     $db = getDB();
     $where = ['1=1'];
     $params = [];
@@ -688,7 +850,7 @@ function getPaymentsList(string $status = '', string $search = ''): array {
     }
 
     $sql = 'SELECT p.*, r.request_number, r.total_amount as request_amount, r.status as request_status,
-                   r.request_channel,
+                   r.request_channel, r.onsite_batch_key,
                    u.first_name, u.last_name, u.student_id, u.email,
                    v.first_name as verifier_first, v.last_name as verifier_last
             FROM payments p
@@ -700,7 +862,7 @@ function getPaymentsList(string $status = '', string $search = ''): array {
 
     $stmt = $db->prepare($sql);
     $stmt->execute($params);
-    return $stmt->fetchAll();
+    return decoratePaymentsWithBatchMeta($stmt->fetchAll());
 }
 
 function processPaymentAction(int $paymentId, string $action, int $verifierId, string $verifierRole, string $notes = '', ?string $orNumber = null, ?string $paymentDate = null): bool {
@@ -789,6 +951,78 @@ function processPaymentAction(int $paymentId, string $action, int $verifierId, s
 }
 
 /**
+ * Verify several pending payments under one OR number and payment date.
+ *
+ * @param list<int> $paymentIds
+ * @return array{ok:bool,verified:int,failed:int,ids:list<int>,error?:string}
+ */
+function processSharedOrPaymentVerification(
+    array $paymentIds,
+    int $verifierId,
+    string $verifierRole,
+    string $notes,
+    ?string $orNumber,
+    ?string $paymentDate
+): array {
+    $ids = expandPendingOnsiteBatchPaymentIds($paymentIds);
+    if ($ids === []) {
+        return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => [], 'error' => 'Select at least one payment to verify.'];
+    }
+
+    $validationError = validatePaymentVerificationFields($orNumber, $paymentDate);
+    if ($validationError) {
+        return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => $ids, 'error' => $validationError];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $stmt = getDB()->prepare("SELECT p.id, p.request_id, p.status
+        FROM payments p
+        WHERE p.id IN ($placeholders)");
+    $stmt->execute($ids);
+    $rows = $stmt->fetchAll();
+    if (count($rows) !== count($ids)) {
+        return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => $ids, 'error' => 'One or more selected payments could not be found.'];
+    }
+
+    foreach ($rows as $row) {
+        if (($row['status'] ?? '') !== 'pending') {
+            return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => $ids, 'error' => 'One or more selected payments are no longer pending.'];
+        }
+        $clearanceBlock = paymentVerificationBlockedByClearance((int) $row['request_id']);
+        if ($clearanceBlock !== null) {
+            return ['ok' => false, 'verified' => 0, 'failed' => 0, 'ids' => $ids, 'error' => $clearanceBlock];
+        }
+    }
+
+    $verified = 0;
+    $failed = 0;
+    foreach ($ids as $id) {
+        if (processPaymentAction($id, 'verify', $verifierId, $verifierRole, $notes, $orNumber, $paymentDate)) {
+            $verified++;
+        } else {
+            $failed++;
+        }
+    }
+
+    if ($verified > 1) {
+        auditLog('payment_verify_shared_or', 'payments', $ids[0], null, [
+            'payment_ids' => $ids,
+            'or_number' => trim((string) $orNumber),
+            'verified' => $verified,
+            'failed' => $failed,
+        ]);
+    }
+
+    return [
+        'ok' => $verified > 0,
+        'verified' => $verified,
+        'failed' => $failed,
+        'ids' => $ids,
+        'error' => $failed > 0 ? 'Some payments could not be verified.' : null,
+    ];
+}
+
+/**
  * Permanently delete a payment record and its receipt file.
  *
  * @return array{ok:bool,error?:string,request_number?:string,amount?:string}
@@ -855,12 +1089,62 @@ function adminBatchDeletePayments(array $paymentIds): array {
     ];
 }
 
+function normalizePaymentReportDate(?string $value): ?string {
+    $value = trim((string) $value);
+    if ($value === '') {
+        return null;
+    }
+
+    $parsed = DateTime::createFromFormat('Y-m-d', $value);
+    if ($parsed instanceof DateTime && $parsed->format('Y-m-d') === $value) {
+        return $value;
+    }
+
+    $timestamp = strtotime($value);
+    return $timestamp ? date('Y-m-d', $timestamp) : null;
+}
+
+function paymentReportRangeLabel(string $from, string $to): string {
+    if ($from === $to) {
+        return date('F j, Y', strtotime($from) ?: time());
+    }
+
+    return date('M j, Y', strtotime($from) ?: time()) . ' – ' . date('M j, Y', strtotime($to) ?: time());
+}
+
 /**
- * Resolve date range for cashier payment report periods.
+ * Resolve date range for cashier payment/transaction reports.
+ * An explicit date_from / date_to pair wins over the daily/weekly/monthly shortcuts.
  *
  * @return array{period:string,date:string,from:string,to:string,label:string}
  */
-function resolvePaymentReportPeriod(string $period, string $date): array {
+function resolvePaymentReportPeriod(string $period, string $date, string $dateFrom = '', string $dateTo = ''): array {
+    $from = normalizePaymentReportDate($dateFrom);
+    $to = normalizePaymentReportDate($dateTo);
+
+    if ($from || $to) {
+        $from = $from ?: $to;
+        $to = $to ?: $from;
+        if ($from > $to) {
+            [$from, $to] = [$to, $from];
+        }
+
+        $maxSpan = 366 * 2 * 86400;
+        $fromTs = strtotime($from) ?: time();
+        $toTs = strtotime($to) ?: time();
+        if (($toTs - $fromTs) > $maxSpan) {
+            $from = date('Y-m-d', $toTs - $maxSpan);
+        }
+
+        return [
+            'period' => $from === $to ? 'daily' : 'custom',
+            'date' => $to,
+            'from' => $from,
+            'to' => $to,
+            'label' => paymentReportRangeLabel($from, $to),
+        ];
+    }
+
     $period = in_array($period, ['daily', 'weekly', 'monthly'], true) ? $period : 'daily';
     $ts = strtotime($date) ?: time();
     $date = date('Y-m-d', $ts);
@@ -898,7 +1182,9 @@ function resolvePaymentReportPeriod(string $period, string $date): array {
 function buildPaymentReportFilters(array $filters): array {
     $period = resolvePaymentReportPeriod(
         (string) ($filters['period'] ?? 'daily'),
-        (string) ($filters['date'] ?? date('Y-m-d'))
+        (string) ($filters['date'] ?? date('Y-m-d')),
+        (string) ($filters['date_from'] ?? ''),
+        (string) ($filters['date_to'] ?? '')
     );
     $status = trim((string) ($filters['status'] ?? ''));
     $search = trim((string) ($filters['search'] ?? ''));
@@ -919,9 +1205,18 @@ function buildPaymentReportFilters(array $filters): array {
 
     if ($search !== '') {
         $where[] = '(r.request_number LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.student_id LIKE ?
-            OR p.reference_number LIKE ? OR p.or_number LIKE ?)';
+            OR p.reference_number LIKE ? OR p.or_number LIKE ?
+            OR EXISTS (
+                SELECT 1 FROM document_types dt
+                WHERE dt.id = r.document_type_id AND dt.name LIKE ?
+            )
+            OR EXISTS (
+                SELECT 1 FROM request_items ri
+                INNER JOIN document_types dti ON dti.id = ri.document_type_id
+                WHERE ri.request_id = r.id AND dti.name LIKE ?
+            ))';
         $like = '%' . $search . '%';
-        array_push($params, $like, $like, $like, $like, $like, $like);
+        array_push($params, $like, $like, $like, $like, $like, $like, $like, $like);
     }
 
     return [
@@ -935,19 +1230,98 @@ function buildPaymentReportFilters(array $filters): array {
 }
 
 function paymentReportBaseSelect(): string {
-    return 'SELECT p.*, r.request_number, r.request_channel, r.total_amount AS request_amount,
+    return 'SELECT p.*, r.request_number, r.request_channel, r.onsite_batch_key, r.total_amount AS request_amount,
             u.first_name, u.last_name, u.student_id, u.email,
-            v.first_name AS verifier_first, v.last_name AS verifier_last
+            v.first_name AS verifier_first, v.last_name AS verifier_last,
+            dt.name AS document_name
         FROM payments p
         JOIN requests r ON p.request_id = r.id
         JOIN users u ON r.user_id = u.id
-        LEFT JOIN users v ON p.verified_by = v.id';
+        LEFT JOIN users v ON p.verified_by = v.id
+        LEFT JOIN document_types dt ON r.document_type_id = dt.id';
+}
+
+/**
+ * Build a cashier-facing list of requested documents, including copies and term info.
+ *
+ * @return list<string>
+ */
+function paymentReportDocumentLabels(array $items, ?string $fallbackName = null): array {
+    require_once __DIR__ . '/request-items.php';
+
+    $labels = [];
+    foreach ($items as $item) {
+        $name = trim((string) ($item['document_name'] ?? 'Document'));
+        if ($name === '') {
+            $name = 'Document';
+        }
+        $name .= formatRequestItemTermSuffix($item);
+        $copies = (int) ($item['copies'] ?? 1);
+        if ($copies > 1) {
+            $name .= ' ×' . $copies;
+        }
+        $labels[] = $name;
+    }
+
+    if ($labels === []) {
+        $fallback = trim((string) $fallbackName);
+        return $fallback !== '' ? [$fallback] : [];
+    }
+
+    return $labels;
+}
+
+/**
+ * Attach document/s requested to payment report rows in one query.
+ *
+ * @param list<array<string,mixed>> $rows
+ * @return list<array<string,mixed>>
+ */
+function decoratePaymentsWithDocumentSummaries(array $rows): array {
+    require_once __DIR__ . '/request-items.php';
+
+    $requestIds = array_values(array_unique(array_filter(array_map(
+        static fn(array $row): int => (int) ($row['request_id'] ?? 0),
+        $rows
+    ))));
+
+    $itemsByRequest = [];
+    if ($requestIds !== []) {
+        $db = getDB();
+        $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
+        $stmt = $db->prepare(
+            "SELECT ri.request_id, ri.copies, ri.request_school_year, ri.request_semester, dt.name AS document_name
+             FROM request_items ri
+             JOIN document_types dt ON ri.document_type_id = dt.id
+             WHERE ri.request_id IN ($placeholders)
+             ORDER BY ri.request_id, ri.sort_order, ri.id"
+        );
+        $stmt->execute($requestIds);
+        foreach ($stmt->fetchAll() as $item) {
+            $itemsByRequest[(int) $item['request_id']][] = $item;
+        }
+    }
+
+    foreach ($rows as &$row) {
+        $requestId = (int) ($row['request_id'] ?? 0);
+        $labels = paymentReportDocumentLabels(
+            $itemsByRequest[$requestId] ?? [],
+            $row['document_name'] ?? null
+        );
+        $row['document_labels'] = $labels;
+        $row['document_summary'] = $labels !== [] ? implode(', ', $labels) : '—';
+    }
+    unset($row);
+
+    return $rows;
 }
 
 /**
  * @return array{rows:array,total:int,summary:array,period:array,filters:array}
  */
 function getPaymentReportData(array $filters, ?int $page = null, ?int $perPage = null): array {
+    require_once __DIR__ . '/onsite-request.php';
+    ensureOnsiteRequestSchema();
     $db = getDB();
     $built = buildPaymentReportFilters($filters);
     $where = $built['where'];
@@ -988,6 +1362,9 @@ function getPaymentReportData(array $filters, ?int $page = null, ?int $perPage =
 
     $sql = paymentReportBaseSelect() . ' WHERE ' . $where . ' ORDER BY COALESCE(p.verified_at, p.created_at) DESC, p.id DESC';
     if ($page !== null && $perPage !== null) {
+        if (!function_exists('paginate')) {
+            require_once __DIR__ . '/functions.php';
+        }
         $pag = paginate($total, $page, $perPage);
         $sql .= ' LIMIT ' . (int) $pag['per_page'] . ' OFFSET ' . (int) $pag['offset'];
     } else {
@@ -1002,7 +1379,7 @@ function getPaymentReportData(array $filters, ?int $page = null, ?int $perPage =
 
     $stmt = $db->prepare($sql);
     $stmt->execute($params);
-    $rows = $stmt->fetchAll();
+    $rows = decoratePaymentsWithDocumentSummaries(decoratePaymentsWithBatchMeta($stmt->fetchAll()));
 
     return [
         'rows' => $rows,
@@ -1022,6 +1399,8 @@ function getPaymentReportData(array $filters, ?int $page = null, ?int $perPage =
         'filters' => [
             'period' => $built['period']['period'],
             'date' => $built['period']['date'],
+            'date_from' => $built['period']['from'],
+            'date_to' => $built['period']['to'],
             'status' => $built['status'],
             'search' => $built['search'],
             'method' => $built['method'],
@@ -1030,11 +1409,21 @@ function getPaymentReportData(array $filters, ?int $page = null, ?int $perPage =
     ];
 }
 
+function paymentReportPerPageOptions(): array {
+    return [15, 25, 50, 100];
+}
+
+function normalizePaymentReportPerPage(int $perPage): int {
+    $allowed = paymentReportPerPageOptions();
+    return in_array($perPage, $allowed, true) ? $perPage : ITEMS_PER_PAGE;
+}
+
 function paymentReportExportHeaders(): array {
     return [
         'Request #',
         'Student',
         'Student ID',
+        'Document/s Requested',
         'Channel',
         'Method',
         'Amount',
@@ -1058,8 +1447,9 @@ function mapPaymentReportExportRow(array $row): array {
         $row['request_number'] ?? '',
         $student,
         $row['student_id'] ?? '',
+        $row['document_summary'] ?? '—',
         $channel,
-        paymentMethodLabel($row['payment_method'] ?? null),
+        paymentMethodScopeLabel($row),
         number_format((float) ($row['amount'] ?? 0), 2, '.', ''),
         $row['reference_number'] ?? '',
         $row['or_number'] ?? '',
@@ -1084,7 +1474,7 @@ function exportPaymentReportExcel(array $rows, array $summary, array $period, ar
 
     echo '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
     echo '<head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head><body>';
-    echo '<h2>Payment Report — ' . htmlspecialchars($period['label'] ?? '', ENT_QUOTES, 'UTF-8') . '</h2>';
+    echo '<h2>Cashier Transaction Report — ' . htmlspecialchars($period['label'] ?? '', ENT_QUOTES, 'UTF-8') . '</h2>';
     echo '<p>Period: ' . htmlspecialchars(ucfirst((string) ($period['period'] ?? '')), ENT_QUOTES, 'UTF-8');
     echo ' | Range: ' . htmlspecialchars(($period['from'] ?? '') . ' to ' . ($period['to'] ?? ''), ENT_QUOTES, 'UTF-8');
     if (!empty($filters['status'])) {
@@ -1106,7 +1496,7 @@ function exportPaymentReportExcel(array $rows, array $summary, array $period, ar
     echo '</tr></thead><tbody>';
 
     if (empty($rows)) {
-        echo '<tr><td colspan="14">No payment records found for this period.</td></tr>';
+        echo '<tr><td colspan="' . count(paymentReportExportHeaders()) . '">No payment records found for this period.</td></tr>';
     } else {
         foreach ($rows as $row) {
             echo '<tr>';

@@ -34,37 +34,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $notes = trim($_POST['notes'] ?? '');
     $orNumber = trim($_POST['or_number'] ?? '');
     $paymentDate = trim($_POST['payment_date'] ?? '');
+    $postedPaymentIds = normalizeAdminBatchRequestIds($_POST['payment_ids'] ?? []);
+    if ($postedPaymentIds === [] && $paymentId > 0) {
+        $postedPaymentIds = [$paymentId];
+    }
 
-    if ($paymentId && $action === 'verify') {
-        $validationError = validatePaymentVerificationFields($orNumber, $paymentDate);
-        if ($validationError) {
-            setFlash('error', $validationError);
-            redirect($redirectUrl . ($search ? '&search=' . urlencode($search) : '') . '#payment-' . $paymentId);
-        }
+    if ($action === 'verify') {
+        $result = processSharedOrPaymentVerification(
+            $postedPaymentIds,
+            (int) $user['id'],
+            (string) $user['role_name'],
+            $notes,
+            $orNumber,
+            $paymentDate
+        );
 
-        $payLookup = getDB()->prepare('SELECT request_id FROM payments WHERE id = ?');
-        $payLookup->execute([$paymentId]);
-        $requestIdForGate = (int) ($payLookup->fetchColumn() ?: 0);
-        if ($requestIdForGate > 0) {
-            $clearanceBlock = paymentVerificationBlockedByClearance($requestIdForGate);
-            if ($clearanceBlock !== null) {
-                setFlash('error', $clearanceBlock);
-                redirect($redirectUrl . ($search ? '&search=' . urlencode($search) : '') . '#payment-' . $paymentId);
-            }
+        if (!empty($result['ok'])) {
+            $count = (int) $result['verified'];
+            setFlash('success', $count === 1
+                ? 'Payment verified successfully.'
+                : $count . ' payments verified with the same OR number.', [
+                'title' => $count === 1 ? 'Payment Verified' : 'Batch Payments Verified',
+                'context' => [
+                    'OR Number' => $orNumber,
+                    'Payments' => (string) $count,
+                ],
+                'details' => $count === 1
+                    ? ['The request can now move to document processing and release.']
+                    : ['Each request in the group can now move to document processing and release.'],
+                'next_step' => 'The Registrar will assign staff and schedule document release.',
+                'action_url' => APP_URL . '/cashier/payments.php',
+                'action_label' => 'Back to payments',
+            ]);
+        } else {
+            setFlash('error', $result['error'] ?? 'Unable to process payment. It may have already been handled.');
         }
+        redirect($redirectUrl . ($search ? '&search=' . urlencode($search) : ''));
     }
 
     if ($paymentId && processPaymentAction($paymentId, $action, $user['id'], $user['role_name'], $notes, $orNumber, $paymentDate)) {
-        $verified = $action === 'verify';
-        setFlash('success', 'Payment ' . ($verified ? 'verified' : 'rejected') . ' successfully.', [
-            'title' => $verified ? 'Payment Verified' : 'Payment Rejected',
-            'details' => $verified
-                ? ['The request can now move to document processing and release.']
-                : ['Feedback was sent to the student so they can correct and resubmit payment proof.'],
-            'next_step' => $verified
-                ? 'The Registrar will assign staff and schedule document release.'
-                : 'The student will receive your feedback and may upload a new payment proof.',
-            'action_url' => APP_URL . '/cashier/payments.php' . ($verified ? '' : '?status=rejected'),
+        setFlash('success', 'Payment rejected successfully.', [
+            'title' => 'Payment Rejected',
+            'details' => ['Feedback was sent to the student so they can correct and resubmit payment proof.'],
+            'next_step' => 'The student will receive your feedback and may upload a new payment proof.',
+            'action_url' => APP_URL . '/cashier/payments.php?status=rejected',
             'action_label' => 'Back to payments',
         ]);
     } elseif ($action === 'reject') {
@@ -77,6 +90,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 }
 
 $payments = getPaymentsList($status, $search);
+$pendingPaymentCount = 0;
+foreach ($payments as $paymentRow) {
+    if (($paymentRow['status'] ?? '') === 'pending') {
+        $pendingPaymentCount++;
+    }
+}
+$batchMembersByKey = [];
+foreach ($payments as $paymentRow) {
+    $batchKey = trim((string) ($paymentRow['onsite_batch_key'] ?? ''));
+    if ($batchKey === '' || empty($paymentRow['is_multiple']) || isset($batchMembersByKey[$batchKey])) {
+        continue;
+    }
+    $batchMembersByKey[$batchKey] = listOnsiteBatchPaymentMembers($batchKey);
+}
 $verificationDetailsByPayment = buildPaymentVerificationDetailsForPayments($payments);
 $requestDetailsByPayment = buildPaymentRequestDetailsForPayments($payments);
 $stats = getPaymentStats();
@@ -142,6 +169,11 @@ require_once __DIR__ . '/../includes/header.php';
                 Found pending payment for <strong><?= e($onsiteLookupPayment['request_number']) ?></strong>
                 — <?= e($onsiteLookupPayment['first_name'] . ' ' . $onsiteLookupPayment['last_name']) ?>
                 (<?= formatMoney((float) $onsiteLookupPayment['amount']) ?>).
+                <?php if (!empty($onsiteLookupPayment['is_multiple'])): ?>
+                    This is a <strong>multiple</strong> onsite batch
+                    (<?= (int) ($onsiteLookupPayment['batch_size'] ?? 0) ?> requestors).
+                    One OR number will verify the whole batch.
+                <?php endif; ?>
                 <?php if (!empty($lookupGate['blocked'])): ?>
                     Online clearance is incomplete (<?= (int) $lookupGate['cleared'] ?>/<?= (int) $lookupGate['total'] ?>). Verification is blocked until clearance is complete.
                 <?php else: ?>
@@ -185,10 +217,43 @@ require_once __DIR__ . '/../includes/header.php';
         <?php if (empty($payments)): ?>
             <div class="empty-state"><i class="fas fa-receipt"></i><p>No payments found.</p></div>
         <?php else: ?>
+            <?php if ($pendingPaymentCount > 0): ?>
+            <div class="batch-action-bar cashier-shared-or-bar" id="cashierSharedOrBar">
+                <div class="batch-action-count">
+                    <label class="checkbox-label cashier-select-all-option">
+                        <input type="checkbox" id="cashierSharedOrSelectAllVisible" aria-label="Select all pending payments">
+                        <span>Select all pending</span>
+                    </label>
+                    <span class="text-muted">
+                        <strong data-shared-or-count>0</strong> of <?= (int) $pendingPaymentCount ?> selected
+                        · same OR number
+                    </span>
+                </div>
+                <div class="batch-action-buttons">
+                    <button type="button" class="btn btn-outline btn-sm" id="cashierSharedOrSelectAll">
+                        <i class="fas fa-check-double"></i> Select all
+                    </button>
+                    <button type="button" class="btn btn-outline btn-sm" id="cashierSharedOrClear" disabled>
+                        Clear
+                    </button>
+                    <button type="button" class="btn btn-primary btn-sm" id="cashierSharedOrReview" disabled>
+                        <i class="fas fa-file-invoice-dollar"></i> Verify selected
+                    </button>
+                </div>
+            </div>
+            <?php endif; ?>
             <div class="table-wrap payments-table-wrap">
                 <table class="data-table payments-table data-table-responsive">
                     <thead>
                         <tr>
+                            <th class="batch-select-col">
+                                <?php if ($pendingPaymentCount > 0): ?>
+                                    <label class="checkbox-label batch-select-all-label" title="Select all pending payments">
+                                        <input type="checkbox" id="cashierSharedOrSelectAllHeader" aria-label="Select all pending payments">
+                                        <span class="cashier-select-all-header-text">All</span>
+                                    </label>
+                                <?php endif; ?>
+                            </th>
                             <th>Request #</th>
                             <th>Student</th>
                             <th>Method</th>
@@ -208,6 +273,23 @@ require_once __DIR__ . '/../includes/header.php';
                                 : ['required' => false, 'complete' => true, 'blocked' => false, 'cleared' => 0, 'total' => 0, 'message' => null];
                         ?>
                         <tr id="payment-<?= $p['id'] ?>" class="<?= $p['status'] === 'pending' ? 'payment-row-pending' : ($p['status'] === 'rejected' ? 'payment-row-rejected' : '') ?><?= $onsiteLookupPayment && (int) $onsiteLookupPayment['id'] === (int) $p['id'] ? ' payment-row-highlight' : '' ?><?= !empty($clearanceGate['blocked']) ? ' payment-row-clearance-blocked' : '' ?>">
+                            <td data-label="Select" class="batch-select-col">
+                                <?php if ($p['status'] === 'pending'): ?>
+                                    <label class="checkbox-label">
+                                        <input type="checkbox"
+                                            class="cashier-shared-or-check"
+                                            value="<?= (int) $p['id'] ?>"
+                                            data-amount="<?= e((string) (float) $p['amount']) ?>"
+                                            data-request-number="<?= e($p['request_number']) ?>"
+                                            data-student-name="<?= e($p['first_name'] . ' ' . $p['last_name']) ?>"
+                                            data-student-id="<?= e($p['student_id'] ?? '') ?>"
+                                            data-reference="<?= e($p['reference_number'] ?? '') ?>"
+                                            data-is-onsite="<?= isOnsitePaymentMethod($p['payment_method']) ? '1' : '0' ?>"
+                                            data-clearance-blocked="<?= !empty($clearanceGate['blocked']) ? '1' : '0' ?>"
+                                            aria-label="Select <?= e($p['request_number']) ?>">
+                                    </label>
+                                <?php endif; ?>
+                            </td>
                             <td data-label="Request #"><strong><?= e($p['request_number']) ?></strong></td>
                             <td data-label="Student">
                                 <?= e($p['first_name'] . ' ' . $p['last_name']) ?>
@@ -215,6 +297,12 @@ require_once __DIR__ . '/../includes/header.php';
                             </td>
                             <td data-label="Method">
                                 <?= e(paymentMethodLabel($p['payment_method'])) ?>
+                                <br>
+                                <small class="payment-scope-pill <?= !empty($p['is_multiple']) ? 'is-multiple' : 'is-single' ?>">
+                                    <?= !empty($p['is_multiple'])
+                                        ? 'Multiple · ' . (int) $p['batch_size'] . ' requestors'
+                                        : 'Single request' ?>
+                                </small>
                                 <?php if (!empty($clearanceGate['required'])): ?>
                                     <br>
                                     <?php if (!empty($clearanceGate['blocked'])): ?>
@@ -248,10 +336,15 @@ require_once __DIR__ . '/../includes/header.php';
                                         data-request-number="<?= e($p['request_number']) ?>"
                                         data-student-name="<?= e($p['first_name'] . ' ' . $p['last_name']) ?>"
                                         data-student-id="<?= e($p['student_id'] ?? '') ?>"
-                                        data-method="<?= e(paymentMethodLabel($p['payment_method'])) ?>"
+                                        data-method="<?= e(paymentMethodScopeLabel($p)) ?>"
                                         data-amount="<?= e(formatMoney((float)$p['amount'])) ?>"
+                                        data-amount-raw="<?= e((string) (float) $p['amount']) ?>"
                                         data-reference="<?= e($p['reference_number'] ?? '—') ?>"
                                         data-is-onsite="<?= isOnsitePaymentMethod($p['payment_method']) ? '1' : '0' ?>"
+                                        data-is-multiple="<?= !empty($p['is_multiple']) ? '1' : '0' ?>"
+                                        data-batch-key="<?= e((string) ($p['onsite_batch_key'] ?? '')) ?>"
+                                        data-batch-size="<?= (int) ($p['batch_size'] ?? 1) ?>"
+                                        data-batch-pending-ids="<?= e(implode(',', $p['batch_pending_ids'] ?? [(int) $p['id']])) ?>"
                                         data-clearance-required="<?= !empty($clearanceGate['required']) ? '1' : '0' ?>"
                                         data-clearance-blocked="<?= !empty($clearanceGate['blocked']) ? '1' : '0' ?>"
                                         data-clearance-progress="<?= !empty($clearanceGate['required']) ? ((int) $clearanceGate['cleared'] . '/' . (int) $clearanceGate['total']) : '' ?>"
@@ -259,7 +352,8 @@ require_once __DIR__ . '/../includes/header.php';
                                         data-submitted="<?= e(formatDateTime($p['created_at'])) ?>"
                                         data-receipt-url="<?= (!isOnsitePaymentMethod($p['payment_method']) && $p['receipt_path']) ? e(UPLOAD_URL . '/' . $p['receipt_path']) : '' ?>"
                                         data-receipt-is-image="<?= (!isOnsitePaymentMethod($p['payment_method']) && $receiptIsImage) ? '1' : '0' ?>">
-                                        <i class="fas fa-search"></i> Review
+                                        <i class="fas fa-search"></i>
+                                        <?= !empty($p['is_multiple']) ? 'Review Batch' : 'Review' ?>
                                     </button>
                                 <?php endif; ?>
                             </td>
@@ -334,6 +428,18 @@ require_once __DIR__ . '/../includes/header.php';
                         <p class="text-muted">Select a payment to load request details.</p>
                     </div>
                 </details>
+
+                <div class="payment-batch-panel" data-batch-panel hidden>
+                    <h4><i class="fas fa-users"></i> Multiple verification</h4>
+                    <p class="text-muted" data-batch-panel-note>
+                        These payments will be verified together using the same OR number.
+                    </p>
+                    <ul class="payment-batch-members" data-batch-members></ul>
+                    <div class="payment-batch-total">
+                        <span>Combined amount</span>
+                        <strong data-batch-total>₱ 0.00</strong>
+                    </div>
+                </div>
 
                 <div class="payment-verify-fields" data-verify-panel>
                     <h4><i class="fas fa-file-invoice-dollar"></i> Verification Details</h4>
@@ -411,8 +517,10 @@ require_once __DIR__ . '/../includes/header.php';
                 <form method="POST" id="paymentVerifyForm" class="payment-verify-form" data-verify-form>
                     <?= csrfField() ?>
                     <input type="hidden" name="payment_id" value="" data-payment-id-input>
+                    <div data-payment-ids-holder></div>
                     <button type="submit" name="action" value="verify" class="btn btn-primary">
-                        <i class="fas fa-check-circle"></i> Verify Payment
+                        <i class="fas fa-check-circle"></i>
+                        <span data-verify-submit-label>Verify Payment</span>
                     </button>
                 </form>
             </div>
@@ -458,6 +566,12 @@ require_once __DIR__ . '/../includes/header.php';
             <button type="button" class="btn btn-outline" data-close-payment-details-modal>Close</button>
         </div>
     </div>
+</div>
+
+<div class="payment-batch-members-store" hidden aria-hidden="true">
+    <?php foreach ($batchMembersByKey as $batchKey => $members): ?>
+        <script type="application/json" id="paymentBatchMembers-<?= e($batchKey) ?>"><?= json_encode($members, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?></script>
+    <?php endforeach; ?>
 </div>
 
 <?php if ($onsiteLookupPayment): ?>

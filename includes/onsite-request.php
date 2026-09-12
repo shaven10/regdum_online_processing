@@ -8,6 +8,9 @@ require_once __DIR__ . '/student.php';
 require_once __DIR__ . '/campuses.php';
 require_once __DIR__ . '/document-rules.php';
 
+/** Maximum number of existing students allowed in one multi-student onsite request. */
+const ONSITE_MULTI_STUDENT_MAX = 10;
+
 function ensureOnsiteRequestSchema(): void {
     static $done = false;
     if ($done) {
@@ -34,6 +37,21 @@ function ensureOnsiteRequestSchema(): void {
             // Constraint may already exist on partial upgrades.
         }
     }
+
+    $batchKeyCol = $db->query("SHOW COLUMNS FROM requests LIKE 'onsite_batch_key'")->fetch();
+    if (!$batchKeyCol) {
+        $db->exec("ALTER TABLE requests
+            ADD COLUMN onsite_batch_key VARCHAR(32) NULL AFTER created_by");
+        try {
+            $db->exec('CREATE INDEX idx_requests_onsite_batch_key ON requests (onsite_batch_key)');
+        } catch (Throwable $e) {
+            // Index may already exist on partial upgrades.
+        }
+    }
+}
+
+function generateOnsiteBatchKey(): string {
+    return 'OB' . date('Y') . strtoupper(bin2hex(random_bytes(6)));
 }
 
 function isOnsiteRequestChannel(?string $channel): bool {
@@ -430,6 +448,134 @@ function resolveOnsiteRequestor(array $input): array {
 }
 
 /**
+ * Normalize posted student user IDs for a multi-student onsite request.
+ * Duplicates are dropped and the list is capped at ONSITE_MULTI_STUDENT_MAX.
+ *
+ * @return list<int>
+ */
+function normalizeOnsiteMultiStudentIds($rawIds): array {
+    $ids = [];
+    foreach ((array) $rawIds as $rawId) {
+        $id = (int) $rawId;
+        if ($id > 0 && !in_array($id, $ids, true)) {
+            $ids[] = $id;
+        }
+    }
+
+    return array_slice($ids, 0, ONSITE_MULTI_STUDENT_MAX);
+}
+
+/**
+ * Load the selected students and confirm they can share a single document selection.
+ * Document availability, fees and copy limits are driven by enrollment status, so
+ * every student in the batch must match the status the request was built for.
+ *
+ * @param list<int> $ids
+ * @return array{students: list<array>, error: ?string}
+ */
+function resolveOnsiteMultiStudents(array $ids, string $enrollmentStatus): array {
+    ensureEnrollmentStatuses();
+
+    $students = [];
+    $missing = false;
+    $inactive = [];
+    $mismatched = [];
+
+    foreach ($ids as $id) {
+        $student = findStudentUserById($id);
+        if (!$student) {
+            $missing = true;
+            continue;
+        }
+
+        // The picker only offers active accounts; keep posted IDs to the same rule.
+        if (empty($student['is_active'])) {
+            $inactive[] = studentRecordName($student);
+            continue;
+        }
+
+        $studentStatus = (string) ($student['enrollment_status'] ?? 'enrolled');
+        if ($studentStatus === '') {
+            $studentStatus = 'enrolled';
+        }
+        if ($studentStatus !== $enrollmentStatus) {
+            $mismatched[] = studentRecordName($student) . ' — ' . enrollmentStatusLabel($studentStatus);
+            continue;
+        }
+
+        $students[] = $student;
+    }
+
+    $error = null;
+    if ($missing) {
+        $error = 'One or more selected student records could not be found. Remove them and search again.';
+    } elseif ($inactive !== []) {
+        $error = 'These student accounts are deactivated and cannot be added: ' . implode('; ', $inactive) . '.';
+    } elseif ($mismatched !== []) {
+        $error = 'Every student in a multi-student request must be '
+            . enrollmentStatusLabel($enrollmentStatus)
+            . ' to share the same documents. Remove or change: ' . implode('; ', $mismatched) . '.';
+    }
+
+    return ['students' => $students, 'error' => $error];
+}
+
+/**
+ * Create one onsite credential request per student, all sharing the same documents.
+ * Each student keeps an individual request number and payment code, but the
+ * cashier verifies the group together under one OR number.
+ *
+ * @param list<array> $students   Existing student rows from findStudentUserById()
+ * @param list<array> $itemDrafts Same shape as createOnsiteCredentialRequest()
+ * @return array{created: list<array>, failed: list<array{student: string, message: string}>}
+ */
+function createOnsiteCredentialRequestsForStudents(
+    array $students,
+    int $createdByUserId,
+    array $payload,
+    array $itemDrafts
+): array {
+    if ($students === []) {
+        throw new InvalidArgumentException('Select at least one student for a multi-student request.');
+    }
+    if (count($students) > ONSITE_MULTI_STUDENT_MAX) {
+        throw new InvalidArgumentException('A multi-student request can include at most ' . ONSITE_MULTI_STUDENT_MAX . ' students.');
+    }
+
+    $created = [];
+    $failed = [];
+    $batchKey = generateOnsiteBatchKey();
+
+    foreach ($students as $student) {
+        try {
+            $created[] = createOnsiteCredentialRequest($student, $createdByUserId, $payload, $itemDrafts, $batchKey);
+        } catch (Throwable $e) {
+            error_log('Multi-student onsite request failed for user ' . (int) ($student['id'] ?? 0) . ': ' . $e->getMessage());
+            $failed[] = [
+                'student' => studentRecordName($student),
+                'message' => $e instanceof InvalidArgumentException
+                    ? $e->getMessage()
+                    : 'Unable to create a request for this student.',
+            ];
+        }
+    }
+
+    if ($created === []) {
+        throw new RuntimeException('No requests could be created for the selected students. Please try again.');
+    }
+
+    auditLog('create_onsite_multi_request', 'requests', (int) $created[0]['request_id'], null, [
+        'student_count' => count($created),
+        'failed_count' => count($failed),
+        'document_count' => count($itemDrafts),
+        'onsite_batch_key' => $batchKey,
+        'request_numbers' => array_map(static fn (array $row): string => (string) $row['request_number'], $created),
+    ]);
+
+    return ['created' => $created, 'failed' => $failed];
+}
+
+/**
  * Create an onsite credential request ready for cashier payment.
  * When require_online_clearance is set, payment code is still generated but cashier
  * verification is blocked until all clearance offices sign.
@@ -441,7 +587,8 @@ function createOnsiteCredentialRequest(
     array $studentUser,
     int $createdByUserId,
     array $payload,
-    array $itemDrafts
+    array $itemDrafts,
+    ?string $onsiteBatchKey = null
 ): array {
     ensureOnsiteRequestSchema();
     ensureRequestItemsSchema();
@@ -473,11 +620,16 @@ function createOnsiteCredentialRequest(
         $notes .= ' Online clearance required before cashier payment verification.';
     }
 
+    $onsiteBatchKey = trim((string) $onsiteBatchKey);
+    if ($onsiteBatchKey === '') {
+        $onsiteBatchKey = null;
+    }
+
     $stmt = $db->prepare('INSERT INTO requests (
         request_number, user_id, document_type_id, purpose, purpose_other, copy_request_type, copies, delivery_method,
         pickup_date, pickup_time, representative_name, representative_relationship, representative_phone,
-        representative_id_number, total_amount, verification_code, notes, request_channel, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, \'onsite\', ?)');
+        representative_id_number, total_amount, verification_code, notes, request_channel, created_by, onsite_batch_key
+    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, \'onsite\', ?, ?)');
     $stmt->execute([
         $requestNumber,
         $studentUserId,
@@ -490,6 +642,7 @@ function createOnsiteCredentialRequest(
         generateVerificationCode(),
         $notes,
         $createdByUserId > 0 ? $createdByUserId : null,
+        $onsiteBatchKey,
     ]);
     $requestId = (int) $db->lastInsertId();
 
@@ -850,14 +1003,14 @@ function buildOnsiteRequestSlipRows(array $data): array {
     ]);
 }
 
-function renderOnsiteRequestSlipSheetHtml(array $data): void {
+function renderOnsiteRequestSlipSheetHtml(array $data, string $elementId = 'onsiteRequestSlipSheet'): void {
     $request = $data['request'];
     $paymentCode = (string) ($data['payment_code'] ?? '—');
     $rows = buildOnsiteRequestSlipRows($data);
     $requiresClearance = !empty($data['requires_clearance']);
     $clearanceComplete = !empty($data['clearance_complete']);
     ?>
-    <article class="onsite-slip-sheet regdum-slip-sheet" id="onsiteRequestSlipSheet"
+    <article class="onsite-slip-sheet regdum-slip-sheet" id="<?= e($elementId) ?>"
         data-request-number="<?= e($request['request_number']) ?>"
         data-slip-width="4.25"
         data-slip-height="6.5">
@@ -947,6 +1100,337 @@ function renderOnsiteRequestSlipDocument(array $data, bool $autoPrint = false): 
     </div>
 
     <?php renderOnsiteRequestSlipSheetHtml($data); ?>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="<?= APP_URL ?>/assets/js/onsite-request-slip.js"></script>
+</body>
+</html>
+    <?php
+}
+
+/**
+ * Parse a comma separated or array list of request IDs (e.g. the ids= query param).
+ *
+ * @return list<int>
+ */
+function normalizeOnsiteRequestIdList($raw): array {
+    $parts = is_array($raw) ? $raw : explode(',', (string) $raw);
+    $ids = [];
+    foreach ($parts as $part) {
+        $id = (int) trim((string) $part);
+        if ($id > 0 && !in_array($id, $ids, true)) {
+            $ids[] = $id;
+        }
+    }
+
+    return $ids;
+}
+
+/**
+ * Load slip data for several onsite requests, skipping any the user may not view.
+ *
+ * @param list<int> $requestIds
+ * @return list<array>
+ */
+function fetchOnsiteRequestSlipBatch(array $requestIds, array $viewer): array {
+    $slips = [];
+    foreach ($requestIds as $requestId) {
+        $data = fetchOnsiteRequestSlipData($requestId);
+        if (!$data) {
+            continue;
+        }
+        if (!isOnsiteRequestChannel($data['request']['request_channel'] ?? null)) {
+            continue;
+        }
+        if (!canViewOnsiteRequestSlip($viewer, $data['request'])) {
+            continue;
+        }
+        $slips[] = $data;
+    }
+
+    return $slips;
+}
+
+/**
+ * Shared document / purpose / fee summary for a multi-student batch slip.
+ *
+ * @param list<array> $slips
+ * @return array{
+ *   document_summary:string,
+ *   purpose:string,
+ *   copy_type:string,
+ *   enrollment_status:string,
+ *   requestor_count:int,
+ *   batch_total:float,
+ *   requires_clearance:bool,
+ *   clearance_complete:bool,
+ *   printable_ids:list<int>,
+ *   first_request_number:string
+ * }
+ */
+function summarizeOnsiteBatchSlips(array $slips): array {
+    $first = $slips[0] ?? [];
+    $request = $first['request'] ?? [];
+    $items = $first['items'] ?? [];
+
+    $documentSummary = formatRequestItemsSummary($items, 0);
+    if ($documentSummary === '—' && !empty($request['document_name'])) {
+        $documentSummary = (string) $request['document_name'] . formatRequestItemTermSuffix($request);
+    }
+    if ($documentSummary === '—') {
+        $documentSummary = 'Requested credentials';
+    }
+
+    $purpose = purposeLabel((string) ($request['purpose'] ?? ''));
+    if (!empty($request['purpose_other'])) {
+        $purpose .= ' — ' . $request['purpose_other'];
+    }
+
+    $batchTotal = 0.0;
+    $printableIds = [];
+    $requiresClearance = false;
+    $clearanceComplete = true;
+    foreach ($slips as $slip) {
+        $batchTotal += (float) ($slip['amount'] ?? 0);
+        if (!empty($slip['payment_code'])) {
+            $printableIds[] = (int) ($slip['request']['id'] ?? 0);
+        }
+        if (!empty($slip['requires_clearance'])) {
+            $requiresClearance = true;
+            if (empty($slip['clearance_complete'])) {
+                $clearanceComplete = false;
+            }
+        }
+    }
+
+    return [
+        'document_summary' => $documentSummary,
+        'purpose' => $purpose,
+        'copy_type' => copyRequestTypeLabel($request['copy_request_type'] ?? null),
+        'enrollment_status' => enrollmentStatusLabel($request['enrollment_status'] ?? null),
+        'requestor_count' => count($slips),
+        'batch_total' => $batchTotal,
+        'requires_clearance' => $requiresClearance,
+        'clearance_complete' => $clearanceComplete,
+        'printable_ids' => array_values(array_filter($printableIds)),
+        'first_request_number' => (string) ($request['request_number'] ?? 'onsite-batch'),
+    ];
+}
+
+function onsiteBatchSlipQuery(array $requestIds, string $layout = 'separate', bool $autoPrint = false): string {
+    $query = 'ids=' . implode(',', $requestIds);
+    if ($layout === 'combined') {
+        $query .= '&layout=combined';
+    }
+    if ($autoPrint) {
+        $query .= '&print=1';
+    }
+    return $query;
+}
+
+/**
+ * Render every slip in a multi-student batch, one per printed page.
+ *
+ * @param list<array> $slips
+ */
+function renderOnsiteRequestSlipBatchDocument(array $slips, bool $autoPrint = false): void {
+    $slipCount = count($slips);
+    $printableIds = summarizeOnsiteBatchSlips($slips)['printable_ids'];
+    ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Onsite Request Slips — <?= $slipCount ?> requestor<?= $slipCount === 1 ? '' : 's' ?></title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css">
+    <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/print.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body class="onsite-slip-page onsite-slip-batch-page<?= $autoPrint ? ' auto-print' : '' ?>">
+    <div class="onsite-slip-toolbar regdum-slip-toolbar no-print">
+        <a href="<?= APP_URL ?>/registrar/new-onsite-request.php" class="btn btn-outline btn-sm">
+            <i class="fas fa-plus"></i> New Onsite Request
+        </a>
+        <div class="onsite-slip-toolbar-actions regdum-slip-toolbar-actions">
+            <span class="onsite-slip-batch-count"><?= $slipCount ?> slip<?= $slipCount === 1 ? '' : 's' ?></span>
+            <?php if ($printableIds !== []): ?>
+                <a href="<?= APP_URL ?>/registrar/onsite-request-slip.php?<?= e(onsiteBatchSlipQuery($printableIds, 'combined')) ?>"
+                   class="btn btn-outline btn-sm">
+                    <i class="fas fa-file-alt"></i> Combined Slip
+                </a>
+            <?php endif; ?>
+            <button type="button" class="btn btn-primary btn-sm" onclick="window.print()">
+                <i class="fas fa-print"></i> Print All Slips
+            </button>
+        </div>
+    </div>
+
+    <?php foreach ($slips as $index => $data): ?>
+        <?php renderOnsiteRequestSlipSheetHtml($data, 'onsiteRequestSlipSheet' . ($index + 1)); ?>
+    <?php endforeach; ?>
+
+    <script>
+    if (document.body.classList.contains('auto-print')) {
+        window.addEventListener('load', function () {
+            window.setTimeout(function () { window.print(); }, 400);
+        });
+    }
+    </script>
+</body>
+</html>
+    <?php
+}
+
+/**
+ * One 4.25 × 13 in slip covering every requestor in a multi-student batch.
+ *
+ * @param list<array> $slips
+ */
+function renderOnsiteRequestCombinedSlipSheetHtml(array $slips): void {
+    $summary = summarizeOnsiteBatchSlips($slips);
+    $requestorCount = (int) $summary['requestor_count'];
+    ?>
+    <article class="onsite-slip-sheet onsite-combined-slip-sheet regdum-slip-sheet" id="onsiteRequestSlipSheet"
+        data-request-number="<?= e($summary['first_request_number'] . '-batch') ?>"
+        data-slip-width="4.25"
+        data-slip-height="13">
+        <header class="onsite-slip-top regdum-slip-top">
+            <img src="<?= e(APP_LOGO) ?>" alt="<?= e(APP_NAME) ?>" class="app-logo app-logo-claim onsite-slip-logo regdum-slip-logo">
+            <div class="onsite-slip-brand regdum-slip-brand">
+                <p class="onsite-slip-office regdum-slip-office"><?= e(APP_NAME) ?></p>
+                <p class="onsite-slip-subtitle regdum-slip-subtitle"><?= e(APP_TAGLINE) ?></p>
+            </div>
+            <h1 class="onsite-slip-heading regdum-slip-heading">Onsite Batch Request Slip</h1>
+        </header>
+
+        <div class="onsite-combined-meta">
+            <div>
+                <span class="onsite-combined-meta-label">Requestors</span>
+                <strong><?= $requestorCount ?> student<?= $requestorCount === 1 ? '' : 's' ?></strong>
+            </div>
+            <div>
+                <span class="onsite-combined-meta-label">Documents</span>
+                <strong><?= e($summary['document_summary']) ?></strong>
+            </div>
+            <div>
+                <span class="onsite-combined-meta-label">Purpose</span>
+                <strong><?= e($summary['purpose']) ?></strong>
+            </div>
+            <div>
+                <span class="onsite-combined-meta-label">Request Type</span>
+                <strong><?= e($summary['copy_type']) ?></strong>
+            </div>
+            <div>
+                <span class="onsite-combined-meta-label">Enrollment Status</span>
+                <strong><?= e($summary['enrollment_status']) ?></strong>
+            </div>
+            <div>
+                <span class="onsite-combined-meta-label">Batch Total</span>
+                <strong><?= formatMoney((float) $summary['batch_total']) ?></strong>
+            </div>
+        </div>
+
+        <table class="onsite-combined-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Requestor</th>
+                    <th>Code</th>
+                    <th>Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($slips as $index => $slip): ?>
+                    <?php
+                    $request = $slip['request'] ?? [];
+                    $paymentCode = (string) ($slip['payment_code'] ?? '');
+                    $requestorMeta = trim(($request['student_id'] ?? '') . ' · ' . ($request['request_number'] ?? ''), ' ·');
+                    ?>
+                    <tr>
+                        <td><?= $index + 1 ?></td>
+                        <td>
+                            <strong><?= e(studentRecordName($request)) ?></strong>
+                            <?php if ($requestorMeta !== ''): ?>
+                                <small><?= e($requestorMeta) ?></small>
+                            <?php endif; ?>
+                        </td>
+                        <td class="onsite-combined-code"><?= e($paymentCode !== '' ? $paymentCode : '—') ?></td>
+                        <td><?= formatMoney((float) ($slip['amount'] ?? 0)) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+
+        <?php if (!empty($summary['requires_clearance'])): ?>
+            <p class="onsite-slip-note regdum-slip-note">
+                Online clearance is <?= !empty($summary['clearance_complete']) ? 'complete' : 'required before cashier payment' ?>
+                for this batch.
+            </p>
+        <?php endif; ?>
+
+        <p class="onsite-slip-note regdum-slip-note">
+            Present this slip at the Cashier. Each requestor has a separate 6-digit payment code — verify one code at a time.
+            Track any request at <?= e(publicOnsiteTrackingUrl()) ?>
+        </p>
+
+        <footer class="onsite-slip-footer regdum-slip-footer">
+            Generated <?= formatDateTime(date('Y-m-d H:i:s')) ?>
+        </footer>
+    </article>
+    <?php
+}
+
+/**
+ * @param list<array> $slips
+ */
+function renderOnsiteRequestCombinedSlipDocument(array $slips, bool $autoPrint = false): void {
+    $summary = summarizeOnsiteBatchSlips($slips);
+    $printableIds = $summary['printable_ids'];
+    $slipCount = (int) $summary['requestor_count'];
+    ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Onsite Batch Request Slip — <?= $slipCount ?> requestor<?= $slipCount === 1 ? '' : 's' ?></title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css">
+    <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/print.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body class="onsite-slip-page onsite-slip-combined-page<?= $autoPrint ? ' auto-print' : '' ?>">
+    <div class="onsite-slip-toolbar regdum-slip-toolbar no-print">
+        <a href="<?= APP_URL ?>/registrar/onsite-request-batch.php?ids=<?= e(implode(',', $printableIds)) ?>" class="btn btn-outline btn-sm">
+            <i class="fas fa-list"></i> Batch Summary
+        </a>
+        <div class="onsite-slip-toolbar-actions regdum-slip-toolbar-actions">
+            <?php if ($printableIds !== []): ?>
+                <a href="<?= APP_URL ?>/registrar/onsite-request-slip.php?<?= e(onsiteBatchSlipQuery($printableIds, 'separate')) ?>"
+                   class="btn btn-outline btn-sm">
+                    <i class="fas fa-copy"></i> Individual Slips
+                </a>
+            <?php endif; ?>
+            <button type="button" class="btn btn-outline btn-sm" data-onsite-slip-download="png">
+                <i class="fas fa-image"></i> Download Image
+            </button>
+            <button type="button" class="btn btn-outline btn-sm" data-onsite-slip-download="pdf">
+                <i class="fas fa-file-pdf"></i> Download PDF
+            </button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="window.print()">
+                <i class="fas fa-print"></i> Print Combined Slip
+            </button>
+        </div>
+    </div>
+
+    <?php renderOnsiteRequestCombinedSlipSheetHtml($slips); ?>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>

@@ -77,22 +77,51 @@ function sampleStudentSeedRecords(): array {
     ];
 }
 
+/**
+ * Pick one of the programs this installation actually offers.
+ * The choice is derived from the sample code so each seed record lands on a
+ * different program instead of piling everyone into the first one.
+ */
+function sampleStudentFallbackProgram(string $code): ?array {
+    static $programs = null;
+    if ($programs === null) {
+        $programs = getDB()->query('SELECT * FROM academic_programs WHERE is_active = 1 ORDER BY id')->fetchAll();
+    }
+    if ($programs === []) {
+        return null;
+    }
+
+    return $programs[abs(crc32($code)) % count($programs)];
+}
+
 function resolveSampleStudentProgram(string $code): ?array {
     ensureAcademicProgramsSchema();
-    $stmt = getDB()->prepare('SELECT * FROM academic_programs WHERE code = ? LIMIT 1');
+    $stmt = getDB()->prepare('SELECT * FROM academic_programs WHERE code = ? AND is_active = 1 LIMIT 1');
     $stmt->execute([$code]);
     $row = $stmt->fetch();
+    if ($row) {
+        return $row;
+    }
 
-    return $row ?: null;
+    // The sample records use generic program codes, which not every campus offers.
+    return sampleStudentFallbackProgram($code);
 }
 
 function resolveSampleStudentCampus(string $code): ?array {
     ensureCampusesSchema();
-    $stmt = getDB()->prepare('SELECT * FROM campuses WHERE code = ? LIMIT 1');
+    $stmt = getDB()->prepare('SELECT * FROM campuses WHERE code = ? AND is_active = 1 LIMIT 1');
     $stmt->execute([$code]);
     $row = $stmt->fetch();
+    if ($row) {
+        return $row;
+    }
 
-    return $row ?: null;
+    static $fallback = null;
+    if ($fallback === null) {
+        $fallback = getDB()->query('SELECT * FROM campuses WHERE is_active = 1 ORDER BY id LIMIT 1')->fetch() ?: false;
+    }
+
+    return $fallback ?: null;
 }
 
 function seedSampleStudents(bool $skipExisting = true): array {
@@ -106,7 +135,7 @@ function seedSampleStudents(bool $skipExisting = true): array {
     $db = getDB();
     $roleId = studentRoleId();
     $academicYear = defaultImportAcademicYear();
-    $semester = '1st_semester';
+    $semester = defaultImportSemester();
 
     $result = [
         'created' => 0,

@@ -71,6 +71,118 @@
     --regdum-slip-height: var(--onsite-slip-height);
 }
 
+.onsite-slip-batch-page .onsite-slip-sheet + .onsite-slip-sheet {
+    margin-top: 1.25rem;
+}
+
+.onsite-slip-batch-count {
+    font-size: .8125rem;
+    font-weight: 600;
+    color: #475569;
+    align-self: center;
+}
+
+.onsite-slip-combined-page,
+.onsite-slip-combined-page .onsite-slip-sheet {
+    --regdum-slip-width: 4.25in;
+    --regdum-slip-height: 13in;
+    --regdum-slip-pad-y: .28in;
+    --regdum-slip-pad-x: .3in;
+}
+
+.onsite-combined-slip-sheet .onsite-slip-heading {
+    font-size: 10.5pt;
+}
+
+.onsite-combined-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: .1in .12in;
+    margin: 0 0 .12in;
+    padding: .1in .1in;
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+}
+
+.onsite-combined-meta-label {
+    display: block;
+    font-size: 6.5pt;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: #64748b;
+    margin-bottom: .03in;
+}
+
+.onsite-combined-meta strong {
+    display: block;
+    font-size: 8pt;
+    font-weight: 700;
+    line-height: 1.25;
+    color: #111827;
+}
+
+.onsite-combined-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 .12in;
+    font-size: 7.5pt;
+}
+
+.onsite-combined-table th,
+.onsite-combined-table td {
+    border-bottom: 1px solid #e2e8f0;
+    padding: .06in .04in;
+    text-align: left;
+    vertical-align: top;
+}
+
+.onsite-combined-table th {
+    font-size: 6.5pt;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: #64748b;
+    border-bottom: 1.5px solid #111827;
+}
+
+.onsite-combined-table td:first-child,
+.onsite-combined-table th:first-child {
+    width: .22in;
+}
+
+.onsite-combined-table td:nth-child(3),
+.onsite-combined-table th:nth-child(3) {
+    width: .72in;
+    white-space: nowrap;
+}
+
+.onsite-combined-table td:last-child,
+.onsite-combined-table th:last-child {
+    text-align: right;
+    white-space: nowrap;
+    width: .62in;
+}
+
+.onsite-combined-table td strong {
+    display: block;
+    font-size: 7.5pt;
+    line-height: 1.25;
+}
+
+.onsite-combined-table td small {
+    display: block;
+    color: #64748b;
+    font-size: 6.5pt;
+    line-height: 1.25;
+}
+
+.onsite-combined-code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-weight: 800;
+    letter-spacing: .05em;
+    font-size: 8.5pt;
+}
+
 .regdum-slip-top,
 .claim-stub-top,
 .onsite-slip-top {
@@ -256,6 +368,10 @@
         height: auto;
         min-height: var(--onsite-slip-height);
     }
+
+    .onsite-combined-meta {
+        grid-template-columns: 1fr;
+    }
 }
 
 @media print {
@@ -300,6 +416,36 @@
     body.onsite-slip-page .onsite-slip-sheet {
         height: var(--onsite-slip-height) !important;
     }
+
+    /* Batch slips stack in the flow so each requestor prints on their own page. */
+    body.onsite-slip-page.onsite-slip-batch-page .onsite-slip-sheet {
+        position: static !important;
+        top: auto !important;
+        left: auto !important;
+        right: auto !important;
+        page-break-after: always;
+        break-after: page;
+    }
+
+    body.onsite-slip-page.onsite-slip-batch-page .onsite-slip-sheet:last-of-type {
+        page-break-after: auto;
+        break-after: auto;
+    }
+
+    body.onsite-slip-page.onsite-slip-combined-page .onsite-slip-sheet {
+        position: static !important;
+        top: auto !important;
+        left: auto !important;
+        right: auto !important;
+        width: 4.25in !important;
+        height: 13in !important;
+        page-break-after: auto;
+    }
+}
+
+@page onsite-combined-slip {
+    size: 4.25in 13in;
+    margin: 0;
 }
 
 @page claim-stub-page {
@@ -318,4 +464,8 @@ body.claim-stub-page {
 
 body.onsite-slip-page {
     page: onsite-request-slip;
+}
+
+body.onsite-slip-combined-page {
+    page: onsite-combined-slip;
 }

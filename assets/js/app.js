@@ -66,6 +66,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     initPaymentReviewModal();
+    initCashierSharedOrBar();
     initPaymentRequestDetailsModal();
     initReleaseScheduleForm();
     initStatusModal();
@@ -502,10 +503,92 @@ function initPaymentReviewModal() {
     const verificationDetails = modal.querySelector('[data-verification-details]');
     const requestDetails = modal.querySelector('[data-request-details]');
     const verifySubmitBtn = modal.querySelector('#paymentVerifyForm button[type="submit"]');
+    const verifySubmitLabel = modal.querySelector('[data-verify-submit-label]');
+    const batchPanel = modal.querySelector('[data-batch-panel]');
+    const batchMembersEl = modal.querySelector('[data-batch-members]');
+    const batchTotalEl = modal.querySelector('[data-batch-total]');
+    const batchNoteEl = modal.querySelector('[data-batch-panel-note]');
+    const paymentIdsHolder = modal.querySelector('[data-payment-ids-holder]');
     let activePaymentId = null;
     let activeIsOnsite = false;
     let rejectMode = false;
     let clearanceBlocked = false;
+    let activeVerifyIds = [];
+
+    function formatPesoAmount(amount) {
+        const value = Number(amount) || 0;
+        return '₱ ' + value.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    }
+
+    function setPaymentIds(ids) {
+        activeVerifyIds = (ids || []).map(function (id) {
+            return String(id);
+        }).filter(Boolean);
+        if (paymentIdsHolder) {
+            paymentIdsHolder.innerHTML = activeVerifyIds.map(function (id) {
+                return '<input type="hidden" name="payment_ids[]" value="' + id + '">';
+            }).join('');
+        }
+        const isMultiple = activeVerifyIds.length > 1;
+        if (verifySubmitLabel) {
+            verifySubmitLabel.textContent = isMultiple
+                ? 'Verify ' + activeVerifyIds.length + ' Payments'
+                : 'Verify Payment';
+        }
+        if (rejectActionBtn && !rejectMode) {
+            rejectActionBtn.hidden = isMultiple;
+        }
+    }
+
+    function renderBatchMembers(members, note) {
+        const list = Array.isArray(members) ? members : [];
+        const isMultiple = list.length > 1;
+        if (batchPanel) {
+            batchPanel.hidden = !isMultiple;
+        }
+        if (batchNoteEl) {
+            batchNoteEl.textContent = note || 'These payments will be verified together using the same OR number.';
+        }
+        if (batchMembersEl) {
+            batchMembersEl.innerHTML = list.map(function (member) {
+                return '<li>'
+                    + '<span><strong>' + escapeHtml(member.name || '—') + '</strong>'
+                    + '<small>' + escapeHtml((member.student_id || '') + (member.request_number ? ' · ' + member.request_number : '')) + '</small></span>'
+                    + '<span class="payment-batch-member-meta">'
+                    + '<code>' + escapeHtml(member.reference || '—') + '</code>'
+                    + '<strong>' + escapeHtml(member.amount_label || formatPesoAmount(member.amount)) + '</strong>'
+                    + '</span></li>';
+            }).join('');
+        }
+        if (batchTotalEl) {
+            const total = list.reduce(function (sum, member) {
+                return sum + (Number(member.amount) || 0);
+            }, 0);
+            batchTotalEl.textContent = formatPesoAmount(total);
+        }
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : String(text);
+        return div.innerHTML;
+    }
+
+    function readBatchMembers(batchKey) {
+        if (!batchKey) {
+            return [];
+        }
+        const source = document.getElementById('paymentBatchMembers-' + batchKey);
+        if (!source) {
+            return [];
+        }
+        try {
+            const parsed = JSON.parse(source.textContent || '[]');
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (err) {
+            return [];
+        }
+    }
 
     function setClearanceGate(blocked, message, progress) {
         clearanceBlocked = blocked === true || blocked === 1 || blocked === '1';
@@ -595,9 +678,11 @@ function initPaymentReviewModal() {
             reviewGrid.classList.toggle('payment-review-grid-onsite', activeIsOnsite);
         }
         if (verifyNote) {
-            verifyNote.textContent = activeIsOnsite
-                ? 'Review the requested documents and payment breakdown, then enter the OR number and date of payment collected at the cashier before verifying.'
-                : 'Review the requested documents and payment breakdown, then enter the OR number and date of payment before verifying.';
+            verifyNote.textContent = activeVerifyIds.length > 1
+                ? 'Enter one OR number and payment date. The same receipt will be applied to every payment listed above.'
+                : (activeIsOnsite
+                    ? 'Review the requested documents and payment breakdown, then enter the OR number and date of payment collected at the cashier before verifying.'
+                    : 'Review the requested documents and payment breakdown, then enter the OR number and date of payment before verifying.');
         }
     }
 
@@ -659,14 +744,13 @@ function initPaymentReviewModal() {
     }
 
     function openModal(button) {
-        const data = button.dataset;
+        const data = (button && button.dataset) ? button.dataset : (button || {});
         const isOnsite = data.isOnsite === '1';
 
         setField('request-number', data.requestNumber);
         setField('student-name', data.studentName);
         setField('student-id', data.studentId || '');
 
-        setOnsiteMode(isOnsite);
         if (!isOnsite) {
             renderReceipt(data.receiptUrl || '', data.receiptIsImage === '1');
         } else if (receiptOpen) {
@@ -687,11 +771,45 @@ function initPaymentReviewModal() {
         if (dateInput) dateInput.value = new Date().toISOString().slice(0, 10);
 
         setPaymentId(data.paymentId);
+
+        let verifyIds = String(data.paymentId || '').split(',').filter(Boolean);
+        let members = [];
+        if (data.isMultiple === '1' && data.batchPendingIds) {
+            verifyIds = String(data.batchPendingIds).split(',').map(function (id) {
+                return id.trim();
+            }).filter(Boolean);
+            members = readBatchMembers(data.batchKey).filter(function (member) {
+                return member.status === 'pending' && verifyIds.indexOf(String(member.id)) !== -1;
+            });
+        }
+        if (Array.isArray(data.selectedMembers) && data.selectedMembers.length) {
+            members = data.selectedMembers;
+            verifyIds = members.map(function (member) {
+                return String(member.id);
+            });
+        }
+        setPaymentIds(verifyIds);
+        renderBatchMembers(
+            members,
+            data.batchNote || (data.isMultiple === '1'
+                ? 'This is a multiple onsite batch. One OR number verifies every pending requestor.'
+                : '')
+        );
+        if (members.length > 1) {
+            setField('request-number', members.length + ' requests');
+            setField('student-name', members.length + ' requestors');
+            setField('student-id', 'Same OR number for the whole group');
+        }
+
+        setOnsiteMode(isOnsite);
         renderVerificationDetails(data.paymentId);
         renderRequestDetails(data.paymentId, requestDetails);
+        const batchBlocked = members.some(function (member) { return !!member.blocked; });
         setClearanceGate(
-            data.clearanceRequired === '1' && data.clearanceBlocked === '1',
-            data.clearanceMessage || '',
+            (data.clearanceRequired === '1' && data.clearanceBlocked === '1') || batchBlocked,
+            data.clearanceMessage || (batchBlocked
+                ? 'One or more requestors in this group still require online clearance.'
+                : ''),
             data.clearanceProgress || ''
         );
         setRejectMode(false);
@@ -712,11 +830,15 @@ function initPaymentReviewModal() {
         modal.setAttribute('aria-hidden', 'true');
         document.body.style.overflow = '';
         setPaymentId(null);
+        setPaymentIds([]);
+        renderBatchMembers([]);
         renderVerificationDetails(null);
         renderRequestDetails(null, requestDetails);
         setClearanceGate(false, '', '');
         setRejectMode(false);
     }
+
+    window.__openPaymentReview = openModal;
 
     document.querySelectorAll('.payment-review-btn').forEach(function (btn) {
         btn.addEventListener('click', function () {
@@ -827,6 +949,115 @@ function initPaymentReviewModal() {
             row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     }
+}
+
+function initCashierSharedOrBar() {
+    const bar = document.getElementById('cashierSharedOrBar');
+    const countEl = bar ? bar.querySelector('[data-shared-or-count]') : null;
+    const selectAllToggles = [
+        document.getElementById('cashierSharedOrSelectAllVisible'),
+        document.getElementById('cashierSharedOrSelectAllHeader'),
+    ].filter(Boolean);
+    const selectAllBtn = document.getElementById('cashierSharedOrSelectAll');
+    const clearBtn = document.getElementById('cashierSharedOrClear');
+    const reviewBtn = document.getElementById('cashierSharedOrReview');
+    const checks = Array.prototype.slice.call(document.querySelectorAll('.cashier-shared-or-check'));
+    if (!checks.length) {
+        return;
+    }
+
+    function selectedChecks() {
+        return checks.filter(function (box) { return box.checked; });
+    }
+
+    function setAllPending(checked) {
+        checks.forEach(function (box) {
+            box.checked = !!checked;
+        });
+        syncBar();
+    }
+
+    function syncBar() {
+        const selected = selectedChecks();
+        const allSelected = selected.length > 0 && selected.length === checks.length;
+        const someSelected = selected.length > 0 && selected.length < checks.length;
+
+        if (countEl) {
+            countEl.textContent = String(selected.length);
+        }
+        selectAllToggles.forEach(function (toggle) {
+            toggle.checked = allSelected;
+            toggle.indeterminate = someSelected;
+        });
+        if (clearBtn) {
+            clearBtn.disabled = selected.length === 0;
+        }
+        if (reviewBtn) {
+            reviewBtn.disabled = selected.length === 0;
+        }
+        if (selectAllBtn) {
+            selectAllBtn.disabled = allSelected;
+        }
+        bar?.classList.toggle('has-selection', selected.length > 0);
+    }
+
+    checks.forEach(function (box) {
+        box.addEventListener('change', syncBar);
+    });
+    selectAllToggles.forEach(function (toggle) {
+        toggle.addEventListener('change', function () {
+            setAllPending(toggle.checked);
+        });
+    });
+    selectAllBtn?.addEventListener('click', function () {
+        setAllPending(true);
+    });
+    clearBtn?.addEventListener('click', function () {
+        setAllPending(false);
+    });
+    document.getElementById('cashierSharedOrReview')?.addEventListener('click', function () {
+        const selected = selectedChecks();
+        if (!selected.length || typeof window.__openPaymentReview !== 'function') {
+            return;
+        }
+        const members = selected.map(function (box) {
+            return {
+                id: box.value,
+                name: box.getAttribute('data-student-name') || '—',
+                student_id: box.getAttribute('data-student-id') || '',
+                request_number: box.getAttribute('data-request-number') || '',
+                reference: box.getAttribute('data-reference') || '—',
+                amount: Number(box.getAttribute('data-amount') || 0),
+                amount_label: '',
+                status: 'pending',
+            };
+        });
+        const blocked = selected.some(function (box) {
+            return box.getAttribute('data-clearance-blocked') === '1';
+        });
+        const allOnsite = selected.every(function (box) {
+            return box.getAttribute('data-is-onsite') === '1';
+        });
+        window.__openPaymentReview({
+            paymentId: members[0].id,
+            requestNumber: members.length + ' requests',
+            studentName: members.length + ' requestors',
+            studentId: 'Same OR number for the whole group',
+            isOnsite: allOnsite ? '1' : '0',
+            isMultiple: members.length > 1 ? '1' : '0',
+            selectedMembers: members,
+            clearanceRequired: blocked ? '1' : '0',
+            clearanceBlocked: blocked ? '1' : '0',
+            clearanceMessage: blocked
+                ? 'One or more selected payments still require online clearance.'
+                : '',
+            receiptUrl: '',
+            receiptIsImage: '0',
+            batchNote: 'Selected payments will be verified together using the same OR number.',
+        });
+    });
+
+    syncBar();
 }
 
 function initPaymentRequestDetailsModal() {
