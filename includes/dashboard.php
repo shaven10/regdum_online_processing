@@ -133,3 +133,185 @@ function clearanceDashboardStats(int $departmentId, ?int $programId = null): arr
         'cleared_today' => (int) $clearedToday->fetchColumn(),
     ];
 }
+
+/**
+ * Registrar dashboard analytics: document request frequency and volume metrics.
+ *
+ * @return array{
+ *   volume:array<string,int|float>,
+ *   channels:array{online:int,onsite:int,total:int},
+ *   document_frequency:list<array<string,mixed>>,
+ *   document_frequency_total:int,
+ *   monthly:list<array{month:int,label:string,count:int,completed:int}>,
+ *   processing_by_document:list<array<string,mixed>>,
+ *   top_purposes:list<array<string,mixed>>,
+ *   processed_by_user:list<array<string,mixed>>
+ * }
+ */
+function getRegistrarDashboardAnalytics(): array {
+    require_once __DIR__ . '/request-items.php';
+    require_once __DIR__ . '/onsite-request.php';
+    ensureRequestItemsSchema();
+    ensureOnsiteRequestSchema();
+
+    $db = getDB();
+    $months = [1 => 'Jan', 2 => 'Feb', 3 => 'Mar', 4 => 'Apr', 5 => 'May', 6 => 'Jun',
+        7 => 'Jul', 8 => 'Aug', 9 => 'Sep', 10 => 'Oct', 11 => 'Nov', 12 => 'Dec'];
+
+    $volume = [
+        'today' => (int) $db->query('SELECT COUNT(*) FROM requests WHERE DATE(created_at) = CURDATE()')->fetchColumn(),
+        'week' => (int) $db->query('SELECT COUNT(*) FROM requests WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)')->fetchColumn(),
+        'month' => (int) $db->query('SELECT COUNT(*) FROM requests
+            WHERE MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())')->fetchColumn(),
+        'year' => (int) $db->query('SELECT COUNT(*) FROM requests WHERE YEAR(created_at) = YEAR(CURDATE())')->fetchColumn(),
+        'active' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status NOT IN ('completed','rejected')")->fetchColumn(),
+        'completed' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'completed'")->fetchColumn(),
+        'completed_today' => (int) $db->query("SELECT COUNT(*) FROM requests
+            WHERE status = 'completed' AND DATE(completed_at) = CURDATE()")->fetchColumn(),
+        'rejected' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'rejected'")->fetchColumn(),
+        'avg_processing_days' => (float) $db->query("SELECT COALESCE(AVG(DATEDIFF(completed_at, created_at)), 0)
+            FROM requests WHERE completed_at IS NOT NULL AND status = 'completed'")->fetchColumn(),
+    ];
+
+    $online = (int) $db->query("SELECT COUNT(*) FROM requests
+        WHERE COALESCE(request_channel, 'online') <> 'onsite'")->fetchColumn();
+    $onsite = (int) $db->query("SELECT COUNT(*) FROM requests WHERE request_channel = 'onsite'")->fetchColumn();
+    $channels = [
+        'online' => $online,
+        'onsite' => $onsite,
+        'total' => $online + $onsite,
+    ];
+
+    $itemCount = (int) $db->query('SELECT COUNT(*) FROM request_items')->fetchColumn();
+    if ($itemCount > 0) {
+        $documentFrequency = $db->query("SELECT dt.id, dt.name, dt.code,
+                COUNT(ri.id) AS request_count,
+                COALESCE(SUM(ri.copies), 0) AS copies_total,
+                SUM(CASE WHEN r.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) AS last_30_days,
+                SUM(CASE WHEN MONTH(r.created_at) = MONTH(CURDATE())
+                          AND YEAR(r.created_at) = YEAR(CURDATE()) THEN 1 ELSE 0 END) AS this_month,
+                SUM(CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END) AS completed_count
+            FROM request_items ri
+            JOIN document_types dt ON dt.id = ri.document_type_id
+            JOIN requests r ON r.id = ri.request_id
+            WHERE r.status <> 'rejected'
+            GROUP BY dt.id, dt.name, dt.code
+            ORDER BY request_count DESC, dt.name ASC")->fetchAll() ?: [];
+    } else {
+        $documentFrequency = $db->query("SELECT dt.id, dt.name, dt.code,
+                COUNT(r.id) AS request_count,
+                COALESCE(SUM(r.copies), 0) AS copies_total,
+                SUM(CASE WHEN r.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) AS last_30_days,
+                SUM(CASE WHEN MONTH(r.created_at) = MONTH(CURDATE())
+                          AND YEAR(r.created_at) = YEAR(CURDATE()) THEN 1 ELSE 0 END) AS this_month,
+                SUM(CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END) AS completed_count
+            FROM document_types dt
+            LEFT JOIN requests r ON r.document_type_id = dt.id AND r.status <> 'rejected'
+            GROUP BY dt.id, dt.name, dt.code
+            HAVING request_count > 0
+            ORDER BY request_count DESC, dt.name ASC")->fetchAll() ?: [];
+    }
+
+    $documentFrequencyTotal = 0;
+    foreach ($documentFrequency as &$docRow) {
+        $docRow['request_count'] = (int) ($docRow['request_count'] ?? 0);
+        $docRow['copies_total'] = (int) ($docRow['copies_total'] ?? 0);
+        $docRow['last_30_days'] = (int) ($docRow['last_30_days'] ?? 0);
+        $docRow['this_month'] = (int) ($docRow['this_month'] ?? 0);
+        $docRow['completed_count'] = (int) ($docRow['completed_count'] ?? 0);
+        $documentFrequencyTotal += $docRow['request_count'];
+    }
+    unset($docRow);
+
+    $monthlyRows = $db->query('SELECT MONTH(created_at) AS month,
+            COUNT(*) AS count,
+            SUM(CASE WHEN status = \'completed\' THEN 1 ELSE 0 END) AS completed
+        FROM requests
+        WHERE YEAR(created_at) = YEAR(CURDATE())
+        GROUP BY MONTH(created_at)
+        ORDER BY month')->fetchAll() ?: [];
+    $monthlyMap = [];
+    foreach ($monthlyRows as $row) {
+        $monthlyMap[(int) $row['month']] = [
+            'month' => (int) $row['month'],
+            'label' => $months[(int) $row['month']] ?? (string) $row['month'],
+            'count' => (int) $row['count'],
+            'completed' => (int) $row['completed'],
+        ];
+    }
+    $monthly = [];
+    for ($m = 1; $m <= 12; $m++) {
+        $monthly[] = $monthlyMap[$m] ?? [
+            'month' => $m,
+            'label' => $months[$m],
+            'count' => 0,
+            'completed' => 0,
+        ];
+    }
+
+    $processingByDocument = $db->query("SELECT dt.name,
+            COUNT(r.id) AS completed_count,
+            ROUND(AVG(DATEDIFF(r.completed_at, r.created_at)), 1) AS avg_days
+        FROM requests r
+        JOIN document_types dt ON dt.id = r.document_type_id
+        WHERE r.completed_at IS NOT NULL AND r.status = 'completed'
+        GROUP BY dt.id, dt.name
+        HAVING completed_count > 0
+        ORDER BY avg_days DESC, completed_count DESC
+        LIMIT 8")->fetchAll() ?: [];
+
+    $topPurposes = $db->query("SELECT
+            CASE
+                WHEN purpose = 'other' AND purpose_other IS NOT NULL AND purpose_other <> '' THEN purpose_other
+                WHEN purpose IS NULL OR purpose = '' THEN 'Unspecified'
+                ELSE REPLACE(purpose, '_', ' ')
+            END AS purpose_label,
+            COUNT(*) AS request_count
+        FROM requests
+        WHERE status <> 'rejected'
+        GROUP BY purpose_label
+        ORDER BY request_count DESC
+        LIMIT 8")->fetchAll() ?: [];
+
+    $processedByUser = $db->query("SELECT u.id, u.first_name, u.last_name, u.email, rl.name AS role_name,
+            COUNT(ri.id) AS assigned_total,
+            SUM(CASE WHEN ri.item_status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
+            SUM(CASE WHEN ri.item_status = 'completed'
+                      AND ri.completed_at IS NOT NULL
+                      AND DATE(ri.completed_at) = CURDATE() THEN 1 ELSE 0 END) AS completed_today,
+            SUM(CASE WHEN ri.item_status = 'completed'
+                      AND ri.completed_at IS NOT NULL
+                      AND MONTH(ri.completed_at) = MONTH(CURDATE())
+                      AND YEAR(ri.completed_at) = YEAR(CURDATE()) THEN 1 ELSE 0 END) AS completed_month,
+            SUM(CASE WHEN ri.item_status IN ('processing', 'ready_for_pickup') THEN 1 ELSE 0 END) AS in_progress,
+            SUM(CASE WHEN ri.item_status = 'pending_assignment' THEN 1 ELSE 0 END) AS pending_assignment,
+            COALESCE(SUM(CASE WHEN ri.item_status = 'completed' THEN ri.copies ELSE 0 END), 0) AS copies_completed
+        FROM request_items ri
+        JOIN users u ON u.id = ri.assigned_to
+        JOIN roles rl ON rl.id = u.role_id
+        WHERE ri.assigned_to IS NOT NULL
+        GROUP BY u.id, u.first_name, u.last_name, u.email, rl.name
+        ORDER BY completed_count DESC, in_progress DESC, u.last_name ASC, u.first_name ASC")->fetchAll() ?: [];
+
+    foreach ($processedByUser as &$userRow) {
+        $userRow['assigned_total'] = (int) ($userRow['assigned_total'] ?? 0);
+        $userRow['completed_count'] = (int) ($userRow['completed_count'] ?? 0);
+        $userRow['completed_today'] = (int) ($userRow['completed_today'] ?? 0);
+        $userRow['completed_month'] = (int) ($userRow['completed_month'] ?? 0);
+        $userRow['in_progress'] = (int) ($userRow['in_progress'] ?? 0);
+        $userRow['pending_assignment'] = (int) ($userRow['pending_assignment'] ?? 0);
+        $userRow['copies_completed'] = (int) ($userRow['copies_completed'] ?? 0);
+    }
+    unset($userRow);
+
+    return [
+        'volume' => $volume,
+        'channels' => $channels,
+        'document_frequency' => $documentFrequency,
+        'document_frequency_total' => $documentFrequencyTotal,
+        'monthly' => $monthly,
+        'processing_by_document' => $processingByDocument,
+        'top_purposes' => $topPurposes,
+        'processed_by_user' => $processedByUser,
+    ];
+}

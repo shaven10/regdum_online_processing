@@ -5807,6 +5807,84 @@ a.feature-card-link:hover {
 .status-bar { flex: 1; height: 8px; background: var(--gray-100); border-radius: 4px; overflow: hidden; }
 .status-bar-fill { height: 100%; background: var(--primary); border-radius: 4px; }
 
+.registrar-doc-freq-list { display: flex; flex-direction: column; gap: .15rem; }
+.registrar-doc-freq-item span {
+    width: min(42%, 220px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.registrar-doc-freq-meta {
+    font-size: .75rem;
+    margin: -.15rem 0 .55rem;
+    padding-left: calc(min(42%, 220px) + .75rem);
+}
+.registrar-insight-subtitle {
+    margin: 1.25rem 0 .65rem;
+    font-size: .95rem;
+}
+.registrar-insight-grid {
+    margin-bottom: .25rem;
+}
+.registrar-monthly-bars {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: .5rem;
+    align-items: end;
+    min-height: 160px;
+}
+.registrar-monthly-bar {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: .3rem;
+    min-width: 0;
+}
+.registrar-monthly-bar-track {
+    width: 100%;
+    max-width: 28px;
+    height: 120px;
+    display: flex;
+    align-items: flex-end;
+    background: var(--gray-100);
+    border-radius: 6px 6px 2px 2px;
+    overflow: hidden;
+}
+.registrar-monthly-bar-fill {
+    width: 100%;
+    background: var(--primary);
+    border-radius: 6px 6px 0 0;
+    min-height: 0;
+}
+.registrar-monthly-bar.is-current .registrar-monthly-bar-fill {
+    background: var(--accent, #0f766e);
+}
+.registrar-monthly-bar strong {
+    font-size: .75rem;
+}
+.registrar-monthly-bar span {
+    font-size: .7rem;
+    color: var(--gray-600);
+}
+.registrar-processed-share {
+    min-width: 120px;
+}
+.registrar-processed-share .status-bar {
+    margin-bottom: .25rem;
+}
+.registrar-processed-users-table td[data-label="Share"] .status-bar {
+    min-width: 80px;
+}
+@media (max-width: 900px) {
+    .registrar-monthly-bars {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        row-gap: 1rem;
+    }
+    .registrar-doc-freq-meta {
+        padding-left: 0;
+    }
+}
+
 /* Notifications */
 .notification-list { display: flex; flex-direction: column; gap: .75rem; }
 .notification-item { display: flex; gap: .75rem; padding: .75rem; border-radius: var(--radius); border: 1px solid var(--gray-100); }
