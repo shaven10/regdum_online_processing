@@ -142,6 +142,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 $assignmentRequests = getRequestsAwaitingStaffAssignment($search);
 $processors = getAssignableProcessors();
 $pendingCount = count($assignmentRequests);
+$sortColumns = [
+    'request_number' => ['type' => 'string'],
+    'name' => [
+        'type' => 'string',
+        'get' => static fn(array $r): string => trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? '')),
+    ],
+    'document_name' => ['type' => 'string'],
+    'pending_assignment_count' => ['type' => 'number', 'default_dir' => 'desc'],
+    'total_amount' => ['type' => 'number', 'default_dir' => 'desc'],
+    'updated_at' => [
+        'type' => 'date',
+        'default_dir' => 'desc',
+        'get' => static fn(array $r): string => (string) ($r['updated_at'] ?? $r['created_at'] ?? ''),
+    ],
+];
+$sortState = resolveRecordsSort($sortColumns, 'updated_at', 'desc');
+$assignmentRequests = sortRecordList($assignmentRequests, $sortState);
+$listFilters = array_merge(['search' => $search], recordsSortFilterParams($sortState));
+$pagedAssignments = paginateRecordList(
+    $assignmentRequests,
+    $listFilters,
+    'assignmentFilterForm',
+    'request',
+    'requests'
+);
+$assignmentRequests = $pagedAssignments['items'];
+$sortQuery = $listFilters;
+if ($pagedAssignments['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $pagedAssignments['per_page'];
+}
 
 $pageTitle = $request ? ('Assign Staff — ' . $request['request_number']) : 'Staff Assignment';
 $activeNav = 'assignments';
@@ -333,13 +363,15 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
     </div>
     <div class="card-body">
-        <form method="GET" class="filter-bar">
+        <form method="GET" class="filter-bar" id="assignmentFilterForm">
+            <?= recordsSortFormFields($sortState) ?>
             <input type="text" name="search" placeholder="Search request #, student..." value="<?= e($search) ?>">
             <button type="submit" class="btn btn-outline btn-sm">Search</button>
             <?php if ($search !== ''): ?>
                 <a href="assignments.php" class="btn btn-outline btn-sm">Clear</a>
             <?php endif; ?>
         </form>
+        <?= $pagedAssignments['meta_html'] ?>
 
         <?php if (empty($assignmentRequests)): ?>
             <div class="empty-state">
@@ -369,12 +401,12 @@ require_once __DIR__ . '/../includes/header.php';
                                         <input type="checkbox" id="assignmentSelectAllRequests" aria-label="Select all requests">
                                     </label>
                                 </th>
-                                <th>Request #</th>
-                                <th>Student</th>
-                                <th>Documents</th>
-                                <th>Pending Items</th>
-                                <th>Amount</th>
-                                <th>Paid / Updated</th>
+                                <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Documents', 'document_name', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Pending Items', 'pending_assignment_count', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Amount', 'total_amount', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Paid / Updated', 'updated_at', $sortState, $sortQuery) ?>
                                 <th>Action</th>
                             </tr>
                         </thead>
@@ -417,6 +449,7 @@ require_once __DIR__ . '/../includes/header.php';
                     </table>
                 </div>
             </form>
+            <?= $pagedAssignments['html'] ?>
 
             <?php renderAdminFormModalOpen('Staff Assignment', 'Batch Assign Staff', 'assignmentBatchAssignModal'); ?>
             <form method="POST" id="assignmentBatchAssignForm" class="form-grid">

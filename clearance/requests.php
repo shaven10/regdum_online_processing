@@ -28,6 +28,30 @@ if ($isProgramChair) {
 }
 
 $requests = getClearanceRequestsForDepartment((int) $deptId, $status, $search, $queueProgramId);
+$sortColumns = [
+    'request_number' => ['type' => 'string'],
+    'name' => [
+        'type' => 'string',
+        'get' => static fn(array $r): string => trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? '')),
+    ],
+    'course' => ['type' => 'string'],
+    'request_channel' => ['type' => 'string'],
+    'document_name' => ['type' => 'string'],
+    'status' => ['type' => 'string'],
+    'request_date' => ['type' => 'date', 'default_dir' => 'desc'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'request_date', 'desc');
+$requests = sortRecordList($requests, $sortState);
+$listFilters = array_merge([
+    'status' => $status !== 'pending' ? $status : '',
+    'search' => $search,
+], recordsSortFilterParams($sortState));
+$pagedClearance = paginateRecordList($requests, $listFilters, 'clearanceRequestsFilterForm', 'request', 'requests');
+$requests = $pagedClearance['items'];
+$sortQuery = $listFilters;
+if ($pagedClearance['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $pagedClearance['per_page'];
+}
 
 $pageTitle = 'Clearance Requests';
 $activeNav = $status === 'pending' ? 'pending' : 'requests';
@@ -50,7 +74,8 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
     </div>
     <div class="card-body">
-        <form method="GET" class="filter-bar">
+        <form method="GET" class="filter-bar" id="clearanceRequestsFilterForm">
+            <?= recordsSortFormFields($sortState) ?>
             <input type="text" name="search" placeholder="Search request #, name, student ID, course..." value="<?= e($search) ?>">
             <select name="status">
                 <option value="pending" <?= $status === 'pending' ? 'selected' : '' ?>>Pending</option>
@@ -62,6 +87,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <a href="requests.php" class="btn btn-outline btn-sm">Clear</a>
             <?php endif; ?>
         </form>
+        <?= $pagedClearance['meta_html'] ?>
 
         <?php if (empty($requests)): ?>
             <div class="empty-state"><i class="fas fa-inbox"></i><p>No clearance records found.</p></div>
@@ -70,13 +96,13 @@ require_once __DIR__ . '/../includes/header.php';
                 <table class="data-table data-table-responsive">
                     <thead>
                         <tr>
-                            <th>Request #</th>
-                            <th>Requestor</th>
-                            <th>Course</th>
-                            <th>Channel</th>
-                            <th>Document</th>
-                            <th>Clearance</th>
-                            <th>Date</th>
+                            <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Requestor', 'name', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Course', 'course', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Channel', 'request_channel', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Document', 'document_name', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Clearance', 'status', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Date', 'request_date', $sortState, $sortQuery) ?>
                             <th>Action</th>
                         </tr>
                     </thead>
@@ -116,6 +142,7 @@ require_once __DIR__ . '/../includes/header.php';
                     </tbody>
                 </table>
             </div>
+            <?= $pagedClearance['html'] ?>
         <?php endif; ?>
     </div>
 </div>

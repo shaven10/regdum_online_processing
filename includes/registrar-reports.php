@@ -165,7 +165,18 @@ function getRegistrarRequestReportData(array $filters, ?int $page = null, ?int $
             LEFT JOIN student_profiles sp ON sp.user_id = u.id
             LEFT JOIN users cb ON r.created_by = cb.id
             WHERE ' . $where . '
-            ORDER BY r.created_at DESC, r.id DESC';
+            ORDER BY ' . recordsSqlOrderBy(
+                resolveRecordsSort([
+                    'request_number' => ['type' => 'string', 'sql' => 'r.request_number'],
+                    'channel' => ['type' => 'string', 'sql' => 'r.request_channel'],
+                    'name' => ['type' => 'string', 'sql' => 'u.last_name, u.first_name'],
+                    'document_summary' => ['type' => 'string', 'sql' => 'dt.name'],
+                    'status' => ['type' => 'string', 'sql' => 'r.status'],
+                    'total_amount' => ['type' => 'number', 'sql' => 'r.total_amount', 'default_dir' => 'desc'],
+                    'created_at' => ['type' => 'date', 'sql' => 'r.created_at', 'default_dir' => 'desc'],
+                ], 'created_at', 'desc'),
+                'r.created_at DESC, r.id DESC'
+            );
 
     $pagination = [
         'page' => 1,

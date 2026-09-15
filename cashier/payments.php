@@ -101,6 +101,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 }
 
 $payments = getPaymentsList($status, $search);
+$sortColumns = [
+    'request_number' => ['type' => 'string'],
+    'name' => [
+        'type' => 'string',
+        'get' => static fn(array $r): string => trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? '')),
+    ],
+    'payment_method' => ['type' => 'string'],
+    'reference_number' => ['type' => 'string'],
+    'status' => ['type' => 'string'],
+    'created_at' => ['type' => 'date', 'default_dir' => 'desc'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'created_at', 'desc');
+$payments = sortRecordList($payments, $sortState);
+$listFilters = array_merge([
+    'status' => $status,
+    'search' => $search,
+    'onsite_code' => $onsiteCode,
+], recordsSortFilterParams($sortState));
+$pagedPayments = paginateRecordList($payments, $listFilters, 'cashierPaymentsFilterForm', 'payment', 'payments');
+$payments = $pagedPayments['items'];
+$sortQuery = $listFilters;
+if ($pagedPayments['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $pagedPayments['per_page'];
+}
+if ($onsiteLookupPayment) {
+    $lookupId = (int) $onsiteLookupPayment['id'];
+    $lookupOnPage = false;
+    foreach ($payments as $paymentRow) {
+        if ((int) ($paymentRow['id'] ?? 0) === $lookupId) {
+            $lookupOnPage = true;
+            break;
+        }
+    }
+    if (!$lookupOnPage) {
+        array_unshift($payments, $onsiteLookupPayment);
+    }
+}
 $pendingPaymentCount = 0;
 foreach ($payments as $paymentRow) {
     if (($paymentRow['status'] ?? '') === 'pending') {
@@ -149,6 +186,9 @@ require_once __DIR__ . '/../includes/header.php';
             <?php endif; ?>
             <?php if ($search): ?>
                 <input type="hidden" name="search" value="<?= e($search) ?>">
+            <?php endif; ?>
+            <?php if ((int) $pagedPayments['per_page'] !== ITEMS_PER_PAGE): ?>
+                <input type="hidden" name="per_page" value="<?= (int) $pagedPayments['per_page'] ?>">
             <?php endif; ?>
             <label for="onsite_code">Enter the student's 6-digit payment code</label>
             <div class="onsite-payment-lookup-row">
@@ -200,7 +240,7 @@ require_once __DIR__ . '/../includes/header.php';
         <div>
             <h2>Payment Verification</h2>
             <?php if ($status === 'pending'): ?>
-                <p class="text-muted payment-page-subtitle"><?= count($payments) ?> payment<?= count($payments) === 1 ? '' : 's' ?> awaiting your review</p>
+                <p class="text-muted payment-page-subtitle"><?= (int) $pagedPayments['total'] ?> payment<?= (int) $pagedPayments['total'] === 1 ? '' : 's' ?> awaiting your review</p>
             <?php elseif ($status === 'rejected'): ?>
                 <p class="text-muted payment-page-subtitle">Review rejection feedback sent to students</p>
             <?php else: ?>
@@ -209,7 +249,8 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
     </div>
     <div class="card-body">
-        <form method="GET" class="filter-bar payments-filter-bar">
+        <form method="GET" class="filter-bar payments-filter-bar" id="cashierPaymentsFilterForm">
+            <?= recordsSortFormFields($sortState) ?>
             <input type="text" name="search" placeholder="Search request #, student, or reference..." value="<?= e($search) ?>" aria-label="Search payments">
             <select name="status" aria-label="Filter by status">
                 <option value="">All Statuses</option>
@@ -224,6 +265,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <?php endif; ?>
             </div>
         </form>
+        <?= $pagedPayments['meta_html'] ?>
 
         <?php if (empty($payments)): ?>
             <div class="empty-state"><i class="fas fa-receipt"></i><p>No payments found.</p></div>
@@ -265,12 +307,12 @@ require_once __DIR__ . '/../includes/header.php';
                                     </label>
                                 <?php endif; ?>
                             </th>
-                            <th>Request #</th>
-                            <th>Student</th>
-                            <th>Method</th>
-                            <th>Reference</th>
-                            <th>Status</th>
-                            <th>Submitted</th>
+                            <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Method', 'payment_method', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Reference', 'reference_number', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Status', 'status', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Submitted', 'created_at', $sortState, $sortQuery) ?>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -391,6 +433,7 @@ require_once __DIR__ . '/../includes/header.php';
                     </tbody>
                 </table>
             </div>
+            <?= $pagedPayments['html'] ?>
         <?php endif; ?>
     </div>
 </div>

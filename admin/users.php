@@ -252,6 +252,29 @@ if ($search) {
 }
 $whereClause = implode(' AND ', $where);
 
+$countStmt = $db->prepare("SELECT COUNT(*) FROM users u JOIN roles r ON u.role_id = r.id WHERE $whereClause");
+$countStmt->execute($params);
+$sortColumns = [
+    'name' => ['type' => 'string', 'sql' => 'u.last_name, u.first_name'],
+    'email' => ['type' => 'string', 'sql' => 'u.email'],
+    'role_name' => ['type' => 'string', 'sql' => 'r.name'],
+    'is_active' => ['type' => 'number', 'sql' => 'u.is_active', 'default_dir' => 'desc'],
+    'last_login' => ['type' => 'date', 'sql' => 'u.last_login', 'default_dir' => 'desc'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'name', 'asc');
+$listFilters = array_merge(['search' => $search], recordsSortFilterParams($sortState));
+$usersPaging = recordsListPaging(
+    (int) $countStmt->fetchColumn(),
+    $listFilters,
+    'usersFilterForm',
+    'account',
+    'accounts'
+);
+$sortQuery = $listFilters;
+if ($usersPaging['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $usersPaging['per_page'];
+}
+
 $stmt = $db->prepare("SELECT u.*, r.name as role_name, cd.name as department_name, cd.code as department_code,
         ap.code as program_code, ap.name as program_name
     FROM users u
@@ -259,7 +282,8 @@ $stmt = $db->prepare("SELECT u.*, r.name as role_name, cd.name as department_nam
     LEFT JOIN clearance_departments cd ON u.clearance_department_id = cd.id
     LEFT JOIN academic_programs ap ON u.clearance_program_id = ap.id
     WHERE $whereClause
-    ORDER BY u.created_at DESC");
+    ORDER BY " . recordsSqlOrderBy($sortState, 'u.created_at DESC') . '
+    LIMIT ' . (int) $usersPaging['limit'] . ' OFFSET ' . (int) $usersPaging['offset']);
 $stmt->execute($params);
 $users = $stmt->fetchAll();
 
@@ -282,13 +306,15 @@ require_once __DIR__ . '/../includes/header.php';
             </button>
         </div>
         <div class="card-body">
-            <form method="GET" class="filter-bar users-filter-bar">
+            <form method="GET" class="filter-bar users-filter-bar" id="usersFilterForm">
+                <?= recordsSortFormFields($sortState) ?>
                 <input type="text" name="search" placeholder="Search name, email, or role..." value="<?= e($search) ?>">
                 <button type="submit" class="btn btn-outline btn-sm">Search</button>
                 <?php if ($search): ?>
                     <a href="users.php" class="btn btn-outline btn-sm">Clear</a>
                 <?php endif; ?>
             </form>
+            <?= $usersPaging['meta_html'] ?>
 
             <?php if (empty($users)): ?>
                 <div class="empty-state"><i class="fas fa-users"></i><p>No user accounts found.</p></div>
@@ -297,11 +323,11 @@ require_once __DIR__ . '/../includes/header.php';
                     <table class="data-table data-table-responsive users-table">
                         <thead>
                             <tr>
-                                <th>Name</th>
-                                <th>Email</th>
-                                <th>Role</th>
-                                <th>Status</th>
-                                <th>Last Login</th>
+                                <?= renderRecordsSortHeader('Name', 'name', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Email', 'email', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Role', 'role_name', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Status', 'is_active', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Last Login', 'last_login', $sortState, $sortQuery) ?>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -372,6 +398,7 @@ require_once __DIR__ . '/../includes/header.php';
                         </tbody>
                     </table>
                 </div>
+                <?= $usersPaging['html'] ?>
             <?php endif; ?>
         </div>
     </div>

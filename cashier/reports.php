@@ -35,6 +35,21 @@ $queryBase = array_filter([
     'per_page' => $perPage !== ITEMS_PER_PAGE ? $perPage : '',
 ], static fn($v) => $v !== '' && $v !== null);
 
+$sortColumns = [
+    'request_number' => ['type' => 'string', 'sql' => 'r.request_number'],
+    'name' => ['type' => 'string', 'sql' => 'u.last_name, u.first_name'],
+    'document_name' => ['type' => 'string', 'sql' => 'dt.name'],
+    'payment_method' => ['type' => 'string', 'sql' => 'p.payment_method'],
+    'amount' => ['type' => 'number', 'sql' => 'p.amount', 'default_dir' => 'desc'],
+    'reference_number' => ['type' => 'string', 'sql' => 'p.reference_number'],
+    'status' => ['type' => 'string', 'sql' => 'p.status'],
+    'payment_date' => ['type' => 'date', 'sql' => 'p.payment_date', 'default_dir' => 'desc'],
+    'created_at' => ['type' => 'date', 'sql' => 'p.created_at', 'default_dir' => 'desc'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'created_at', 'desc');
+$queryBase = array_merge($queryBase, recordsSortFilterParams($sortState));
+$sortQuery = $queryBase;
+
 if ($export === 'excel' || $export === 'csv') {
     $exportData = getPaymentReportData($filters, null, null);
     $filenameBase = 'cashier_transactions_'
@@ -72,6 +87,7 @@ $queryBase = array_filter($queryBase, static fn($v) => $v !== '' && $v !== null)
 $listQuery = $queryBase;
 $paginationQuery = $queryBase;
 $exportQuery = $queryBase;
+$sortQuery = $queryBase;
 $printQuery = $queryBase;
 $printQuery['print'] = '1';
 
@@ -106,6 +122,7 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
         <div class="card-body">
             <form method="GET" class="filter-bar payment-report-filters" id="cashierReportFilterForm">
+                <?= recordsSortFormFields($sortState) ?>
                 <input type="hidden" name="period" id="reportPeriod" value="<?= e($periodInfo['period']) ?>">
 
                 <div class="payment-report-period-tabs" role="group" aria-label="Quick date range">
@@ -154,15 +171,6 @@ require_once __DIR__ . '/../includes/header.php';
                 <label class="payment-report-filter-field payment-report-filter-search">
                     <span>Search</span>
                     <input type="text" name="search" placeholder="Request #, student, document, OR, reference..." value="<?= e($search) ?>">
-                </label>
-
-                <label class="payment-report-filter-field">
-                    <span>Per page</span>
-                    <select name="per_page" aria-label="Records per page" onchange="this.form.submit()">
-                        <?php foreach (paymentReportPerPageOptions() as $option): ?>
-                            <option value="<?= (int) $option ?>" <?= $perPage === $option ? 'selected' : '' ?>><?= (int) $option ?></option>
-                        <?php endforeach; ?>
-                    </select>
                 </label>
 
                 <div class="payment-report-filter-actions">
@@ -247,16 +255,16 @@ require_once __DIR__ . '/../includes/header.php';
                     <table class="data-table data-table-responsive payment-report-table">
                         <thead>
                             <tr>
-                                <th>Request #</th>
-                                <th>Student</th>
-                                <th>Document/s Requested</th>
-                                <th>Method</th>
-                                <th>Amount</th>
-                                <th>Reference / OR</th>
-                                <th>Status</th>
-                                <th>Payment Date</th>
+                                <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Document/s Requested', 'document_name', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Method', 'payment_method', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Amount', 'amount', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Reference / OR', 'reference_number', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Status', 'status', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Payment Date', 'payment_date', $sortState, $sortQuery) ?>
                                 <th>Verified By</th>
-                                <th>Submitted</th>
+                                <?= renderRecordsSortHeader('Submitted', 'created_at', $sortState, $sortQuery) ?>
                             </tr>
                         </thead>
                         <tbody>
@@ -303,7 +311,7 @@ require_once __DIR__ . '/../includes/header.php';
                     </table>
                 </div>
 
-                <?= paginationLinks($pag, '?' . http_build_query($paginationQuery) . '&') ?>
+                <?= renderRecordsPaginationBar($pag, '?' . http_build_query($paginationQuery) . '&', $perPage, 'cashierReportFilterForm') ?>
             <?php endif; ?>
         </div>
     </div>

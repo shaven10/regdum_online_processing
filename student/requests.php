@@ -10,7 +10,6 @@ ensureRequestItemsSchema();
 $profileCompletion = getStudentProfileCompletion($user['id']);
 
 $db = getDB();
-$page = max(1, (int)($_GET['page'] ?? 1));
 $status = $_GET['status'] ?? '';
 $search = trim($_GET['search'] ?? '');
 
@@ -24,8 +23,33 @@ $whereClause = implode(' AND ', $where);
 
 $countStmt = $db->prepare("SELECT COUNT(DISTINCT r.id) FROM requests r LEFT JOIN request_items ri ON ri.request_id = r.id LEFT JOIN document_types dt ON dt.id = COALESCE(ri.document_type_id, r.document_type_id) WHERE $whereClause");
 $countStmt->execute($params);
-$pag = paginate((int)$countStmt->fetchColumn(), $page);
+$sortColumns = [
+    'request_number' => ['type' => 'string', 'sql' => 'r.request_number'],
+    'documents_summary' => ['type' => 'string', 'sql' => 'documents_summary'],
+    'total_copies' => ['type' => 'number', 'sql' => 'total_copies', 'default_dir' => 'desc'],
+    'total_amount' => ['type' => 'number', 'sql' => 'r.total_amount', 'default_dir' => 'desc'],
+    'status' => ['type' => 'string', 'sql' => 'r.status'],
+    'created_at' => ['type' => 'date', 'sql' => 'r.created_at', 'default_dir' => 'desc'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'created_at', 'desc');
+$listFilters = array_merge(
+    ['status' => $status, 'search' => $search],
+    recordsSortFilterParams($sortState)
+);
+$requestsPaging = recordsListPaging(
+    (int) $countStmt->fetchColumn(),
+    $listFilters,
+    'studentRequestsFilterForm',
+    'request',
+    'requests'
+);
+$pag = $requestsPaging['pag'];
+$sortQuery = $listFilters;
+if ($requestsPaging['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $requestsPaging['per_page'];
+}
 
+$orderBy = recordsSqlOrderBy($sortState, 'r.created_at DESC');
 $stmt = $db->prepare("SELECT r.*,
         GROUP_CONCAT(DISTINCT dt.name ORDER BY ri.sort_order, ri.id SEPARATOR ', ') AS documents_summary,
         COUNT(DISTINCT ri.id) AS document_count,
@@ -35,8 +59,8 @@ $stmt = $db->prepare("SELECT r.*,
     LEFT JOIN document_types dt ON dt.id = COALESCE(ri.document_type_id, r.document_type_id)
     WHERE $whereClause
     GROUP BY r.id
-    ORDER BY r.created_at DESC
-    LIMIT {$pag['per_page']} OFFSET {$pag['offset']}");
+    ORDER BY {$orderBy}
+    LIMIT {$requestsPaging['limit']} OFFSET {$requestsPaging['offset']}");
 $stmt->execute($params);
 $requests = $stmt->fetchAll();
 
@@ -58,7 +82,8 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
     <div class="card-body">
         <?= renderStudentProfileIncompleteAlert($profileCompletion) ?>
-        <form method="GET" class="filter-bar">
+        <form method="GET" class="filter-bar" id="studentRequestsFilterForm">
+            <?= recordsSortFormFields($sortState) ?>
             <input type="text" name="search" placeholder="Search by request # or document..." value="<?= e($search) ?>">
             <select name="status">
                 <option value="">All Statuses</option>
@@ -68,6 +93,7 @@ require_once __DIR__ . '/../includes/header.php';
             </select>
             <button type="submit" class="btn btn-outline btn-sm">Filter</button>
         </form>
+        <?= $requestsPaging['meta_html'] ?>
 
         <?php if (empty($requests)): ?>
             <div class="empty-state"><i class="fas fa-inbox"></i><p>No requests found.</p></div>
@@ -76,13 +102,13 @@ require_once __DIR__ . '/../includes/header.php';
                 <table class="data-table student-requests-table data-table-responsive">
                     <thead>
                         <tr>
-                            <th>Request #</th>
-                            <th>Document</th>
+                            <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Document', 'documents_summary', $sortState, $sortQuery) ?>
                             <th>Progress</th>
-                            <th>Copies</th>
-                            <th>Amount</th>
-                            <th>Status</th>
-                            <th>Date</th>
+                            <?= renderRecordsSortHeader('Copies', 'total_copies', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Amount', 'total_amount', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Status', 'status', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Date', 'created_at', $sortState, $sortQuery) ?>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -112,7 +138,7 @@ require_once __DIR__ . '/../includes/header.php';
                     </tbody>
                 </table>
             </div>
-            <?= paginationLinks($pag, '?' . http_build_query(array_filter(['status' => $status, 'search' => $search]))) ?>
+            <?= $requestsPaging['html'] ?>
         <?php endif; ?>
     </div>
 </div>

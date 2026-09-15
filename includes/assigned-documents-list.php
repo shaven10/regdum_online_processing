@@ -94,6 +94,53 @@ if (($_GET['print'] ?? '') === '1') {
     exit;
 }
 
+$sortColumns = [
+    'request_number' => ['type' => 'string'],
+    'method' => [
+        'type' => 'string',
+        'get' => static fn(array $r): string => (string) ($r['payment_scope_label'] ?? $r['payment_method_label'] ?? ''),
+    ],
+    'document_name' => [
+        'type' => 'string',
+        'get' => static function (array $r): string {
+            return function_exists('assignedItemDocumentSummary')
+                ? assignedItemDocumentSummary($r)
+                : (string) ($r['document_name'] ?? '');
+        },
+    ],
+    'name' => [
+        'type' => 'string',
+        'get' => static fn(array $r): string => trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? '')),
+    ],
+    'course' => [
+        'type' => 'string',
+        'get' => static function (array $r): string {
+            return function_exists('assignedStudentCourseYearLabel')
+                ? assignedStudentCourseYearLabel($r)
+                : trim(($r['course'] ?? '') . ' ' . ($r['year_level'] ?? ''));
+        },
+    ],
+    'enrollment_status' => ['type' => 'string'],
+    'copies' => ['type' => 'number', 'default_dir' => 'desc'],
+    'item_status' => ['type' => 'string'],
+    'request_status' => ['type' => 'string'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'request_number', 'asc');
+$items = sortRecordList($items, $sortState);
+
+$pagedAssignedDocuments = paginateRecordList($items, array_merge([
+    'status' => $status,
+    'search' => $search,
+], recordsSortFilterParams($sortState)), 'assignedDocumentsFilterForm', 'document', 'documents');
+$items = $pagedAssignedDocuments['items'];
+$sortQuery = array_merge([
+    'status' => $status,
+    'search' => $search,
+], recordsSortFilterParams($sortState));
+if ($pagedAssignedDocuments['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $pagedAssignedDocuments['per_page'];
+}
+
 require_once __DIR__ . '/header.php';
 ?>
 
@@ -113,7 +160,8 @@ require_once __DIR__ . '/header.php';
         <?php endif; ?>
     </div>
     <div class="card-body">
-        <form method="GET" class="filter-bar">
+        <form method="GET" class="filter-bar" id="assignedDocumentsFilterForm">
+            <?= recordsSortFormFields($sortState) ?>
             <input type="text" name="search" placeholder="Search request #, method, document, school year, semester, student..." value="<?= e($search) ?>">
             <select name="status">
                 <option value="">Active Assignments</option>
@@ -123,6 +171,7 @@ require_once __DIR__ . '/header.php';
             </select>
             <button type="submit" class="btn btn-outline btn-sm">Filter</button>
         </form>
+        <?= $pagedAssignedDocuments['meta_html'] ?>
 
         <?php if (empty($items)): ?>
             <div class="empty-state"><i class="fas fa-inbox"></i><p>No document assignments found.</p></div>
@@ -130,15 +179,15 @@ require_once __DIR__ . '/header.php';
             <table class="data-table data-table-responsive assigned-documents-table">
                 <thead>
                     <tr>
-                        <th>Request #</th>
-                        <th>Method</th>
-                        <th>Document/s Requested</th>
-                        <th>Student</th>
-                        <th>Course / Year</th>
-                        <th>Enrollment</th>
-                        <th>Copies</th>
-                        <th>Item Status</th>
-                        <th>Batch Status</th>
+                        <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Method', 'method', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Document/s Requested', 'document_name', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Course / Year', 'course', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Enrollment', 'enrollment_status', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Copies', 'copies', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Item Status', 'item_status', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Batch Status', 'request_status', $sortState, $sortQuery) ?>
                         <th>Action</th>
                     </tr>
                 </thead>
@@ -165,6 +214,7 @@ require_once __DIR__ . '/header.php';
                     <?php endforeach; ?>
                 </tbody>
             </table>
+            <?= $pagedAssignedDocuments['html'] ?>
         <?php endif; ?>
     </div>
 </div>

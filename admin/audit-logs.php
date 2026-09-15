@@ -3,10 +3,24 @@ require_once __DIR__ . '/../includes/auth.php';
 requireRole('admin');
 
 $db = getDB();
-$page = max(1, (int) ($_GET['page'] ?? 1));
-$pag = paginate((int) $db->query('SELECT COUNT(*) FROM audit_logs')->fetchColumn(), $page);
+$count = (int) $db->query('SELECT COUNT(*) FROM audit_logs')->fetchColumn();
+$sortColumns = [
+    'created_at' => ['type' => 'date', 'sql' => 'a.created_at', 'default_dir' => 'desc'],
+    'user' => ['type' => 'string', 'sql' => 'u.last_name, u.first_name'],
+    'action' => ['type' => 'string', 'sql' => 'a.action'],
+    'entity_type' => ['type' => 'string', 'sql' => 'a.entity_type, a.entity_id'],
+    'ip_address' => ['type' => 'string', 'sql' => 'a.ip_address'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'created_at', 'desc');
+$listFilters = recordsSortFilterParams($sortState);
+$logsPaging = recordsListPaging($count, $listFilters, 'auditLogsFilterForm', 'log', 'logs');
+$pag = $logsPaging['pag'];
+$sortQuery = $listFilters;
+if ($logsPaging['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $logsPaging['per_page'];
+}
 
-$logs = $db->query("SELECT a.*, u.first_name, u.last_name, u.email FROM audit_logs a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT {$pag['per_page']} OFFSET {$pag['offset']}")->fetchAll();
+$logs = $db->query("SELECT a.*, u.first_name, u.last_name, u.email FROM audit_logs a LEFT JOIN users u ON a.user_id = u.id ORDER BY " . recordsSqlOrderBy($sortState, 'a.created_at DESC') . " LIMIT {$logsPaging['limit']} OFFSET {$logsPaging['offset']}")->fetchAll();
 
 $pageTitle = 'Audit Logs';
 $activeNav = 'audit';
@@ -16,8 +30,16 @@ require_once __DIR__ . '/../includes/header.php';
 <div class="card">
     <div class="card-header"><h2>Audit Logs</h2></div>
     <div class="card-body">
+        <form method="GET" id="auditLogsFilterForm"><?= recordsSortFormFields($sortState) ?></form>
+        <?= $logsPaging['meta_html'] ?>
         <table class="data-table">
-            <thead><tr><th>Date</th><th>User</th><th>Action</th><th>Entity</th><th>IP Address</th></tr></thead>
+            <thead><tr>
+                <?= renderRecordsSortHeader('Date', 'created_at', $sortState, $sortQuery) ?>
+                <?= renderRecordsSortHeader('User', 'user', $sortState, $sortQuery) ?>
+                <?= renderRecordsSortHeader('Action', 'action', $sortState, $sortQuery) ?>
+                <?= renderRecordsSortHeader('Entity', 'entity_type', $sortState, $sortQuery) ?>
+                <?= renderRecordsSortHeader('IP Address', 'ip_address', $sortState, $sortQuery) ?>
+            </tr></thead>
             <tbody>
                 <?php foreach ($logs as $log): ?>
                 <tr>
@@ -30,7 +52,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <?php endforeach; ?>
             </tbody>
         </table>
-        <?= paginationLinks($pag, '?') ?>
+        <?= $logsPaging['html'] ?>
     </div>
 </div>
 

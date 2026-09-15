@@ -10,7 +10,38 @@ ensurePaymentMethodSchema();
 
 $status = trim((string) ($_GET['status'] ?? ''));
 $search = trim((string) ($_GET['search'] ?? ''));
-$requests = getOnsiteRequestsList($status, $search);
+$sortColumns = [
+    'request_number' => ['type' => 'string', 'sql' => 'r.request_number'],
+    'name' => ['type' => 'string', 'sql' => 'u.last_name, u.first_name'],
+    'document_summary' => ['type' => 'string', 'sql' => 'dt.name'],
+    'payment_code' => ['type' => 'string', 'sql' => 'p.reference_number'],
+    'amount' => ['type' => 'number', 'sql' => 'COALESCE(p.amount, r.total_amount)', 'default_dir' => 'desc'],
+    'status' => ['type' => 'string', 'sql' => 'r.status'],
+    'created_at' => ['type' => 'date', 'sql' => 'r.created_at', 'default_dir' => 'desc'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'created_at', 'desc');
+$listFilters = array_merge(
+    ['status' => $status, 'search' => $search],
+    recordsSortFilterParams($sortState)
+);
+$onsitePaging = recordsListPaging(
+    countOnsiteRequestsList($status, $search),
+    $listFilters,
+    'onsiteRecordsFilterForm',
+    'request',
+    'requests'
+);
+$requests = getOnsiteRequestsList(
+    $status,
+    $search,
+    $onsitePaging['limit'],
+    $onsitePaging['offset'],
+    recordsSqlOrderBy($sortState, 'r.created_at DESC')
+);
+$sortQuery = $listFilters;
+if ($onsitePaging['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $onsitePaging['per_page'];
+}
 
 $statusOptions = [
     'awaiting_requirements' => 'Awaiting Clearance',
@@ -40,7 +71,8 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
     </div>
     <div class="card-body">
-        <form method="GET" class="filter-bar">
+        <form method="GET" class="filter-bar" id="onsiteRecordsFilterForm">
+            <?= recordsSortFormFields($sortState) ?>
             <input type="text" name="search" placeholder="Search request #, requestor, payment code..." value="<?= e($search) ?>">
             <select name="status" aria-label="Filter by status">
                 <option value="">All statuses</option>
@@ -53,6 +85,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <a href="<?= APP_URL ?>/registrar/onsite-requests.php" class="btn btn-outline btn-sm">Clear</a>
             <?php endif; ?>
         </form>
+        <?= $onsitePaging['meta_html'] ?>
 
         <?php if (empty($requests)): ?>
             <div class="empty-state">
@@ -67,14 +100,14 @@ require_once __DIR__ . '/../includes/header.php';
                 <table class="data-table data-table-responsive">
                     <thead>
                         <tr>
-                            <th>Request #</th>
-                            <th>Requestor</th>
-                            <th>Documents</th>
-                            <th>Payment Code</th>
-                            <th>Amount</th>
+                            <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Requestor', 'name', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Documents', 'document_summary', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Payment Code', 'payment_code', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Amount', 'amount', $sortState, $sortQuery) ?>
                             <th>Clearance</th>
-                            <th>Status</th>
-                            <th>Created</th>
+                            <?= renderRecordsSortHeader('Status', 'status', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Created', 'created_at', $sortState, $sortQuery) ?>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -136,6 +169,7 @@ require_once __DIR__ . '/../includes/header.php';
                     </tbody>
                 </table>
             </div>
+            <?= $onsitePaging['html'] ?>
         <?php endif; ?>
     </div>
 </div>

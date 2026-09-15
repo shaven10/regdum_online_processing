@@ -9,6 +9,7 @@ $channel = trim($_GET['channel'] ?? '');
 $status = trim($_GET['status'] ?? '');
 $search = trim($_GET['search'] ?? '');
 $page = max(1, (int) ($_GET['page'] ?? 1));
+$perPage = normalizeRecordsPerPage((int) ($_GET['per_page'] ?? ITEMS_PER_PAGE));
 $export = $_GET['export'] ?? '';
 
 $filters = [
@@ -25,7 +26,21 @@ $queryBase = array_filter([
     'channel' => $channel,
     'status' => $status,
     'search' => $search,
+    'per_page' => $perPage !== ITEMS_PER_PAGE ? $perPage : '',
 ], static fn($v) => $v !== '' && $v !== null);
+
+$sortColumns = [
+    'request_number' => ['type' => 'string', 'sql' => 'r.request_number'],
+    'channel' => ['type' => 'string', 'sql' => 'r.request_channel'],
+    'name' => ['type' => 'string', 'sql' => 'u.last_name, u.first_name'],
+    'document_summary' => ['type' => 'string', 'sql' => 'dt.name'],
+    'status' => ['type' => 'string', 'sql' => 'r.status'],
+    'total_amount' => ['type' => 'number', 'sql' => 'r.total_amount', 'default_dir' => 'desc'],
+    'created_at' => ['type' => 'date', 'sql' => 'r.created_at', 'default_dir' => 'desc'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'created_at', 'desc');
+$queryBase = array_merge($queryBase, recordsSortFilterParams($sortState));
+$sortQuery = $queryBase;
 
 if ($export === 'csv') {
     $exportData = getRegistrarRequestReportData($filters, null, null);
@@ -37,7 +52,7 @@ if ($export === 'csv') {
     exportCSV(registrarRequestReportExportHeaders(), $rows, $filenameBase . '.csv');
 }
 
-$report = getRegistrarRequestReportData($filters, $page, ITEMS_PER_PAGE);
+$report = getRegistrarRequestReportData($filters, $page, $perPage);
 $summary = $report['summary'];
 $periodInfo = $report['period'];
 $requests = $report['rows'];
@@ -77,7 +92,8 @@ require_once __DIR__ . '/../includes/header.php';
             </div>
         </div>
         <div class="card-body">
-            <form method="GET" class="filter-bar payment-report-filters">
+            <form method="GET" class="filter-bar payment-report-filters" id="registrarReportFilterForm">
+                <?= recordsSortFormFields($sortState) ?>
                 <div class="payment-report-period-tabs">
                     <?php foreach (['daily' => 'Daily', 'weekly' => 'Weekly', 'monthly' => 'Monthly'] as $key => $label): ?>
                         <label class="payment-report-period-option">
@@ -158,13 +174,13 @@ require_once __DIR__ . '/../includes/header.php';
                     <table class="data-table data-table-responsive payment-report-table">
                         <thead>
                             <tr>
-                                <th>Request #</th>
-                                <th>Mode</th>
-                                <th>Requestor</th>
-                                <th>Documents</th>
-                                <th>Status</th>
-                                <th>Amount</th>
-                                <th>Created</th>
+                                <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Mode', 'channel', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Requestor', 'name', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Documents', 'document_summary', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Status', 'status', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Amount', 'total_amount', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader('Created', 'created_at', $sortState, $sortQuery) ?>
                                 <th>Slip / Stub</th>
                                 <th>Actions</th>
                             </tr>
@@ -211,7 +227,7 @@ require_once __DIR__ . '/../includes/header.php';
                     </table>
                 </div>
 
-                <?= paginationLinks($pag, '?' . http_build_query($paginationQuery) . '&') ?>
+                <?= renderRecordsPaginationBar($pag, '?' . http_build_query($paginationQuery) . '&', $perPage, 'registrarReportFilterForm') ?>
             <?php endif; ?>
         </div>
     </div>

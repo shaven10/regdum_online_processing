@@ -6,10 +6,14 @@ requireRole('admin');
 
 $search = trim($_GET['search'] ?? '');
 $status = trim($_GET['status'] ?? '');
+$perPage = normalizeRecordsPerPage((int) ($_GET['per_page'] ?? ITEMS_PER_PAGE));
+$page = max(1, (int) ($_GET['page'] ?? 1));
 
 $listQuery = array_filter([
     'search' => $search,
     'status' => $status,
+    'per_page' => $perPage !== ITEMS_PER_PAGE ? (string) $perPage : '',
+    'page' => $page > 1 ? (string) $page : '',
 ]);
 $listUrl = APP_URL . '/admin/payments.php' . ($listQuery ? '?' . http_build_query($listQuery) : '');
 
@@ -71,6 +75,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 }
 
 $payments = getPaymentsList($status, $search);
+$sortColumns = [
+    'request_number' => ['type' => 'string'],
+    'name' => [
+        'type' => 'string',
+        'get' => static fn(array $r): string => trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? '')),
+    ],
+    'payment_method' => ['type' => 'string'],
+    'amount' => ['type' => 'number', 'default_dir' => 'desc'],
+    'reference_number' => ['type' => 'string'],
+    'status' => ['type' => 'string'],
+    'created_at' => ['type' => 'date', 'default_dir' => 'desc'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'created_at', 'desc');
+$payments = sortRecordList($payments, $sortState);
+$listFilters = array_merge([
+    'search' => $search,
+    'status' => $status,
+], recordsSortFilterParams($sortState));
+$pagedPayments = paginateRecordList($payments, $listFilters, 'adminPaymentsFilterForm', 'payment', 'payments');
+$payments = $pagedPayments['items'];
+$sortQuery = $listFilters;
+if ($pagedPayments['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $pagedPayments['per_page'];
+}
 
 $pageTitle = 'Payments';
 $activeNav = 'payments';
@@ -85,7 +113,8 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
     </div>
     <div class="card-body">
-        <form method="GET" class="filter-bar">
+        <form method="GET" class="filter-bar" id="adminPaymentsFilterForm">
+            <?= recordsSortFormFields($sortState) ?>
             <input type="text" name="search" placeholder="Search request #, student, or reference..." value="<?= e($search) ?>">
             <select name="status">
                 <option value="">All Statuses</option>
@@ -98,6 +127,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <a href="payments.php" class="btn btn-outline btn-sm">Clear</a>
             <?php endif; ?>
         </form>
+        <?= $pagedPayments['meta_html'] ?>
 
         <?php if (empty($payments)): ?>
             <div class="empty-state"><i class="fas fa-receipt"></i><p>No payments found.</p></div>
@@ -125,15 +155,15 @@ require_once __DIR__ . '/../includes/header.php';
                                     <input type="checkbox" id="adminSelectAllPayments" form="adminPaymentsBatchForm" aria-label="Select all payments on this page">
                                 </label>
                             </th>
-                            <th>Request #</th>
-                            <th>Student</th>
-                            <th>Method</th>
-                            <th>Amount</th>
-                            <th>Reference</th>
-                            <th>Status</th>
+                            <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Method', 'payment_method', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Amount', 'amount', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Reference', 'reference_number', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Status', 'status', $sortState, $sortQuery) ?>
                             <th>Feedback</th>
                             <th>Verified By</th>
-                            <th>Date</th>
+                            <?= renderRecordsSortHeader('Date', 'created_at', $sortState, $sortQuery) ?>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -183,6 +213,7 @@ require_once __DIR__ . '/../includes/header.php';
                     </tbody>
                 </table>
             </div>
+            <?= $pagedPayments['html'] ?>
         <?php endif; ?>
     </div>
 </div>

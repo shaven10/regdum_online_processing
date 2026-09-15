@@ -229,6 +229,9 @@ function runPhpApplicationMigrations(): array {
     require_once __DIR__ . '/includes/onsite-request.php';
     ensureOnsiteRequestSchema();
     $log[] = 'Onsite walk-in request channel, created_by, and multi-student batch key';
+    require_once __DIR__ . '/includes/queue.php';
+    ensureQueueSchema();
+    $log[] = 'Onsite queuing windows, staff assignments, and priority tickets';
     require_once __DIR__ . '/includes/assignment-offices.php';
     ensureDocumentAssignmentOfficeSchema();
     $log[] = 'Document assignment offices (Cashier, Accounting, Guidance, Registrar, Clearance)';

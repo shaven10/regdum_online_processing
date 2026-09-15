@@ -903,19 +903,9 @@ function canViewOnsiteRequestSlip(array $user, array $request): bool {
 }
 
 /**
- * List onsite walk-in credential requests for registrar records.
- *
- * @return list<array<string,mixed>>
+ * @return array{0:list<string>,1:list<mixed>}
  */
-function getOnsiteRequestsList(string $status = '', string $search = '', int $limit = 200): array {
-    ensureOnsiteRequestSchema();
-    ensureRequestItemsSchema();
-    require_once __DIR__ . '/payments.php';
-    require_once __DIR__ . '/compliance.php';
-    require_once __DIR__ . '/clearance.php';
-
-    $limit = max(1, min(500, $limit));
-    $db = getDB();
+function buildOnsiteRequestsListFilters(string $status = '', string $search = ''): array {
     $where = ["r.request_channel = 'onsite'"];
     $params = [];
 
@@ -930,6 +920,46 @@ function getOnsiteRequestsList(string $status = '', string $search = '', int $li
         $like = '%' . $search . '%';
         array_push($params, $like, $like, $like, $like, $like, $like);
     }
+
+    return [$where, $params];
+}
+
+function countOnsiteRequestsList(string $status = '', string $search = ''): int {
+    ensureOnsiteRequestSchema();
+    ensurePaymentMethodSchema();
+    [$where, $params] = buildOnsiteRequestsListFilters($status, $search);
+    $sql = 'SELECT COUNT(*)
+            FROM requests r
+            JOIN users u ON r.user_id = u.id
+            LEFT JOIN payments p ON p.id = (
+                SELECT p2.id FROM payments p2
+                WHERE p2.request_id = r.id AND p2.payment_method = \'onsite_payment\'
+                ORDER BY p2.created_at DESC
+                LIMIT 1
+            )
+            WHERE ' . implode(' AND ', $where);
+    $stmt = getDB()->prepare($sql);
+    $stmt->execute($params);
+    return (int) $stmt->fetchColumn();
+}
+
+/**
+ * List onsite walk-in credential requests for registrar records.
+ *
+ * @return list<array<string,mixed>>
+ */
+function getOnsiteRequestsList(string $status = '', string $search = '', int $limit = 200, int $offset = 0, string $orderBy = 'r.created_at DESC'): array {
+    ensureOnsiteRequestSchema();
+    ensureRequestItemsSchema();
+    require_once __DIR__ . '/payments.php';
+    require_once __DIR__ . '/compliance.php';
+    require_once __DIR__ . '/clearance.php';
+
+    $limit = max(1, min(500, $limit));
+    $offset = max(0, $offset);
+    $db = getDB();
+    [$where, $params] = buildOnsiteRequestsListFilters($status, $search);
+    $orderBy = trim($orderBy) !== '' ? $orderBy : 'r.created_at DESC';
 
     $sql = 'SELECT r.id, r.request_number, r.status, r.purpose, r.copy_request_type, r.total_amount,
                    r.created_at, r.created_by, r.onsite_batch_key,
@@ -948,8 +978,8 @@ function getOnsiteRequestsList(string $status = '', string $search = '', int $li
                 LIMIT 1
             )
             WHERE ' . implode(' AND ', $where) . '
-            ORDER BY r.created_at DESC
-            LIMIT ' . $limit;
+            ORDER BY ' . $orderBy . '
+            LIMIT ' . $limit . ' OFFSET ' . $offset;
 
     $stmt = $db->prepare($sql);
     $stmt->execute($params);

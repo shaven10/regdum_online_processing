@@ -11,13 +11,17 @@ ensureDocumentAssignmentOfficeSchema();
 
 $currentAdmin = currentUser();
 $page = max(1, (int)($_GET['page'] ?? 1));
+$perPage = normalizeRecordsPerPage((int) ($_GET['per_page'] ?? ITEMS_PER_PAGE));
 $status = $_GET['status'] ?? '';
 $search = trim($_GET['search'] ?? '');
 
 $listQuery = array_filter([
     'status' => $status,
     'search' => $search,
+    'per_page' => $perPage !== ITEMS_PER_PAGE ? (string) $perPage : '',
     'page' => $page > 1 ? (string) $page : '',
+    'sort' => trim((string) ($_GET['sort'] ?? '')),
+    'dir' => trim((string) ($_GET['dir'] ?? '')),
 ]);
 $listUrl = APP_URL . '/admin/requests.php' . ($listQuery ? '?' . http_build_query($listQuery) : '');
 
@@ -115,9 +119,34 @@ $whereClause = implode(' AND ', $where);
 
 $countStmt = $db->prepare("SELECT COUNT(*) FROM requests r JOIN users u ON r.user_id = u.id WHERE $whereClause");
 $countStmt->execute($params);
-$pag = paginate((int)$countStmt->fetchColumn(), $page);
+$sortColumns = [
+    'request_number' => ['type' => 'string', 'sql' => 'r.request_number'],
+    'student_id' => ['type' => 'string', 'sql' => 'u.student_id'],
+    'name' => ['type' => 'string', 'sql' => 'u.last_name, u.first_name'],
+    'document_name' => ['type' => 'string', 'sql' => 'dt.name'],
+    'total_amount' => ['type' => 'number', 'sql' => 'r.total_amount', 'default_dir' => 'desc'],
+    'status' => ['type' => 'string', 'sql' => 'r.status'],
+    'created_at' => ['type' => 'date', 'sql' => 'r.created_at', 'default_dir' => 'desc'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'created_at', 'desc');
+$listFilters = array_merge(
+    ['status' => $status, 'search' => $search],
+    recordsSortFilterParams($sortState)
+);
+$requestsPaging = recordsListPaging(
+    (int) $countStmt->fetchColumn(),
+    $listFilters,
+    'adminRequestsFilterForm',
+    'request',
+    'requests'
+);
+$pag = $requestsPaging['pag'];
+$sortQuery = $listFilters;
+if ($requestsPaging['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $requestsPaging['per_page'];
+}
 
-$stmt = $db->prepare("SELECT r.*, dt.name as document_name, u.first_name, u.last_name, u.student_id FROM requests r JOIN document_types dt ON r.document_type_id = dt.id JOIN users u ON r.user_id = u.id WHERE $whereClause ORDER BY r.created_at DESC LIMIT {$pag['per_page']} OFFSET {$pag['offset']}");
+$stmt = $db->prepare("SELECT r.*, dt.name as document_name, u.first_name, u.last_name, u.student_id FROM requests r JOIN document_types dt ON r.document_type_id = dt.id JOIN users u ON r.user_id = u.id WHERE $whereClause ORDER BY " . recordsSqlOrderBy($sortState, 'r.created_at DESC') . " LIMIT {$requestsPaging['limit']} OFFSET {$requestsPaging['offset']}");
 $stmt->execute($params);
 $requests = $stmt->fetchAll();
 $statusOptions = requestStatusOptions();
@@ -130,7 +159,8 @@ $activeNav = 'requests';
 <div class="card">
     <div class="card-header"><h2>All Requests</h2></div>
     <div class="card-body">
-        <form method="GET" class="filter-bar">
+        <form method="GET" class="filter-bar" id="adminRequestsFilterForm">
+            <?= recordsSortFormFields($sortState) ?>
             <input type="text" name="search" placeholder="Search..." value="<?= e($search) ?>">
             <select name="status">
                 <option value="">All Statuses</option>
@@ -140,6 +170,7 @@ $activeNav = 'requests';
             </select>
             <button type="submit" class="btn btn-outline btn-sm">Filter</button>
         </form>
+        <?= $requestsPaging['meta_html'] ?>
 
         <form method="POST" id="adminRequestsBatchForm" class="admin-requests-batch-form">
             <?= csrfField() ?>
@@ -168,13 +199,13 @@ $activeNav = 'requests';
                                 <input type="checkbox" id="adminSelectAllRequests" aria-label="Select all requests on this page">
                             </label>
                         </th>
-                        <th>Request #</th>
-                        <th>Student ID</th>
-                        <th>Name</th>
-                        <th>Document</th>
-                        <th>Amount</th>
-                        <th>Status</th>
-                        <th>Date</th>
+                        <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Student ID', 'student_id', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Name', 'name', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Document', 'document_name', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Amount', 'total_amount', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Status', 'status', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Date', 'created_at', $sortState, $sortQuery) ?>
                         <th>Action</th>
                     </tr>
                 </thead>
@@ -206,7 +237,7 @@ $activeNav = 'requests';
             </table>
         </form>
 
-        <?= paginationLinks($pag, '?' . http_build_query(array_filter(['status' => $status, 'search' => $search]))) ?>
+        <?= $requestsPaging['html'] ?>
     </div>
 </div>
 

@@ -12,6 +12,27 @@ foreach ($readyDocs as &$readyDoc) {
     }
 }
 unset($readyDoc);
+$sortColumns = [
+    'request_number' => ['type' => 'string'],
+    'name' => [
+        'type' => 'string',
+        'get' => static fn(array $r): string => trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? '')),
+    ],
+    'document_name' => ['type' => 'string'],
+    'copies' => ['type' => 'number', 'default_dir' => 'desc'],
+    'status' => ['type' => 'string'],
+    'verification_code' => ['type' => 'string'],
+    'created_at' => ['type' => 'date', 'default_dir' => 'asc'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'created_at', 'asc');
+$readyDocs = sortRecordList($readyDocs, $sortState);
+$listFilters = recordsSortFilterParams($sortState);
+$pagedReadyDocs = paginateRecordList($readyDocs, $listFilters, 'staffDocumentsFilterForm', 'document', 'documents');
+$readyDocs = $pagedReadyDocs['items'];
+$sortQuery = $listFilters;
+if ($pagedReadyDocs['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $pagedReadyDocs['per_page'];
+}
 
 $pageTitle = 'Document Generation';
 $activeNav = 'documents';
@@ -21,11 +42,21 @@ require_once __DIR__ . '/../includes/header.php';
 <div class="card">
     <div class="card-header"><h2>Documents for Processing</h2></div>
     <div class="card-body">
+        <form method="GET" id="staffDocumentsFilterForm"><?= recordsSortFormFields($sortState) ?></form>
+        <?= $pagedReadyDocs['meta_html'] ?>
         <?php if (empty($readyDocs)): ?>
             <div class="empty-state"><i class="fas fa-print"></i><p>No documents pending generation.</p></div>
         <?php else: ?>
             <table class="data-table">
-                <thead><tr><th>Request #</th><th>Student</th><th>Document</th><th>Copies</th><th>Status</th><th>Verification Code</th><th>Action</th></tr></thead>
+                <thead><tr>
+                    <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                    <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
+                    <?= renderRecordsSortHeader('Document', 'document_name', $sortState, $sortQuery) ?>
+                    <?= renderRecordsSortHeader('Copies', 'copies', $sortState, $sortQuery) ?>
+                    <?= renderRecordsSortHeader('Status', 'status', $sortState, $sortQuery) ?>
+                    <?= renderRecordsSortHeader('Verification Code', 'verification_code', $sortState, $sortQuery) ?>
+                    <th>Action</th>
+                </tr></thead>
                 <tbody>
                     <?php foreach ($readyDocs as $req): ?>
                     <tr>
@@ -43,6 +74,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <?php endforeach; ?>
                 </tbody>
             </table>
+            <?= $pagedReadyDocs['html'] ?>
         <?php endif; ?>
     </div>
 </div>

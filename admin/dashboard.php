@@ -22,6 +22,7 @@ renderDashboardActions([
     ['url' => 'import-students.php', 'label' => 'Import Students', 'icon' => 'fa-file-excel'],
     ['url' => '../registrar/grades-evaluation.php', 'label' => 'Grades Evaluation', 'icon' => 'fa-clipboard-list'],
     ['url' => 'users.php', 'label' => 'User Management', 'icon' => 'fa-users'],
+    ['url' => 'queue-settings.php', 'label' => 'Queue Settings', 'icon' => 'fa-list-ol'],
     ['url' => 'document-types.php', 'label' => 'Document Types', 'icon' => 'fa-file-alt'],
     ['url' => 'reports.php', 'label' => 'Reports', 'icon' => 'fa-chart-bar'],
     ['url' => '../registrar/enrollment-report.php', 'label' => 'Enrollment by Course', 'icon' => 'fa-table'],

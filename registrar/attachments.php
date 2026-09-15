@@ -9,6 +9,33 @@ ensureComplianceSchema();
 $filter = $_GET['status'] ?? '';
 $search = trim($_GET['search'] ?? '');
 $requests = getRequestsWithAttachments($filter, $search);
+$sortColumns = [
+    'request_number' => ['type' => 'string'],
+    'name' => [
+        'type' => 'string',
+        'get' => static fn(array $r): string => trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? '')),
+    ],
+    'document_name' => ['type' => 'string'],
+    'status' => ['type' => 'string'],
+    'attachments' => [
+        'type' => 'number',
+        'default_dir' => 'desc',
+        'get' => static fn(array $r): int => (int) ($r['document_count'] ?? 0) + (int) ($r['receipt_count'] ?? 0),
+    ],
+    'created_at' => ['type' => 'date', 'default_dir' => 'desc'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'created_at', 'desc');
+$requests = sortRecordList($requests, $sortState);
+$listFilters = array_merge([
+    'status' => $filter,
+    'search' => $search,
+], recordsSortFilterParams($sortState));
+$pagedAttachments = paginateRecordList($requests, $listFilters, 'attachmentsFilterForm', 'request', 'requests');
+$requests = $pagedAttachments['items'];
+$sortQuery = $listFilters;
+if ($pagedAttachments['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $pagedAttachments['per_page'];
+}
 
 $pageTitle = 'Request Attachments';
 $activeNav = 'attachments';
@@ -18,7 +45,8 @@ require_once __DIR__ . '/../includes/header.php';
 <div class="card">
     <div class="card-header"><h2>Requestor Attachments</h2></div>
     <div class="card-body">
-        <form method="GET" class="filter-bar">
+        <form method="GET" class="filter-bar" id="attachmentsFilterForm">
+            <?= recordsSortFormFields($sortState) ?>
             <input type="text" name="search" placeholder="Search request #, student..." value="<?= e($search) ?>">
             <select name="status">
                 <option value="">All statuses</option>
@@ -28,6 +56,7 @@ require_once __DIR__ . '/../includes/header.php';
             </select>
             <button type="submit" class="btn btn-outline btn-sm">Filter</button>
         </form>
+        <?= $pagedAttachments['meta_html'] ?>
 
         <?php if (empty($requests)): ?>
             <div class="empty-state"><i class="fas fa-paperclip"></i><p>No requests with attachments found.</p></div>
@@ -36,12 +65,12 @@ require_once __DIR__ . '/../includes/header.php';
                 <table class="data-table data-table-responsive attachments-list-table">
                     <thead>
                         <tr>
-                            <th>Request #</th>
-                            <th>Student</th>
-                            <th>Document</th>
-                            <th>Status</th>
-                            <th>Attachments</th>
-                            <th>Submitted</th>
+                            <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Document', 'document_name', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Status', 'status', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Attachments', 'attachments', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Submitted', 'created_at', $sortState, $sortQuery) ?>
                             <th>Action</th>
                         </tr>
                     </thead>
@@ -73,6 +102,7 @@ require_once __DIR__ . '/../includes/header.php';
                     </tbody>
                 </table>
             </div>
+            <?= $pagedAttachments['html'] ?>
         <?php endif; ?>
     </div>
 </div>

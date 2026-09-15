@@ -34,6 +34,7 @@ require_once __DIR__ . '/../includes/header.php';
 renderDashboardWelcome($user, 'Review requests, verify requirements, assign documents to staff, and process documents assigned to you.');
 renderDashboardActions([
     ['url' => 'new-onsite-request.php', 'label' => 'Onsite Request', 'icon' => 'fa-store', 'class' => 'btn-primary'],
+    ['url' => APP_URL . '/queue/window.php', 'label' => 'Queue Window', 'icon' => 'fa-list-ol'],
     ['url' => 'students.php', 'label' => 'Student Records', 'icon' => 'fa-users'],
     ['url' => 'grades-evaluation.php', 'label' => 'Grades Evaluation', 'icon' => 'fa-clipboard-list'],
     ['url' => 'grade-entry.php', 'label' => 'Enter Grades', 'icon' => 'fa-paste'],

@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', function () {
     initNotificationToasts();
     initLandingNav();
     initLandingHeroCarousel();
+    initRecordsPerPageSelects();
 
     const toggle = document.getElementById('sidebarToggle');
     const sidebar = document.getElementById('sidebar');
@@ -1488,5 +1489,23 @@ function initNotificationToasts() {
     setInterval(poll, 12000);
     document.addEventListener('visibilitychange', function () {
         if (!document.hidden) poll();
+    });
+}
+
+function initRecordsPerPageSelects() {
+    document.querySelectorAll('.records-per-page select, .students-per-page select').forEach(function (select) {
+        if (select.dataset.recordsPagingBound === '1') {
+            return;
+        }
+        select.dataset.recordsPagingBound = '1';
+        select.addEventListener('change', function () {
+            var form = select.form;
+            if (!form && select.getAttribute('form')) {
+                form = document.getElementById(select.getAttribute('form'));
+            }
+            if (form) {
+                form.submit();
+            }
+        });
     });
 }

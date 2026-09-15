@@ -112,12 +112,13 @@ $campuses = getActiveCampuses();
 $yearLevels = yearLevelOptions();
 $semesters = semesterOptions();
 $logPage = max(1, (int) ($_GET['log_page'] ?? 1));
+$logPerPage = normalizeRecordsPerPage((int) ($_GET['log_per_page'] ?? ITEMS_PER_PAGE));
 $logKeyFilter = (int) ($_GET['log_key'] ?? 0);
 $logStatusFilter = trim((string) ($_GET['log_status'] ?? ''));
 $logResult = listExternalApiRequestLogs([
     'api_key_id' => $logKeyFilter,
     'status' => $logStatusFilter,
-], $logPage, 20);
+], $logPage, $logPerPage);
 $logStats = getExternalApiRequestLogStats();
 
 $pageTitle = 'External API';
@@ -307,7 +308,7 @@ require_once __DIR__ . '/../includes/header.php';
             <div><strong><?= number_format($logStats['error_count']) ?></strong><span>Failed</span></div>
         </div>
 
-        <form method="GET" class="form-grid api-log-filters">
+        <form method="GET" class="form-grid api-log-filters" id="apiLogsFilterForm">
             <div class="form-group">
                 <label for="log_key">API key</label>
                 <select id="log_key" name="log_key">
@@ -327,12 +328,26 @@ require_once __DIR__ . '/../includes/header.php';
                     <option value="error" <?= $logStatusFilter === 'error' ? 'selected' : '' ?>>Failed</option>
                 </select>
             </div>
+            <div class="form-group">
+                <label class="records-per-page" for="log_per_page">Per page
+                    <select id="log_per_page" name="log_per_page" aria-label="Records per page">
+                        <?php foreach (recordsPerPageOptions() as $option): ?>
+                            <option value="<?= (int) $option ?>" <?= $logPerPage === $option ? 'selected' : '' ?>><?= (int) $option ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+            </div>
             <div class="form-actions">
                 <button type="submit" class="btn btn-outline"><i class="fas fa-filter"></i> Filter</button>
                 <a href="<?= APP_URL ?>/admin/api-settings.php#api-logs" class="btn btn-outline">Reset</a>
             </div>
         </form>
 
+        <?= renderRecordsShowingMeta([
+            'total' => (int) $logResult['total'],
+            'offset' => max(0, ((int) $logResult['page'] - 1) * (int) $logResult['per_page']),
+            'per_page' => (int) $logResult['per_page'],
+        ], 'log', 'logs') ?>
         <?php if ($logResult['logs'] === []): ?>
             <p class="text-muted">No API requests logged yet.</p>
         <?php else: ?>
@@ -393,10 +408,11 @@ require_once __DIR__ . '/../includes/header.php';
                     <p class="pagination-status">Page <?= (int) $logResult['page'] ?> of <?= (int) $logResult['total_pages'] ?></p>
                     <ul>
                         <?php
-                        $logPageQuery = static function (int $targetPage) use ($logKeyFilter, $logStatusFilter): string {
+                        $logPageQuery = static function (int $targetPage) use ($logKeyFilter, $logStatusFilter, $logPerPage): string {
                             return http_build_query(array_filter([
                                 'log_key' => $logKeyFilter > 0 ? $logKeyFilter : null,
                                 'log_status' => $logStatusFilter !== '' ? $logStatusFilter : null,
+                                'log_per_page' => $logPerPage !== ITEMS_PER_PAGE ? $logPerPage : null,
                                 'log_page' => $targetPage > 1 ? $targetPage : null,
                             ]));
                         };

@@ -38,6 +38,7 @@ require_once __DIR__ . '/../includes/header.php';
 renderDashboardWelcome($user, 'Process documents assigned to you and prepare them for on-site release.');
 renderDashboardActions([
     ['url' => 'requests.php', 'label' => 'My Assignments', 'icon' => 'fa-tasks', 'class' => 'btn-primary'],
+    ['url' => APP_URL . '/queue/window.php', 'label' => 'Queue Window', 'icon' => 'fa-list-ol'],
     ['url' => 'requests.php?status=processing', 'label' => 'Processing', 'icon' => 'fa-cog'],
     ['url' => 'requests.php?status=ready_for_pickup', 'label' => 'Ready for Pickup', 'icon' => 'fa-box-open'],
     ['url' => 'documents.php', 'label' => 'Documents', 'icon' => 'fa-print'],

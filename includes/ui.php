@@ -347,6 +347,7 @@ function landingNavLinks(): array
     return [
         'home' => ['href' => 'index.php', 'label' => 'Home'],
         'track' => ['href' => 'track.php', 'label' => 'Track Request'],
+        'queue' => ['href' => 'queue/get-number.php', 'label' => 'Get Queue Number'],
         'faq' => ['href' => 'faq.php', 'label' => 'FAQ'],
         'verify' => ['href' => 'verify.php', 'label' => 'Verify Document'],
         'login' => ['href' => 'auth/login.php', 'label' => 'Sign In', 'class' => 'btn btn-outline'],

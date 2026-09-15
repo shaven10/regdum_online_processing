@@ -110,6 +110,8 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                     </div>
                 </div>
                 <a href="<?= APP_URL ?>/registrar/new-onsite-request.php" class="<?= $activeNav === 'onsite-request' ? 'active' : '' ?>"><i class="fas fa-store"></i> Onsite Request</a>
+                <a href="<?= APP_URL ?>/queue/window.php" class="<?= $activeNav === 'queue-window' ? 'active' : '' ?>"><i class="fas fa-list-ol"></i> Queue Window</a>
+                <a href="<?= APP_URL ?>/queue/monitor.php" class="<?= $activeNav === 'queue-monitor' ? 'active' : '' ?>"><i class="fas fa-tv"></i> Queue Monitor</a>
                 <a href="<?= APP_URL ?>/registrar/compliance.php" class="<?= $activeNav === 'compliance' ? 'active' : '' ?>"><i class="fas fa-clipboard-check"></i> Request Review</a>
                 <a href="<?= APP_URL ?>/registrar/assignments.php" class="<?= $activeNav === 'assignments' ? 'active' : '' ?>"><i class="fas fa-user-tag"></i> Staff Assignment</a>
                 <a href="<?= APP_URL ?>/registrar/documents.php" class="<?= $activeNav === 'my-assignments' ? 'active' : '' ?>"><i class="fas fa-tasks"></i> My Assignments</a>
@@ -127,7 +129,7 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/accounting/documents.php?status=processing" class="<?= $activeNav === 'processing' ? 'active' : '' ?>"><i class="fas fa-spinner"></i> Processing</a>
                 <a href="<?= APP_URL ?>/accounting/documents.php?status=ready_for_pickup" class="<?= $activeNav === 'ready' ? 'active' : '' ?>"><i class="fas fa-box-open"></i> Ready for Pickup</a>
             <?php elseif (hasRole('admin')): ?>
-                <?php $adminSettingsNav = ['users', 'documents', 'release-rules', 'programs', 'campuses', 'requirement-types', 'requirements', 'purpose-suggestions', 'academic-term', 'theme', 'api-settings', 'database-tools', 'audit']; ?>
+                <?php $adminSettingsNav = ['users', 'documents', 'release-rules', 'programs', 'campuses', 'requirement-types', 'requirements', 'purpose-suggestions', 'academic-term', 'queue-settings', 'theme', 'api-settings', 'database-tools', 'audit']; ?>
                 <?php $adminReportsNav = ['reports', 'enrollment-report', 'enrollment-list']; ?>
                 <?php $settingsMenuOpen = in_array($activeNav, $adminSettingsNav, true); ?>
                 <?php $reportsMenuOpen = in_array($activeNav, $adminReportsNav, true); ?>
@@ -173,6 +175,7 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                         <a href="<?= APP_URL ?>/admin/requirement-settings.php" class="<?= $activeNav === 'requirements' ? 'active' : '' ?>"><i class="fas fa-sliders-h"></i> Requirement Settings</a>
                         <a href="<?= APP_URL ?>/admin/purpose-suggestions.php" class="<?= $activeNav === 'purpose-suggestions' ? 'active' : '' ?>"><i class="fas fa-bullseye"></i> Purpose & Suggestions</a>
                         <a href="<?= APP_URL ?>/admin/academic-term-settings.php" class="<?= $activeNav === 'academic-term' ? 'active' : '' ?>"><i class="fas fa-calendar-alt"></i> Academic Term</a>
+                        <a href="<?= APP_URL ?>/admin/queue-settings.php" class="<?= $activeNav === 'queue-settings' ? 'active' : '' ?>"><i class="fas fa-list-ol"></i> Queue Settings</a>
                         <a href="<?= APP_URL ?>/admin/theme-settings.php" class="<?= $activeNav === 'theme' ? 'active' : '' ?>"><i class="fas fa-palette"></i> Theme Manager</a>
                         <a href="<?= APP_URL ?>/admin/api-settings.php" class="<?= $activeNav === 'api-settings' ? 'active' : '' ?>"><i class="fas fa-plug"></i> External API</a>
                         <a href="<?= APP_URL ?>/admin/database-tools.php" class="<?= $activeNav === 'database-tools' ? 'active' : '' ?>"><i class="fas fa-database"></i> Database Tools</a>
@@ -184,6 +187,7 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/staff/requests.php" class="<?= $activeNav === 'requests' ? 'active' : '' ?>"><i class="fas fa-tasks"></i> My Assignments</a>
                 <a href="<?= APP_URL ?>/staff/students.php" class="<?= $activeNav === 'students' ? 'active' : '' ?>"><i class="fas fa-search"></i> Student Records</a>
                 <a href="<?= APP_URL ?>/staff/documents.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-print"></i> Documents</a>
+                <a href="<?= APP_URL ?>/queue/window.php" class="<?= $activeNav === 'queue-window' ? 'active' : '' ?>"><i class="fas fa-list-ol"></i> Queue Window</a>
             <?php endif; ?>
             </div>
 

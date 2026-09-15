@@ -32,9 +32,13 @@ if (!in_array($filter, $allowedFilters, true)) {
 }
 
 $search = trim($_GET['search'] ?? '');
+$page = max(1, (int) ($_GET['page'] ?? 1));
+$perPage = normalizeRecordsPerPage((int) ($_GET['per_page'] ?? ITEMS_PER_PAGE));
 $listQuery = array_filter([
     'filter' => $filter !== 'review' ? $filter : '',
     'search' => $search,
+    'per_page' => $perPage !== ITEMS_PER_PAGE ? (string) $perPage : '',
+    'page' => $page > 1 ? (string) $page : '',
 ], static fn($v) => $v !== null && $v !== '');
 $listUrl = APP_URL . '/registrar/compliance.php' . ($listQuery ? '?' . http_build_query($listQuery) : '');
 
@@ -124,6 +128,37 @@ if ($search !== '') {
         );
         return str_contains($haystack, strtolower($search));
     }));
+}
+
+$sortColumns = [
+    'request_number' => ['type' => 'string'],
+    'student_id' => ['type' => 'string'],
+    'name' => [
+        'type' => 'string',
+        'get' => static fn(array $r): string => trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? '')),
+    ],
+    'document_name' => ['type' => 'string'],
+    'status' => ['type' => 'string'],
+    'requirement_count' => ['type' => 'number', 'default_dir' => 'desc'],
+    'created_at' => ['type' => 'date', 'default_dir' => 'desc'],
+    'completed_at' => [
+        'type' => 'date',
+        'default_dir' => 'desc',
+        'get' => static fn(array $r): string => (string) ($r['completed_at'] ?? $r['updated_at'] ?? $r['created_at'] ?? ''),
+    ],
+];
+$defaultSort = $filter === 'completed' ? 'completed_at' : 'created_at';
+$sortState = resolveRecordsSort($sortColumns, $defaultSort, 'desc');
+$requests = sortRecordList($requests, $sortState);
+$listFilters = array_merge([
+    'filter' => $filter !== 'review' ? $filter : '',
+    'search' => $search,
+], recordsSortFilterParams($sortState));
+$paged = paginateRecordList($requests, $listFilters, 'complianceFilterForm', 'request', 'requests');
+$requests = $paged['items'];
+$sortQuery = $listFilters;
+if ($paged['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $paged['per_page'];
 }
 
 $stageCards = [
@@ -234,12 +269,16 @@ require_once __DIR__ . '/../includes/header.php';
             <div>
                 <h2><?= e($filterLabels[$filter] ?? 'Requests') ?></h2>
                 <p class="text-muted" style="margin:.35rem 0 0">
-                    Showing <?= count($requests) ?> request<?= count($requests) === 1 ? '' : 's' ?>
+                    <?= (int) $paged['total'] ?> request<?= (int) $paged['total'] === 1 ? '' : 's' ?>
+                    <?php if ((int) $paged['total'] > 0): ?>
+                        · showing <?= (int) $paged['pag']['offset'] + 1 ?>–<?= min((int) $paged['pag']['offset'] + (int) $paged['per_page'], (int) $paged['total']) ?>
+                    <?php endif; ?>
                 </p>
             </div>
         </div>
         <div class="card-body">
-            <form method="GET" class="filter-bar">
+            <form method="GET" class="filter-bar" id="complianceFilterForm">
+                <?= recordsSortFormFields($sortState) ?>
                 <input type="text" name="search" placeholder="Search request #, student, document..." value="<?= e($search) ?>">
                 <select name="filter" aria-label="Review stage">
                     <option value="review" <?= $filter === 'review' ? 'selected' : '' ?>>Review Queue (New + Needs Revision)</option>
@@ -287,13 +326,18 @@ require_once __DIR__ . '/../includes/header.php';
                                             <input type="checkbox" id="registrarSelectAllRequests" aria-label="Select all requests on this page">
                                         </label>
                                     </th>
-                                    <th>Request #</th>
-                                    <th>Student ID</th>
-                                    <th>Name</th>
-                                    <th>Document</th>
-                                    <th>Workflow Stage</th>
-                                    <th>Requirements</th>
-                                    <th><?= $filter === 'completed' ? 'Completed' : 'Submitted' ?></th>
+                                    <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                                    <?= renderRecordsSortHeader('Student ID', 'student_id', $sortState, $sortQuery) ?>
+                                    <?= renderRecordsSortHeader('Name', 'name', $sortState, $sortQuery) ?>
+                                    <?= renderRecordsSortHeader('Document', 'document_name', $sortState, $sortQuery) ?>
+                                    <?= renderRecordsSortHeader('Workflow Stage', 'status', $sortState, $sortQuery) ?>
+                                    <?= renderRecordsSortHeader('Requirements', 'requirement_count', $sortState, $sortQuery) ?>
+                                    <?= renderRecordsSortHeader(
+                                        $filter === 'completed' ? 'Completed' : 'Submitted',
+                                        $filter === 'completed' ? 'completed_at' : 'created_at',
+                                        $sortState,
+                                        $sortQuery
+                                    ) ?>
                                     <th>Action</th>
                                 </tr>
                             </thead>
@@ -336,6 +380,7 @@ require_once __DIR__ . '/../includes/header.php';
                         </table>
                     </div>
                 </form>
+                <?= $paged['html'] ?>
             <?php endif; ?>
         </div>
     </div>

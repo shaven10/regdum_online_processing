@@ -936,20 +936,292 @@ function paginationLinks(array $pag, string $baseUrl): string {
     return $html;
 }
 
-function studentRecordsPerPageOptions(): array {
+function recordsPerPageOptions(): array {
     return [15, 25, 50, 100];
 }
 
-function normalizeStudentRecordsPerPage(int $perPage): int {
-    $allowed = studentRecordsPerPageOptions();
+function normalizeRecordsPerPage(int $perPage): int {
+    $allowed = recordsPerPageOptions();
     return in_array($perPage, $allowed, true) ? $perPage : ITEMS_PER_PAGE;
 }
 
-function renderStudentRecordsPagination(array $pag, string $baseUrl, int $perPage, string $formId = 'studentsFilterForm'): string {
-    $html = '<div class="students-pagination-bar">';
-    $html .= '<label class="students-per-page">Per page ';
+function studentRecordsPerPageOptions(): array {
+    return recordsPerPageOptions();
+}
+
+function normalizeStudentRecordsPerPage(int $perPage): int {
+    return normalizeRecordsPerPage($perPage);
+}
+
+function recordsSortDirection(string $dir): string {
+    return strtolower(trim($dir)) === 'asc' ? 'asc' : 'desc';
+}
+
+/**
+ * Resolve active sort column/direction from the request.
+ *
+ * Column map keys are public sort ids. Optional keys per column:
+ * - type: string|number|date (default string)
+ * - sql: SQL expression(s) for ORDER BY
+ * - get: callable(array $row): mixed for in-memory sorting
+ * - default_dir: asc|desc when this column is first selected
+ *
+ * @param array<string, array{type?:string, sql?:string, get?:callable, default_dir?:string}> $columns
+ * @return array{
+ *   sort:string,
+ *   dir:string,
+ *   columns:array,
+ *   default_sort:string,
+ *   default_dir:string
+ * }
+ */
+function resolveRecordsSort(array $columns, string $defaultSort, string $defaultDir = 'desc'): array {
+    $defaultDir = recordsSortDirection($defaultDir);
+    if ($columns === []) {
+        return [
+            'sort' => $defaultSort,
+            'dir' => $defaultDir,
+            'columns' => [],
+            'default_sort' => $defaultSort,
+            'default_dir' => $defaultDir,
+        ];
+    }
+
+    if (!isset($columns[$defaultSort])) {
+        $defaultSort = (string) array_key_first($columns);
+    }
+
+    $sort = trim((string) ($_GET['sort'] ?? $defaultSort));
+    if ($sort === '' || !isset($columns[$sort])) {
+        $sort = $defaultSort;
+    }
+
+    if (!array_key_exists('dir', $_GET) || trim((string) $_GET['dir']) === '') {
+        $dir = recordsSortDirection((string) ($columns[$sort]['default_dir'] ?? $defaultDir));
+    } else {
+        $dir = recordsSortDirection((string) $_GET['dir']);
+    }
+
+    return [
+        'sort' => $sort,
+        'dir' => $dir,
+        'columns' => $columns,
+        'default_sort' => $defaultSort,
+        'default_dir' => $defaultDir,
+    ];
+}
+
+/**
+ * @param array{sort:string, dir:string, default_sort?:string, default_dir?:string} $sortState
+ * @return array{sort?:string, dir?:string}
+ */
+function recordsSortFilterParams(array $sortState): array {
+    $sort = (string) ($sortState['sort'] ?? '');
+    $dir = recordsSortDirection((string) ($sortState['dir'] ?? 'desc'));
+    $defaultSort = (string) ($sortState['default_sort'] ?? '');
+    $defaultDir = recordsSortDirection((string) ($sortState['default_dir'] ?? 'desc'));
+
+    if ($sort === '' || ($sort === $defaultSort && $dir === $defaultDir)) {
+        return [];
+    }
+
+    return [
+        'sort' => $sort,
+        'dir' => $dir,
+    ];
+}
+
+/**
+ * Hidden fields so filter / per-page submits keep the active column sort.
+ *
+ * @param array{sort:string, dir:string} $sortState
+ */
+function recordsSortFormFields(array $sortState): string {
+    $sort = trim((string) ($sortState['sort'] ?? ''));
+    $dir = recordsSortDirection((string) ($sortState['dir'] ?? 'desc'));
+    if ($sort === '') {
+        return '';
+    }
+
+    return '<input type="hidden" name="sort" value="' . e($sort) . '">'
+        . '<input type="hidden" name="dir" value="' . e($dir) . '">';
+}
+
+function recordsSortComparable(mixed $value, string $type): mixed {
+    if ($value === null || $value === '') {
+        return match ($type) {
+            'number', 'date' => 0,
+            default => '',
+        };
+    }
+
+    return match ($type) {
+        'number' => (float) $value,
+        'date' => strtotime((string) $value) ?: 0,
+        default => mb_strtolower(trim((string) $value)),
+    };
+}
+
+/**
+ * @param array<string,mixed> $row
+ * @param array{type?:string, get?:callable} $column
+ */
+function recordsSortRowValue(array $row, string $key, array $column): mixed {
+    if (isset($column['get']) && is_callable($column['get'])) {
+        return ($column['get'])($row);
+    }
+    return $row[$key] ?? null;
+}
+
+/**
+ * @param list<array<string,mixed>> $items
+ * @param array{sort:string, dir:string, columns:array} $sortState
+ * @return list<array<string,mixed>>
+ */
+function sortRecordList(array $items, array $sortState): array {
+    $sort = (string) ($sortState['sort'] ?? '');
+    $columns = $sortState['columns'] ?? [];
+    if ($sort === '' || !isset($columns[$sort]) || $items === []) {
+        return array_values($items);
+    }
+
+    $column = $columns[$sort];
+    $type = (string) ($column['type'] ?? 'string');
+    $factor = recordsSortDirection((string) ($sortState['dir'] ?? 'desc')) === 'asc' ? 1 : -1;
+
+    usort($items, static function ($a, $b) use ($sort, $column, $type, $factor): int {
+        if (!is_array($a) || !is_array($b)) {
+            return 0;
+        }
+        $av = recordsSortComparable(recordsSortRowValue($a, $sort, $column), $type);
+        $bv = recordsSortComparable(recordsSortRowValue($b, $sort, $column), $type);
+        if ($av == $bv) {
+            return ((int) ($a['id'] ?? 0)) <=> ((int) ($b['id'] ?? 0));
+        }
+        return ($av <=> $bv) * $factor;
+    });
+
+    return array_values($items);
+}
+
+/**
+ * Build a safe ORDER BY clause from a resolved sort state.
+ *
+ * @param array{sort:string, dir:string, columns:array} $sortState
+ */
+function recordsSqlOrderBy(array $sortState, string $fallbackSql): string {
+    $sort = (string) ($sortState['sort'] ?? '');
+    $columns = $sortState['columns'] ?? [];
+    if ($sort === '' || empty($columns[$sort]['sql'])) {
+        return $fallbackSql;
+    }
+
+    $dir = strtoupper(recordsSortDirection((string) ($sortState['dir'] ?? 'desc')));
+    $parts = array_map('trim', explode(',', (string) $columns[$sort]['sql']));
+    $ordered = [];
+    foreach ($parts as $part) {
+        if ($part === '') {
+            continue;
+        }
+        $part = (string) preg_replace('/\s+(ASC|DESC)$/i', '', $part);
+        $ordered[] = $part . ' ' . $dir;
+    }
+
+    return $ordered === [] ? $fallbackSql : implode(', ', $ordered);
+}
+
+/**
+ * Clickable table header for column sorting. Resets to page 1.
+ *
+ * @param array{sort:string, dir:string, columns:array} $sortState
+ * @param array<string,mixed> $query Current list filters (without page)
+ */
+function renderRecordsSortHeader(string $label, string $column, array $sortState, array $query = [], string $tag = 'th'): string {
+    $tag = in_array($tag, ['th', 'span', 'div'], true) ? $tag : 'th';
+    if (!isset($sortState['columns'][$column])) {
+        return '<' . $tag . '>' . e($label) . '</' . $tag . '>';
+    }
+
+    $isActive = ($sortState['sort'] ?? '') === $column;
+    $colDef = $sortState['columns'][$column];
+    $type = (string) ($colDef['type'] ?? 'string');
+
+    if ($isActive) {
+        $nextDir = recordsSortDirection((string) ($sortState['dir'] ?? 'desc')) === 'asc' ? 'desc' : 'asc';
+    } else {
+        $nextDir = recordsSortDirection((string) ($colDef['default_dir'] ?? ($type === 'string' ? 'asc' : 'desc')));
+    }
+
+    unset($query['page']);
+    $perPage = normalizeRecordsPerPage((int) ($query['per_page'] ?? ITEMS_PER_PAGE));
+    unset($query['per_page']);
+    $query['sort'] = $column;
+    $query['dir'] = $nextDir;
+    $url = recordsListBaseUrl(recordsListQuery($query, $perPage));
+
+    $icon = 'fa-sort';
+    $ariaSort = 'none';
+    if ($isActive) {
+        $icon = ($sortState['dir'] ?? '') === 'asc' ? 'fa-sort-up' : 'fa-sort-down';
+        $ariaSort = ($sortState['dir'] ?? '') === 'asc' ? 'ascending' : 'descending';
+    }
+
+    $classes = 'sortable-col' . ($isActive ? ' is-sorted is-sorted-' . e((string) $sortState['dir']) : '');
+
+    return '<' . $tag . ' class="' . $classes . '" aria-sort="' . $ariaSort . '">'
+        . '<a class="sortable-link" href="' . e($url) . '" title="Sort by ' . e($label) . '">'
+        . '<span>' . e($label) . '</span>'
+        . '<i class="fas ' . $icon . '" aria-hidden="true"></i>'
+        . '</a></' . $tag . '>';
+}
+
+/**
+ * @param array<string,mixed> $filters
+ * @return array<string,string>
+ */
+function recordsListQuery(array $filters, int $perPage): array {
+    $query = [];
+    foreach ($filters as $key => $value) {
+        if ($value === null || $value === '' || $value === false) {
+            continue;
+        }
+        if (is_int($value) && $value === 0) {
+            continue;
+        }
+        $query[(string) $key] = (string) $value;
+    }
+    if ($perPage !== ITEMS_PER_PAGE) {
+        $query['per_page'] = (string) $perPage;
+    }
+
+    return $query;
+}
+
+function recordsListBaseUrl(array $query): string {
+    return $query === [] ? '?' : ('?' . http_build_query($query));
+}
+
+function renderRecordsShowingMeta(array $pag, string $singular = 'record', string $plural = 'records'): string {
+    $total = (int) ($pag['total'] ?? 0);
+    if ($total <= 0) {
+        return '';
+    }
+
+    $from = (int) $pag['offset'] + 1;
+    $to = min((int) $pag['offset'] + (int) $pag['per_page'], $total);
+    $noun = $total === 1 ? $singular : $plural;
+
+    return '<div class="records-filter-meta students-filter-meta">'
+        . '<span>' . $total . ' ' . e($noun) . '</span>'
+        . '<span>Showing ' . $from . '–' . $to . '</span>'
+        . '</div>';
+}
+
+function renderRecordsPaginationBar(array $pag, string $baseUrl, int $perPage, string $formId = 'recordsFilterForm'): string {
+    $html = '<div class="records-pagination-bar students-pagination-bar">';
+    $html .= '<label class="records-per-page students-per-page">Per page ';
     $html .= '<select name="per_page" form="' . e($formId) . '" aria-label="Records per page">';
-    foreach (studentRecordsPerPageOptions() as $option) {
+    foreach (recordsPerPageOptions() as $option) {
         $selected = $option === $perPage ? ' selected' : '';
         $html .= '<option value="' . $option . '"' . $selected . '>' . $option . '</option>';
     }
@@ -957,6 +1229,66 @@ function renderStudentRecordsPagination(array $pag, string $baseUrl, int $perPag
     $html .= paginationLinks($pag, $baseUrl);
     $html .= '</div>';
     return $html;
+}
+
+function renderStudentRecordsPagination(array $pag, string $baseUrl, int $perPage, string $formId = 'studentsFilterForm'): string {
+    return renderRecordsPaginationBar($pag, $baseUrl, $perPage, $formId);
+}
+
+/**
+ * @param array<string,mixed> $filters
+ * @return array{
+ *   pag:array,
+ *   per_page:int,
+ *   base_url:string,
+ *   form_id:string,
+ *   html:string,
+ *   meta_html:string,
+ *   total:int,
+ *   offset:int,
+ *   limit:int
+ * }
+ */
+function recordsListPaging(int $total, array $filters = [], string $formId = 'recordsFilterForm', string $singular = 'record', string $plural = 'records'): array {
+    $page = max(1, (int) ($_GET['page'] ?? 1));
+    $perPage = normalizeRecordsPerPage((int) ($_GET['per_page'] ?? ITEMS_PER_PAGE));
+    $pag = paginate($total, $page, $perPage);
+    $query = recordsListQuery($filters, $perPage);
+    $baseUrl = recordsListBaseUrl($query);
+
+    return [
+        'pag' => $pag,
+        'per_page' => $perPage,
+        'base_url' => $baseUrl,
+        'form_id' => $formId,
+        'html' => renderRecordsPaginationBar($pag, $baseUrl, $perPage, $formId),
+        'meta_html' => renderRecordsShowingMeta($pag, $singular, $plural),
+        'total' => $pag['total'],
+        'offset' => $pag['offset'],
+        'limit' => $pag['per_page'],
+    ];
+}
+
+/**
+ * @param list<mixed> $items
+ * @param array<string,mixed> $filters
+ * @return array{
+ *   items:list<mixed>,
+ *   pag:array,
+ *   per_page:int,
+ *   base_url:string,
+ *   form_id:string,
+ *   html:string,
+ *   meta_html:string,
+ *   total:int,
+ *   offset:int,
+ *   limit:int
+ * }
+ */
+function paginateRecordList(array $items, array $filters = [], string $formId = 'recordsFilterForm', string $singular = 'record', string $plural = 'records'): array {
+    $paging = recordsListPaging(count($items), $filters, $formId, $singular, $plural);
+    $paging['items'] = array_values(array_slice($items, $paging['offset'], $paging['limit']));
+    return $paging;
 }
 
 function generateQRCodeData(string $verificationCode, string $requestNumber): string {

@@ -1376,7 +1376,20 @@ function getPaymentReportData(array $filters, ?int $page = null, ?int $perPage =
     $methodStmt->execute($params);
     $byMethod = $methodStmt->fetchAll();
 
-    $sql = paymentReportBaseSelect() . ' WHERE ' . $where . ' ORDER BY COALESCE(p.verified_at, p.created_at) DESC, p.id DESC';
+    $sql = paymentReportBaseSelect() . ' WHERE ' . $where . ' ORDER BY ' . recordsSqlOrderBy(
+        resolveRecordsSort([
+            'request_number' => ['type' => 'string', 'sql' => 'r.request_number'],
+            'name' => ['type' => 'string', 'sql' => 'u.last_name, u.first_name'],
+            'document_name' => ['type' => 'string', 'sql' => 'dt.name'],
+            'payment_method' => ['type' => 'string', 'sql' => 'p.payment_method'],
+            'amount' => ['type' => 'number', 'sql' => 'p.amount', 'default_dir' => 'desc'],
+            'reference_number' => ['type' => 'string', 'sql' => 'p.reference_number'],
+            'status' => ['type' => 'string', 'sql' => 'p.status'],
+            'payment_date' => ['type' => 'date', 'sql' => 'p.payment_date', 'default_dir' => 'desc'],
+            'created_at' => ['type' => 'date', 'sql' => 'p.created_at', 'default_dir' => 'desc'],
+        ], 'created_at', 'desc'),
+        'COALESCE(p.verified_at, p.created_at) DESC, p.id DESC'
+    );
     if ($page !== null && $perPage !== null) {
         if (!function_exists('paginate')) {
             require_once __DIR__ . '/functions.php';

@@ -27,14 +27,41 @@ if ($readId > 0) {
     redirect(APP_URL . '/notifications.php');
 }
 
-$stmt = $db->prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50');
+$countStmt = $db->prepare('SELECT COUNT(*) FROM notifications WHERE user_id = ?');
+$countStmt->execute([$user['id']]);
+$sortColumns = [
+    'title' => ['type' => 'string', 'sql' => 'title'],
+    'type' => ['type' => 'string', 'sql' => 'type'],
+    'created_at' => ['type' => 'date', 'sql' => 'created_at', 'default_dir' => 'desc'],
+    'is_read' => ['type' => 'number', 'sql' => 'is_read'],
+];
+$sortState = resolveRecordsSort($sortColumns, 'created_at', 'desc');
+$listFilters = recordsSortFilterParams($sortState);
+$notifPaging = recordsListPaging(
+    (int) $countStmt->fetchColumn(),
+    $listFilters,
+    'notificationsFilterForm',
+    'notification',
+    'notifications'
+);
+$sortQuery = $listFilters;
+if ($notifPaging['per_page'] !== ITEMS_PER_PAGE) {
+    $sortQuery['per_page'] = $notifPaging['per_page'];
+}
+
+$stmt = $db->prepare(
+    'SELECT * FROM notifications WHERE user_id = ? ORDER BY ' . recordsSqlOrderBy($sortState, 'created_at DESC') . '
+     LIMIT ' . (int) $notifPaging['limit'] . ' OFFSET ' . (int) $notifPaging['offset']
+);
 $stmt->execute([$user['id']]);
 $items = $stmt->fetchAll();
 
 // Viewing the notifications page marks unread items as read.
 $unreadOnView = array_values(array_filter($items, static fn(array $n): bool => empty($n['is_read'])));
 $latestUnreadNotifications = array_slice($unreadOnView, 0, 5);
-if ($unreadOnView !== []) {
+$unreadCountStmt = $db->prepare('SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0');
+$unreadCountStmt->execute([$user['id']]);
+if ((int) $unreadCountStmt->fetchColumn() > 0) {
     markAllNotificationsRead((int) $user['id']);
 }
 
@@ -55,6 +82,15 @@ require_once __DIR__ . '/includes/header.php';
         <?php endif; ?>
     </div>
     <div class="card-body">
+        <form method="GET" id="notificationsFilterForm"><?= recordsSortFormFields($sortState) ?></form>
+        <div class="records-sort-bar">
+            <span class="records-sort-label">Sort by</span>
+            <?= renderRecordsSortHeader('Date', 'created_at', $sortState, $sortQuery, 'span') ?>
+            <?= renderRecordsSortHeader('Title', 'title', $sortState, $sortQuery, 'span') ?>
+            <?= renderRecordsSortHeader('Type', 'type', $sortState, $sortQuery, 'span') ?>
+            <?= renderRecordsSortHeader('Read', 'is_read', $sortState, $sortQuery, 'span') ?>
+        </div>
+        <?= $notifPaging['meta_html'] ?>
         <?php if (empty($items)): ?>
             <div class="empty-state"><i class="fas fa-bell-slash"></i><p>No notifications.</p></div>
         <?php else: ?>
@@ -87,6 +123,7 @@ require_once __DIR__ . '/includes/header.php';
                     </div>
                 <?php endforeach; ?>
             </div>
+            <?= $notifPaging['html'] ?>
         <?php endif; ?>
     </div>
 </div>
