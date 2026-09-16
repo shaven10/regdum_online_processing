@@ -629,6 +629,7 @@ function getStaffAssignedItems(int $staffId, string $status = ''): array {
 
     $sql = 'SELECT ri.*, dt.name as document_name, dt.code as document_code, r.request_number, r.status as request_status,
             r.request_channel, r.onsite_batch_key,
+            r.release_date AS request_release_date, r.release_time AS request_release_time,
             r.request_school_year AS request_level_school_year, r.request_semester AS request_level_semester,
             u.first_name, u.last_name, u.middle_name, u.student_id,
             sp.course, sp.year_level, sp.enrollment_status,
@@ -644,7 +645,16 @@ function getStaffAssignedItems(int $staffId, string $status = ''): array {
 
     $stmt = $db->prepare($sql);
     $stmt->execute($params);
-    return decorateAssignedItemsWithPaymentMethod(decorateAssignedItemsWithRequestDocuments($stmt->fetchAll()));
+    $rows = $stmt->fetchAll();
+    foreach ($rows as &$row) {
+        if (empty($row['release_date']) && !empty($row['request_release_date'])) {
+            $row['release_date'] = $row['request_release_date'];
+            $row['release_time'] = $row['request_release_time'] ?? null;
+        }
+    }
+    unset($row);
+
+    return decorateAssignedItemsWithPaymentMethod(decorateAssignedItemsWithRequestDocuments($rows));
 }
 
 function assignedRequestDocumentName(array $item): string {
@@ -838,7 +848,8 @@ function decorateAssignedItemsWithPaymentMethod(array $rows): array {
         $db = getDB();
         $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
         $stmt = $db->prepare(
-            "SELECT p.id, p.request_id, p.payment_method, p.status, r.onsite_batch_key, r.request_channel
+            "SELECT p.id, p.request_id, p.payment_method, p.status, p.or_number, p.payment_date,
+                    r.onsite_batch_key, r.request_channel
              FROM payments p
              JOIN requests r ON r.id = p.request_id
              WHERE p.request_id IN ($placeholders)
@@ -866,12 +877,16 @@ function decorateAssignedItemsWithPaymentMethod(array $rows): array {
 
         if ($payment) {
             $row['payment_method'] = $payment['payment_method'] ?? ($row['payment_method'] ?? null);
+            $row['or_number'] = trim((string) ($payment['or_number'] ?? ($row['or_number'] ?? '')));
+            $row['payment_date'] = $payment['payment_date'] ?? ($row['payment_date'] ?? null);
             $row['is_multiple'] = !empty($payment['is_multiple']);
             $row['batch_size'] = (int) ($payment['batch_size'] ?? 1);
             $row['payment_method_label'] = paymentMethodLabel($row['payment_method'] ?? null);
             $row['payment_scope_label'] = paymentScopeLabel($payment);
             $row['payment_method_scope_label'] = paymentMethodScopeLabel($payment);
         } else {
+            $row['or_number'] = trim((string) ($row['or_number'] ?? ''));
+            $row['payment_date'] = $row['payment_date'] ?? null;
             $row['payment_method_label'] = '—';
             $row['payment_scope_label'] = '';
             $row['payment_method_scope_label'] = '—';
@@ -896,6 +911,24 @@ function assignedItemMethodLabel(array $item): string {
     }
 
     return '—';
+}
+
+function assignedItemOrNumber(array $item): string {
+    $or = trim((string) ($item['or_number'] ?? ''));
+    return $or !== '' ? $or : '—';
+}
+
+function assignedItemReleaseLabel(array $item): string {
+    if (empty($item['release_date'])) {
+        return '—';
+    }
+
+    $label = formatDate((string) $item['release_date']);
+    if (!empty($item['release_time'])) {
+        $label .= ' · ' . date('g:i A', strtotime((string) $item['release_time']));
+    }
+
+    return $label;
 }
 
 function renderAssignedItemMethodHtml(array $item): string {
@@ -1017,6 +1050,10 @@ function exportAssignedDocumentsCsv(array $items, string $filename = 'my_assignm
     require_once __DIR__ . '/student.php';
     $rows = [];
     foreach ($items as $item) {
+        $statusLabel = requestItemStatusLabel((string) ($item['item_status'] ?? ''));
+        if (($item['item_status'] ?? '') === 'mixed' && !empty($item['item_status_detail'])) {
+            $statusLabel = (string) $item['item_status_detail'];
+        }
         $rows[] = [
             (string) ($item['request_number'] ?? ''),
             assignedItemDocumentSummary($item),
@@ -1024,13 +1061,13 @@ function exportAssignedDocumentsCsv(array $items, string $filename = 'my_assignm
             assignedStudentCourseYearLabel($item),
             enrollmentStatusLabel($item['enrollment_status'] ?? null),
             (string) (int) ($item['copies'] ?? 0),
-            requestItemStatusLabel((string) ($item['item_status'] ?? '')),
+            $statusLabel,
             ucwords(str_replace('_', ' ', (string) ($item['request_status'] ?? ''))),
         ];
     }
 
     exportCSV(
-        ['Request #', 'Document/s Requested', 'Student', 'Course / Year', 'Enrollment Status', 'Copies', 'Item Status', 'Batch Status'],
+        ['Request #', 'Document/s Requested', 'Student', 'Course / Year', 'Enrollment Status', 'Copies', 'Doc Status', 'Batch Status'],
         $rows,
         $filename
     );
@@ -1042,6 +1079,7 @@ function requestItemStatusLabel(string $status): string {
         'processing' => 'Processing',
         'ready_for_pickup' => 'Ready for Pickup',
         'completed' => 'Completed',
+        'mixed' => 'Multiple statuses',
         default => ucwords(str_replace('_', ' ', $status)),
     };
 }
@@ -1052,10 +1090,83 @@ function requestItemStatusBadge(string $status): string {
         'processing' => 'badge-blue',
         'ready_for_pickup' => 'badge-green',
         'completed' => 'badge-gray',
+        'mixed' => 'badge-orange',
         default => 'badge-gray',
     };
 
     return '<span class="badge ' . $class . '">' . e(requestItemStatusLabel($status)) . '</span>';
+}
+
+/**
+ * Collapse staff assignment rows so each request appears once (all documents listed together).
+ *
+ * @param list<array<string,mixed>> $items
+ * @return list<array<string,mixed>>
+ */
+function groupStaffAssignedItemsByRequest(array $items): array {
+    $groups = [];
+    $order = [];
+
+    foreach ($items as $item) {
+        $requestId = (int) ($item['request_id'] ?? 0);
+        if ($requestId <= 0) {
+            $requestId = -1 * max(1, (int) ($item['id'] ?? 0));
+        }
+
+        if (!isset($groups[$requestId])) {
+            $row = $item;
+            $row['assigned_item_ids'] = [(int) ($item['id'] ?? 0)];
+            $row['assigned_item_statuses'] = [trim((string) ($item['item_status'] ?? ''))];
+            $row['copies'] = (int) ($item['copies'] ?? 0);
+            $groups[$requestId] = $row;
+            $order[] = $requestId;
+            continue;
+        }
+
+        $groups[$requestId]['assigned_item_ids'][] = (int) ($item['id'] ?? 0);
+        $groups[$requestId]['assigned_item_statuses'][] = trim((string) ($item['item_status'] ?? ''));
+        $groups[$requestId]['copies'] = (int) ($groups[$requestId]['copies'] ?? 0) + (int) ($item['copies'] ?? 0);
+
+        if (trim((string) ($groups[$requestId]['or_number'] ?? '')) === '' && trim((string) ($item['or_number'] ?? '')) !== '') {
+            $groups[$requestId]['or_number'] = $item['or_number'];
+        }
+
+        $incomingRelease = trim((string) ($item['release_date'] ?? ''));
+        $currentRelease = trim((string) ($groups[$requestId]['release_date'] ?? ''));
+        if ($incomingRelease !== '' && ($currentRelease === '' || $incomingRelease < $currentRelease)) {
+            $groups[$requestId]['release_date'] = $item['release_date'];
+            $groups[$requestId]['release_time'] = $item['release_time'] ?? null;
+        }
+
+        $currentStatus = (string) ($groups[$requestId]['item_status'] ?? '');
+        $newStatus = (string) ($item['item_status'] ?? '');
+        // Prefer linking Process to an item still in processing.
+        if ($currentStatus !== 'processing' && $newStatus === 'processing') {
+            $groups[$requestId]['id'] = $item['id'];
+            $groups[$requestId]['item_status'] = $newStatus;
+            $groups[$requestId]['document_name'] = $item['document_name'] ?? $groups[$requestId]['document_name'];
+            $groups[$requestId]['document_code'] = $item['document_code'] ?? $groups[$requestId]['document_code'];
+        }
+    }
+
+    foreach ($groups as &$group) {
+        $statuses = array_values(array_unique(array_filter(
+            $group['assigned_item_statuses'] ?? [],
+            static fn(string $status): bool => $status !== ''
+        )));
+        unset($group['assigned_item_statuses']);
+
+        if (count($statuses) > 1) {
+            $group['item_status'] = 'mixed';
+            $group['item_status_detail'] = implode(' · ', array_map('requestItemStatusLabel', $statuses));
+        } elseif (count($statuses) === 1) {
+            $group['item_status'] = $statuses[0];
+            unset($group['item_status_detail']);
+        }
+    }
+    unset($group);
+
+    return array_map(static fn(int $requestId): array => $groups[$requestId], $order);
 }
 
 function buildReleaseScheduleForRequestItem(int $itemId, ?string $releaseDate = null, ?string $releaseTime = null): array {

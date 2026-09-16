@@ -160,17 +160,19 @@ $printedAt = date('M d, Y h:i A');
             line-height: 1.25;
         }
         .assignments-print-table tbody td { line-height: 1.3; }
-        .assignments-print-table .col-no { width: 4%; text-align: center; }
-        .assignments-print-table .col-request { width: 10%; text-align: center; font-weight: 700; }
-        .assignments-print-table .col-document { width: 20%; text-align: left; }
-        .assignments-print-table .col-student { width: 16%; text-align: left; }
-        .assignments-print-table .col-course { width: 10%; text-align: center; }
+        .assignments-print-table .col-no { width: 3.5%; text-align: center; }
+        .assignments-print-table .col-request { width: 9%; text-align: center; font-weight: 700; }
+        .assignments-print-table .col-document { width: 16%; text-align: left; }
+        .assignments-print-table .col-student { width: 13%; text-align: left; }
+        .assignments-print-table .col-course { width: 8%; text-align: center; }
         .assignments-print-table .assigned-student-id { display: block; font-size: 7pt; }
         .assignments-print-table .assigned-course-year-year { display: block; font-size: 7pt; }
-        .assignments-print-table .col-enrollment { width: 9%; text-align: center; }
-        .assignments-print-table .col-copies { width: 5%; text-align: center; }
+        .assignments-print-table .col-enrollment { width: 8%; text-align: center; }
+        .assignments-print-table .col-or { width: 8%; text-align: center; }
+        .assignments-print-table .col-release { width: 10%; text-align: center; }
+        .assignments-print-table .col-copies { width: 4.5%; text-align: center; }
         .assignments-print-table .col-item,
-        .assignments-print-table .col-batch { width: 8.5%; text-align: center; }
+        .assignments-print-table .col-batch { width: 7.5%; text-align: center; }
         .assignments-print-table .assigned-document-item + .assigned-document-item { margin-top: .1rem; }
         .assignments-print-table .assigned-document-term { display: block; font-size: 7pt; }
         .assignments-print-summary {
@@ -277,8 +279,10 @@ $printedAt = date('M d, Y h:i A');
                         <th class="col-student">Student</th>
                         <th class="col-course">Course / Year</th>
                         <th class="col-enrollment">Enrollment</th>
+                        <th class="col-or">OR #</th>
+                        <th class="col-release">Date of Release</th>
                         <th class="col-copies">Copies</th>
-                        <th class="col-item">Item Status</th>
+                        <th class="col-item">Doc Status</th>
                         <th class="col-batch">Batch Status</th>
                     </tr>
                 </thead>
@@ -291,15 +295,23 @@ $printedAt = date('M d, Y h:i A');
                             <td class="col-student"><?= renderAssignedStudentNameIdHtml($item) ?></td>
                             <td class="col-course"><?= renderAssignedStudentCourseYearHtml($item) ?></td>
                             <td class="col-enrollment"><?= e(enrollmentStatusLabel($item['enrollment_status'] ?? null)) ?></td>
+                            <td class="col-or"><?= e(assignedItemOrNumber($item)) ?></td>
+                            <td class="col-release"><?= e(assignedItemReleaseLabel($item)) ?></td>
                             <td class="col-copies"><?= (int) $item['copies'] ?></td>
-                            <td class="col-item"><?= e(requestItemStatusLabel((string) ($item['item_status'] ?? ''))) ?></td>
+                            <td class="col-item">
+                                <?php if (($item['item_status'] ?? '') === 'mixed' && !empty($item['item_status_detail'])): ?>
+                                    <?= e((string) $item['item_status_detail']) ?>
+                                <?php else: ?>
+                                    <?= e(requestItemStatusLabel((string) ($item['item_status'] ?? ''))) ?>
+                                <?php endif; ?>
+                            </td>
                             <td class="col-batch"><?= e(ucwords(str_replace('_', ' ', (string) ($item['request_status'] ?? '')))) ?></td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>
             </table>
             <div class="assignments-print-summary">
-                <span>Total assignments</span>
+                <span>Total requests</span>
                 <strong><?= count($items) ?></strong>
             </div>
         <?php endif; ?>

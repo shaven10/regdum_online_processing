@@ -55,6 +55,8 @@ if ($search !== '') {
     }));
 }
 
+$items = groupStaffAssignedItemsByRequest($items);
+
 if (!function_exists('currentScriptPageUrl')) {
     function currentScriptPageUrl(): string {
         $scriptPath = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? ''));
@@ -131,7 +133,7 @@ $items = sortRecordList($items, $sortState);
 $pagedAssignedDocuments = paginateRecordList($items, array_merge([
     'status' => $status,
     'search' => $search,
-], recordsSortFilterParams($sortState)), 'assignedDocumentsFilterForm', 'document', 'documents');
+], recordsSortFilterParams($sortState)), 'assignedDocumentsFilterForm', 'request', 'requests');
 $items = $pagedAssignedDocuments['items'];
 $sortQuery = array_merge([
     'status' => $status,
@@ -148,7 +150,7 @@ require_once __DIR__ . '/header.php';
     <div class="card-header">
         <div>
             <h2><?= e($officeLabel ?? 'Document Assignments') ?></h2>
-            <p class="text-muted" style="margin:.35rem 0 0">Documents assigned to your office for processing.</p>
+            <p class="text-muted" style="margin:.35rem 0 0">Requests assigned to your office for processing (grouped by request).</p>
         </div>
         <?php if ($items !== []): ?>
             <div class="card-header-actions payment-report-actions grades-eval-export-actions">
@@ -186,7 +188,7 @@ require_once __DIR__ . '/header.php';
                         <?= renderRecordsSortHeader('Course / Year', 'course', $sortState, $sortQuery) ?>
                         <?= renderRecordsSortHeader('Enrollment', 'enrollment_status', $sortState, $sortQuery) ?>
                         <?= renderRecordsSortHeader('Copies', 'copies', $sortState, $sortQuery) ?>
-                        <?= renderRecordsSortHeader('Item Status', 'item_status', $sortState, $sortQuery) ?>
+                        <?= renderRecordsSortHeader('Doc Status', 'item_status', $sortState, $sortQuery) ?>
                         <?= renderRecordsSortHeader('Batch Status', 'request_status', $sortState, $sortQuery) ?>
                         <th>Action</th>
                     </tr>
@@ -203,7 +205,12 @@ require_once __DIR__ . '/header.php';
                         <td data-label="Course / Year"><?= renderAssignedStudentCourseYearHtml($item) ?></td>
                         <td data-label="Enrollment"><?= e(enrollmentStatusLabel($item['enrollment_status'] ?? null)) ?></td>
                         <td data-label="Copies"><?= (int) $item['copies'] ?></td>
-                        <td data-label="Item Status"><?= requestItemStatusBadge($item['item_status']) ?></td>
+                        <td data-label="Doc Status">
+                            <?= requestItemStatusBadge($item['item_status']) ?>
+                            <?php if (($item['item_status'] ?? '') === 'mixed' && !empty($item['item_status_detail'])): ?>
+                                <br><small class="text-muted"><?= e((string) $item['item_status_detail']) ?></small>
+                            <?php endif; ?>
+                        </td>
                         <td data-label="Batch Status"><?= statusBadge($item['request_status']) ?></td>
                         <td data-label="Action" class="payment-actions-cell">
                             <a href="<?= e($processBaseUrl) ?>?item_id=<?= (int) $item['id'] ?>" class="btn btn-sm btn-primary">
