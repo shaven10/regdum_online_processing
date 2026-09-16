@@ -35,6 +35,7 @@ renderDashboardActions([
     ['url' => 'payments.php?status=rejected', 'label' => 'Rejected', 'icon' => 'fa-times-circle'],
     ['url' => 'reports.php', 'label' => 'Reports', 'icon' => 'fa-receipt'],
     ['url' => 'bank-settings.php', 'label' => 'Bank Settings', 'icon' => 'fa-university'],
+    ['url' => 'or-settings.php', 'label' => 'OR Settings', 'icon' => 'fa-receipt'],
 ]);
 ?>
 

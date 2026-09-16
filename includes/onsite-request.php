@@ -628,8 +628,10 @@ function createOnsiteCredentialRequest(
     $stmt = $db->prepare('INSERT INTO requests (
         request_number, user_id, document_type_id, purpose, purpose_other, copy_request_type, copies, delivery_method,
         pickup_date, pickup_time, representative_name, representative_relationship, representative_phone,
-        representative_id_number, total_amount, verification_code, notes, request_channel, created_by, onsite_batch_key
-    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, \'onsite\', ?, ?)');
+        representative_id_number, total_amount, verification_code, notes, request_channel, created_by, onsite_batch_key,
+        created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, \'onsite\', ?, ?, ?, ?)');
+    $createdAt = appNow();
     $stmt->execute([
         $requestNumber,
         $studentUserId,
@@ -643,6 +645,8 @@ function createOnsiteCredentialRequest(
         $notes,
         $createdByUserId > 0 ? $createdByUserId : null,
         $onsiteBatchKey,
+        $createdAt,
+        $createdAt,
     ]);
     $requestId = (int) $db->lastInsertId();
 
@@ -708,8 +712,8 @@ function createOnsiteCredentialRequest(
     $amount = (float) $amountStmt->fetchColumn();
 
     $paymentCode = generateOnsitePaymentReference();
-    $db->prepare('INSERT INTO payments (request_id, amount, payment_method, reference_number, status) VALUES (?, ?, ?, ?, ?)')
-       ->execute([$requestId, $amount, 'onsite_payment', $paymentCode, 'pending']);
+    $db->prepare('INSERT INTO payments (request_id, amount, payment_method, reference_number, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+       ->execute([$requestId, $amount, 'onsite_payment', $paymentCode, 'pending', appNow(), appNow()]);
 
     auditLog('create_onsite_request', 'requests', $requestId, null, [
         'request_number' => $requestNumber,

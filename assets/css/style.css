@@ -3736,6 +3736,48 @@ a.feature-card-link:hover {
     padding: .4rem .45rem;
 }
 
+.auth-doc-add-btn {
+    margin-top: .65rem;
+}
+
+.auth-doc-option-custom {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+}
+
+.auth-doc-custom-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: .65rem;
+    align-items: end;
+    width: 100%;
+}
+
+.auth-doc-custom-label-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+    margin: 0;
+}
+
+.auth-doc-custom-label-wrap span {
+    font-size: .75rem;
+}
+
+.auth-doc-custom-label {
+    width: 100%;
+}
+
+.auth-doc-remove-btn {
+    margin-top: .1rem;
+}
+
+@media (max-width: 640px) {
+    .auth-doc-custom-fields {
+        grid-template-columns: 1fr;
+    }
+}
+
 .auth-items-list {
     margin: .35rem 0 0;
     padding-left: 1.1rem;

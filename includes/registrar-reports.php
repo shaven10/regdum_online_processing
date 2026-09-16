@@ -63,8 +63,10 @@ function buildRegistrarRequestReportFilters(array $filters): array {
     ensureOnsiteRequestSchema();
 
     $period = resolvePaymentReportPeriod(
-        (string) ($filters['period'] ?? 'daily'),
-        (string) ($filters['date'] ?? date('Y-m-d'))
+        (string) ($filters['period'] ?? 'monthly'),
+        (string) ($filters['date'] ?? appToday()),
+        (string) ($filters['date_from'] ?? ''),
+        (string) ($filters['date_to'] ?? '')
     );
 
     $channel = strtolower(trim((string) ($filters['channel'] ?? '')));
@@ -96,9 +98,14 @@ function buildRegistrarRequestReportFilters(array $filters): array {
         $where[] = '(r.request_number LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ?
             OR u.student_id LIKE ? OR u.email LIKE ?
             OR CONCAT(u.first_name, \' \', u.last_name) LIKE ?
-            OR dt.name LIKE ? OR r.purpose LIKE ? OR r.purpose_other LIKE ?)';
+            OR dt.name LIKE ? OR r.purpose LIKE ? OR r.purpose_other LIKE ?
+            OR EXISTS (
+                SELECT 1 FROM request_items ri
+                INNER JOIN document_types dti ON dti.id = ri.document_type_id
+                WHERE ri.request_id = r.id AND dti.name LIKE ?
+            ))';
         $like = '%' . $search . '%';
-        array_push($params, $like, $like, $like, $like, $like, $like, $like, $like, $like);
+        array_push($params, $like, $like, $like, $like, $like, $like, $like, $like, $like, $like);
     }
 
     return [
@@ -219,6 +226,8 @@ function getRegistrarRequestReportData(array $filters, ?int $page = null, ?int $
         'filters' => [
             'period' => $built['period']['period'],
             'date' => $built['period']['date'],
+            'date_from' => $built['period']['from'],
+            'date_to' => $built['period']['to'],
             'channel' => $built['channel'],
             'status' => $built['status'],
             'search' => $built['search'],

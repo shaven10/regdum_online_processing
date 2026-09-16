@@ -12,6 +12,12 @@ function requireLogin(): void {
         redirect(APP_URL . '/auth/login.php');
     }
     checkSessionTimeout();
+
+    $user = currentUser();
+    if ($user && ($user['role_name'] ?? '') === 'student') {
+        require_once __DIR__ . '/student-requests.php';
+        maybeAutoCancelStaleOnlineRequests();
+    }
 }
 
 function checkSessionTimeout(): void {

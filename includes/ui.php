@@ -303,6 +303,11 @@ function adminCredentialSettingsModules(): array {
             'url'   => APP_URL . '/admin/document-types.php',
             'icon'  => 'fa-file-alt',
         ],
+        'authentication-documents' => [
+            'label' => 'Authentication Docs',
+            'url'   => APP_URL . '/admin/authentication-documents.php',
+            'icon'  => 'fa-stamp',
+        ],
         'release-rules' => [
             'label' => 'Release Rules',
             'url'   => APP_URL . '/admin/document-release-rules.php',

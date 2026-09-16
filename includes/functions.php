@@ -34,14 +34,50 @@ function e(?string $str): string {
     return htmlspecialchars($str ?? '', ENT_QUOTES, 'UTF-8');
 }
 
+function appTimezone(): string {
+    return defined('APP_TIMEZONE') ? APP_TIMEZONE : 'Asia/Manila';
+}
+
+function appNow(): string {
+    return (new DateTimeImmutable('now', new DateTimeZone(appTimezone())))->format('Y-m-d H:i:s');
+}
+
+function appToday(): string {
+    return (new DateTimeImmutable('now', new DateTimeZone(appTimezone())))->format('Y-m-d');
+}
+
+/**
+ * Parse a date/datetime string in the app timezone.
+ */
+function appDateTime(?string $value, ?string $fallback = null): ?DateTimeImmutable {
+    $raw = trim((string) $value);
+    if ($raw === '') {
+        return $fallback !== null ? appDateTime($fallback) : null;
+    }
+
+    $tz = new DateTimeZone(appTimezone());
+    try {
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+            return new DateTimeImmutable($raw . ' 00:00:00', $tz);
+        }
+        return new DateTimeImmutable($raw, $tz);
+    } catch (Exception $e) {
+        $timestamp = strtotime($raw);
+        if ($timestamp === false) {
+            return null;
+        }
+        return (new DateTimeImmutable('@' . $timestamp))->setTimezone($tz);
+    }
+}
+
 function formatDate(?string $date, string $format = 'M d, Y'): string {
-    if (!$date) return '—';
-    return date($format, strtotime($date));
+    $dt = appDateTime($date);
+    return $dt ? $dt->format($format) : '—';
 }
 
 function formatDateTime(?string $datetime): string {
-    if (!$datetime) return '—';
-    return date('M d, Y h:i A', strtotime($datetime));
+    $dt = appDateTime($datetime);
+    return $dt ? $dt->format('M d, Y h:i A') : '—';
 }
 
 function formatMoney(float $amount): string {
@@ -190,6 +226,7 @@ function statusBadge(string $status): string {
         'shipped'          => 'badge-shipped',
         'completed'        => 'badge-completed',
         'rejected'         => 'badge-rejected',
+        'cancelled'        => 'badge-rejected',
         'pending'          => 'badge-submitted',
         'verified'         => 'badge-completed',
     ];
@@ -350,8 +387,8 @@ function updateRequestStatus(int $requestId, string $newStatus, ?string $remarks
     if (!$request) return false;
 
     $oldStatus = $request['status'];
-    $db->prepare('UPDATE requests SET status = ?, updated_at = NOW() WHERE id = ?')
-       ->execute([$newStatus, $requestId]);
+    $db->prepare('UPDATE requests SET status = ?, updated_at = ? WHERE id = ?')
+       ->execute([$newStatus, appNow(), $requestId]);
 
     if (in_array($newStatus, ['processing', 'ready_for_pickup', 'shipped', 'completed'], true)) {
         ensureSimpleVerificationCode($requestId);
@@ -399,7 +436,7 @@ function adminUpdateRequestStatus(int $requestId, string $newStatus, ?string $re
     try {
         updateRequestStatus($requestId, $newStatus, $remarks ?: 'Status updated by administrator');
         if ($newStatus === 'completed') {
-            $db->prepare('UPDATE requests SET completed_at = COALESCE(completed_at, NOW()) WHERE id = ?')->execute([$requestId]);
+            $db->prepare('UPDATE requests SET completed_at = COALESCE(completed_at, ?) WHERE id = ?')->execute([appNow(), $requestId]);
         }
         return [
             'ok' => true,
@@ -1323,7 +1360,7 @@ function getDashboardStats(): array {
     $stats = [];
 
     $stats['total_requests'] = (int) $db->query('SELECT COUNT(*) FROM requests')->fetchColumn();
-    $stats['pending'] = (int) $db->query("SELECT COUNT(*) FROM requests WHERE status NOT IN ('completed','rejected')")->fetchColumn();
+    $stats['pending'] = (int) $db->query("SELECT COUNT(*) FROM requests WHERE status NOT IN ('completed','rejected','cancelled')")->fetchColumn();
     $stats['completed'] = (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'completed'")->fetchColumn();
     $stats['today'] = (int) $db->query('SELECT COUNT(*) FROM requests WHERE DATE(created_at) = CURDATE()')->fetchColumn();
     $stats['month'] = (int) $db->query('SELECT COUNT(*) FROM requests WHERE MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())')->fetchColumn();

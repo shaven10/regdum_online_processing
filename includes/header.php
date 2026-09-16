@@ -123,13 +123,14 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/cashier/documents.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-file-invoice"></i> Assigned Documents</a>
                 <a href="<?= APP_URL ?>/cashier/reports.php" class="<?= $activeNav === 'reports' ? 'active' : '' ?>"><i class="fas fa-receipt"></i> Transaction Reports</a>
                 <a href="<?= APP_URL ?>/cashier/bank-settings.php" class="<?= $activeNav === 'bank-settings' ? 'active' : '' ?>"><i class="fas fa-university"></i> Bank Settings</a>
+                <a href="<?= APP_URL ?>/cashier/or-settings.php" class="<?= $activeNav === 'or-settings' ? 'active' : '' ?>"><i class="fas fa-receipt"></i> OR Settings</a>
             <?php elseif (hasRole('accounting')): ?>
                 <a href="<?= APP_URL ?>/accounting/dashboard.php" class="<?= $activeNav === 'dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
                 <a href="<?= APP_URL ?>/accounting/documents.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-file-invoice-dollar"></i> SOA Assignments</a>
                 <a href="<?= APP_URL ?>/accounting/documents.php?status=processing" class="<?= $activeNav === 'processing' ? 'active' : '' ?>"><i class="fas fa-spinner"></i> Processing</a>
                 <a href="<?= APP_URL ?>/accounting/documents.php?status=ready_for_pickup" class="<?= $activeNav === 'ready' ? 'active' : '' ?>"><i class="fas fa-box-open"></i> Ready for Pickup</a>
             <?php elseif (hasRole('admin')): ?>
-                <?php $adminSettingsNav = ['users', 'documents', 'release-rules', 'programs', 'campuses', 'requirement-types', 'requirements', 'purpose-suggestions', 'academic-term', 'queue-settings', 'theme', 'api-settings', 'database-tools', 'audit']; ?>
+                <?php $adminSettingsNav = ['users', 'documents', 'authentication-documents', 'release-rules', 'programs', 'campuses', 'requirement-types', 'requirements', 'purpose-suggestions', 'academic-term', 'queue-settings', 'theme', 'api-settings', 'database-tools', 'audit']; ?>
                 <?php $adminReportsNav = ['reports', 'enrollment-report', 'enrollment-list']; ?>
                 <?php $settingsMenuOpen = in_array($activeNav, $adminSettingsNav, true); ?>
                 <?php $reportsMenuOpen = in_array($activeNav, $adminReportsNav, true); ?>
@@ -168,6 +169,7 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                     <div class="sidebar-nav-submenu">
                         <a href="<?= APP_URL ?>/admin/users.php" class="<?= $activeNav === 'users' ? 'active' : '' ?>"><i class="fas fa-user-cog"></i> User Management</a>
                         <a href="<?= APP_URL ?>/admin/document-types.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-file-alt"></i> Document Types</a>
+                        <a href="<?= APP_URL ?>/admin/authentication-documents.php" class="<?= $activeNav === 'authentication-documents' ? 'active' : '' ?>"><i class="fas fa-stamp"></i> Authentication Docs</a>
                         <a href="<?= APP_URL ?>/admin/document-release-rules.php" class="<?= $activeNav === 'release-rules' ? 'active' : '' ?>"><i class="fas fa-user-check"></i> Release Rules</a>
                         <a href="<?= APP_URL ?>/admin/programs.php" class="<?= $activeNav === 'programs' ? 'active' : '' ?>"><i class="fas fa-graduation-cap"></i> Courses & Programs</a>
                         <a href="<?= APP_URL ?>/admin/campuses.php" class="<?= $activeNav === 'campuses' ? 'active' : '' ?>"><i class="fas fa-building"></i> Campuses</a>

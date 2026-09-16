@@ -42,7 +42,7 @@ function studentDashboardStats(int $userId): array {
 
     $queries = [
         'total' => '',
-        'active' => " AND status NOT IN ('completed','rejected')",
+        'active' => " AND status NOT IN ('completed','rejected','cancelled')",
         'completed' => " AND status = 'completed'",
         'needs_action' => " AND status IN ('awaiting_requirements','needs_revision','requirements_verified')",
         'in_review' => " AND status IN ('submitted','under_review','requirements_submitted')",

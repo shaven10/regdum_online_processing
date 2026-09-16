@@ -1207,6 +1207,17 @@ function initAdminFormModal() {
             if (activeHidden) activeHidden.disabled = !isSelf;
         }
 
+        form.querySelectorAll('[data-admin-form-lock-on-edit]').forEach(function (field) {
+            const locked = !!record;
+            field.readOnly = locked;
+            field.classList.toggle('is-locked', locked);
+            if (locked) {
+                field.setAttribute('aria-readonly', 'true');
+            } else {
+                field.removeAttribute('aria-readonly');
+            }
+        });
+
         form.dispatchEvent(new CustomEvent('adminformpopulated', { detail: { mode: record ? 'update' : 'create', record: record || null } }));
     }
 

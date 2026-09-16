@@ -109,6 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $postedCopies = $_POST['document_copies'] ?? [];
     $postedTermLines = $_POST['document_term_lines'] ?? [];
     $postedAuthItems = $_POST['document_auth_items'] ?? [];
+    $postedAuthCustom = $_POST['document_auth_custom'] ?? [];
     $docTypesById = [];
     foreach ($docTypes as $docTypeRow) {
         $docTypesById[(int) $docTypeRow['id']] = $docTypeRow;
@@ -256,8 +257,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         $docType = $docTypesById[$documentTypeId] ?? null;
 
         if ($docType && documentTypeRequiresAuthDocumentType($docType)) {
-            $authItems = normalizeAuthenticationItems($postedAuthItems[$documentTypeId] ?? []);
-            $authError = validateAuthenticationItems($authItems);
+            $authBundle = collectPostedAuthenticationBundle(
+                (array) ($postedAuthItems[$documentTypeId] ?? []),
+                (array) ($postedAuthCustom[$documentTypeId] ?? [])
+            );
+            $authError = validateAuthenticationItemsBundle($authBundle);
             if ($authError) {
                 $errors['document_auth_type_' . $documentTypeId] = $authError;
             }
@@ -325,7 +329,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                 $maxCopies = getMaxCopiesForDocument($documentTypeId, $enrollmentStatus);
 
                 if ($docType && documentTypeRequiresAuthDocumentType($docType)) {
-                    $authItems = normalizeAuthenticationItems($postedAuthItems[$documentTypeId] ?? []);
+                    $authItems = materializeAuthenticationItems(collectPostedAuthenticationBundle(
+                        (array) ($postedAuthItems[$documentTypeId] ?? []),
+                        (array) ($postedAuthCustom[$documentTypeId] ?? [])
+                    ));
                     $copies = max(1, totalAuthenticationSets($authItems));
                     $itemAmount = calculateRequestFee($documentTypeId, $copies, $authItems ?: null);
                     $itemAmount = resolveTorItemAmountOverride($documentTypeId, $itemAmount, $amountOverrides);
@@ -465,6 +472,7 @@ $selectedDocIds = array_map('intval', $_POST['document_type_ids'] ?? []);
 $postedCopies = array_map('intval', $_POST['document_copies'] ?? []);
 $postedTermLinesByDoc = $_POST['document_term_lines'] ?? [];
 $postedAuthItems = $_POST['document_auth_items'] ?? [];
+$postedAuthCustom = $_POST['document_auth_custom'] ?? [];
 $defaultSchoolYear = '';
 $defaultSemester = '';
 $schoolYearChoices = schoolYearOptions();
@@ -1225,7 +1233,7 @@ require_once __DIR__ . '/../includes/header.php';
                                 <?php if ($requiresAuthDocumentType): ?>
                                 <div class="document-checklist-auth-type" data-extra-fields <?= $isSelected ? '' : 'hidden' ?>>
                                     <p class="auth-doc-options-title">Documents to authenticate *</p>
-                                    <div class="auth-doc-options">
+                                    <div class="auth-doc-options" data-auth-options>
                                         <?php foreach ($authDocumentTypeChoices as $authValue => $authLabel): ?>
                                             <?php
                                             $postedAuthSets = max(0, (int) ($postedAuthForDoc[$authValue] ?? 0));
@@ -1254,7 +1262,53 @@ require_once __DIR__ . '/../includes/header.php';
                                                 </div>
                                             </div>
                                         <?php endforeach; ?>
+                                        <?php
+                                        $postedCustomForDoc = array_values(array_filter(
+                                            (array) ($postedAuthCustom[(int) $dt['id']] ?? []),
+                                            static fn($row): bool => is_array($row) && trim((string) ($row['label'] ?? '')) !== ''
+                                        ));
+                                        foreach ($postedCustomForDoc as $customIndex => $customRow):
+                                            $customLabel = trim((string) ($customRow['label'] ?? ''));
+                                            $customSets = max(1, min(99, (int) ($customRow['sets'] ?? 1)));
+                                        ?>
+                                            <div class="auth-doc-option auth-doc-option-custom" data-auth-custom-row>
+                                                <div class="auth-doc-custom-fields">
+                                                    <label class="auth-doc-custom-label-wrap">
+                                                        <span class="text-muted">Document name</span>
+                                                        <input type="text"
+                                                            class="auth-doc-custom-label"
+                                                            name="document_auth_custom[<?= (int) $dt['id'] ?>][<?= (int) $customIndex ?>][label]"
+                                                            value="<?= e($customLabel) ?>"
+                                                            maxlength="150"
+                                                            placeholder="e.g. Honorable Dismissal"
+                                                            required
+                                                            onclick="event.stopPropagation()">
+                                                    </label>
+                                                    <div class="auth-doc-sets-wrap">
+                                                        <label>Sets</label>
+                                                        <input type="number"
+                                                            class="auth-doc-sets auth-doc-custom-sets"
+                                                            name="document_auth_custom[<?= (int) $dt['id'] ?>][<?= (int) $customIndex ?>][sets]"
+                                                            min="1"
+                                                            max="99"
+                                                            value="<?= $customSets ?>"
+                                                            onclick="event.stopPropagation()"
+                                                            onchange="updateFee()">
+                                                    </div>
+                                                </div>
+                                                <button type="button" class="btn btn-outline btn-sm auth-doc-remove-btn" data-remove-auth-custom onclick="event.stopPropagation()">
+                                                    <i class="fas fa-times"></i>
+                                                </button>
+                                            </div>
+                                        <?php endforeach; ?>
                                     </div>
+                                    <button type="button"
+                                        class="btn btn-outline btn-sm auth-doc-add-btn"
+                                        data-add-auth-custom
+                                        data-doc-id="<?= (int) $dt['id'] ?>"
+                                        onclick="event.stopPropagation()">
+                                        <i class="fas fa-plus"></i> Add another document
+                                    </button>
                                     <?php if ($authTypeError): ?><span class="field-error"><?= e($authTypeError) ?></span><?php endif; ?>
                                 </div>
                                 <?php endif; ?>
@@ -1736,6 +1790,20 @@ function collectAuthItems(item) {
     }
 
     item.querySelectorAll('.auth-doc-option').forEach(function (row) {
+        if (row.classList.contains('auth-doc-option-custom')) {
+            const labelInput = row.querySelector('.auth-doc-custom-label');
+            const setsInput = row.querySelector('.auth-doc-custom-sets, .auth-doc-sets');
+            const label = labelInput ? String(labelInput.value || '').trim() : '';
+            if (!label || !setsInput) {
+                return;
+            }
+            let sets = parseInt(setsInput.value, 10) || 1;
+            sets = Math.max(1, Math.min(99, sets));
+            setsInput.value = sets;
+            authItems.push({ label: label, sets: sets });
+            return;
+        }
+
         const select = row.querySelector('.auth-doc-select');
         const setsInput = row.querySelector('.auth-doc-sets');
         if (!select || !select.checked || !setsInput) {
@@ -1751,6 +1819,69 @@ function collectAuthItems(item) {
     });
 
     return authItems;
+}
+
+function reindexAuthCustomRows(list) {
+    if (!list) {
+        return;
+    }
+    const docId = list.closest('[data-extra-fields]')?.querySelector('[data-add-auth-custom]')?.getAttribute('data-doc-id')
+        || list.getAttribute('data-doc-id')
+        || '';
+    list.querySelectorAll('[data-auth-custom-row]').forEach(function (row, index) {
+        const labelInput = row.querySelector('.auth-doc-custom-label');
+        const setsInput = row.querySelector('.auth-doc-custom-sets, .auth-doc-sets');
+        if (labelInput && docId) {
+            labelInput.name = 'document_auth_custom[' + docId + '][' + index + '][label]';
+        }
+        if (setsInput && docId) {
+            setsInput.name = 'document_auth_custom[' + docId + '][' + index + '][sets]';
+        }
+    });
+}
+
+function addAuthCustomRow(button) {
+    const wrap = button.closest('.document-checklist-auth-type');
+    const list = wrap ? wrap.querySelector('[data-auth-options]') : null;
+    const docId = button.getAttribute('data-doc-id') || '';
+    if (!list || !docId) {
+        return;
+    }
+
+    const index = list.querySelectorAll('[data-auth-custom-row]').length;
+    const row = document.createElement('div');
+    row.className = 'auth-doc-option auth-doc-option-custom';
+    row.setAttribute('data-auth-custom-row', '');
+    row.innerHTML =
+        '<div class="auth-doc-custom-fields">' +
+            '<label class="auth-doc-custom-label-wrap">' +
+                '<span class="text-muted">Document name</span>' +
+                '<input type="text" class="auth-doc-custom-label" name="document_auth_custom[' + docId + '][' + index + '][label]" maxlength="150" placeholder="e.g. Honorable Dismissal" required>' +
+            '</label>' +
+            '<div class="auth-doc-sets-wrap">' +
+                '<label>Sets</label>' +
+                '<input type="number" class="auth-doc-sets auth-doc-custom-sets" name="document_auth_custom[' + docId + '][' + index + '][sets]" min="1" max="99" value="1">' +
+            '</div>' +
+        '</div>' +
+        '<button type="button" class="btn btn-outline btn-sm auth-doc-remove-btn" data-remove-auth-custom>' +
+            '<i class="fas fa-times"></i>' +
+        '</button>';
+
+    row.querySelectorAll('input').forEach(function (input) {
+        input.addEventListener('click', function (e) { e.stopPropagation(); });
+        input.addEventListener('change', updateFee);
+        input.addEventListener('input', updateFee);
+    });
+    row.querySelector('[data-remove-auth-custom]')?.addEventListener('click', function (e) {
+        e.stopPropagation();
+        row.remove();
+        reindexAuthCustomRows(list);
+        updateFee();
+    });
+
+    list.appendChild(row);
+    row.querySelector('.auth-doc-custom-label')?.focus();
+    updateFee();
 }
 
 function syncAuthDocOption(selectEl) {
@@ -2227,6 +2358,28 @@ document.querySelectorAll('.auth-doc-select').forEach(function (checkbox) {
     });
 });
 document.querySelectorAll('.auth-doc-sets').forEach(function (input) {
+    input.addEventListener('change', updateFee);
+    input.addEventListener('input', updateFee);
+});
+document.querySelectorAll('[data-add-auth-custom]').forEach(function (button) {
+    button.addEventListener('click', function (e) {
+        e.stopPropagation();
+        addAuthCustomRow(button);
+    });
+});
+document.querySelectorAll('[data-remove-auth-custom]').forEach(function (button) {
+    button.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const row = button.closest('[data-auth-custom-row]');
+        const list = button.closest('[data-auth-options]');
+        if (row) {
+            row.remove();
+        }
+        reindexAuthCustomRows(list);
+        updateFee();
+    });
+});
+document.querySelectorAll('.auth-doc-custom-label').forEach(function (input) {
     input.addEventListener('change', updateFee);
     input.addEventListener('input', updateFee);
 });

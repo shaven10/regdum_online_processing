@@ -25,7 +25,9 @@ define('DOCUMENT_STAMP_FEE', 30.00);
 define('MFA_ENABLED', false);
 define('PASSWORD_MIN_LENGTH', 8);
 
-date_default_timezone_set('Asia/Manila');
+/** Philippine Standard Time (UTC+08:00) */
+define('APP_TIMEZONE', 'Asia/Manila');
+date_default_timezone_set(APP_TIMEZONE);
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();

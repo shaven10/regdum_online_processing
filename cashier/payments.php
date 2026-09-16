@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/payments.php';
 require_once __DIR__ . '/../includes/attachments.php';
 require_once __DIR__ . '/../includes/onsite-request.php';
 require_once __DIR__ . '/../includes/claim-stub.php';
+require_once __DIR__ . '/../includes/official-receipt.php';
 requireRole('cashier');
 
 $user = currentUser();
@@ -53,13 +54,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         if (!empty($result['ok'])) {
             $count = (int) $result['verified'];
             $requestIds = normalizeClaimStubRequestIds($result['request_ids'] ?? []);
+            $orPaymentIds = normalizeOfficialReceiptPaymentIds($result['ids'] ?? $postedPaymentIds);
             $claimLayout = $count > 1 ? 'combined' : 'separate';
             $claimUrl = $requestIds !== []
                 ? cashierClaimStubUrl($requestIds, $claimLayout, true)
                 : '';
+            $orUrl = $orPaymentIds !== []
+                ? cashierOfficialReceiptUrl($orPaymentIds, true)
+                : '';
             setFlash('success', $count === 1
-                ? 'Payment verified successfully. Print the claim slip for the student.'
-                : $count . ' payments verified with the same OR number. Print the combined claim slip.', [
+                ? 'Payment verified successfully. Print the official receipt for the student.'
+                : $count . ' payments verified with the same OR number. Print the official receipt.', [
                 'title' => $count === 1 ? 'Payment Verified' : 'Batch Payments Verified',
                 'context' => [
                     'OR Number' => $orNumber,
@@ -67,13 +72,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                 ],
                 'details' => $count === 1
                     ? ['The request can now move to document processing and release.']
-                    : ['Each requestor in the batch has a verification code on the combined claim slip.'],
-                'next_step' => $count === 1
-                    ? 'Print the claim slip, then the Registrar will assign staff and schedule release.'
-                    : 'Print the combined claim slip for the batch, or switch to individual slips.',
-                'action_url' => $claimUrl !== '' ? $claimUrl : $redirectUrl,
-                'action_label' => $count === 1 ? 'Print Claim Slip' : 'Print Combined Claim Slip',
+                    : ['Each requestor in the batch shares this OR number on the official receipt.'],
+                'next_step' => $claimUrl !== ''
+                    ? 'Print the official receipt, then print the claim slip for release.'
+                    : 'Print the official receipt for the cashier records.',
+                'action_url' => $orUrl !== '' ? $orUrl : ($claimUrl !== '' ? $claimUrl : $redirectUrl),
+                'action_label' => 'Print Official Receipt',
             ]);
+            if ($orUrl !== '') {
+                redirect($orUrl);
+            }
             if ($claimUrl !== '') {
                 redirect($claimUrl);
             }
@@ -388,13 +396,22 @@ require_once __DIR__ . '/../includes/header.php';
                                         ? array_values(array_map('intval', $p['batch_request_ids']))
                                         : [(int) ($p['request_id'] ?? 0)];
                                     $claimRequestIds = array_values(array_filter($claimRequestIds));
+                                    $orPaymentIds = !empty($p['is_multiple']) && !empty($p['batch_payment_ids'])
+                                        ? array_values(array_map('intval', $p['batch_payment_ids']))
+                                        : [(int) ($p['id'] ?? 0)];
+                                    $orPaymentIds = array_values(array_filter($orPaymentIds));
                                     ?>
+                                    <?php if ($orPaymentIds !== []): ?>
+                                        <a href="<?= e(cashierOfficialReceiptUrl($orPaymentIds, true)) ?>" target="_blank" class="btn btn-sm btn-primary">
+                                            <i class="fas fa-receipt"></i> Print OR
+                                        </a>
+                                    <?php endif; ?>
                                     <?php if ($claimRequestIds !== []): ?>
                                         <a href="<?= e(cashierClaimStubUrl([(int) ($p['request_id'] ?? 0)])) ?>" target="_blank" class="btn btn-sm btn-outline">
                                             <i class="fas fa-ticket-alt"></i> Claim Slip
                                         </a>
                                         <?php if (count($claimRequestIds) > 1): ?>
-                                            <a href="<?= e(cashierClaimStubUrl($claimRequestIds, 'combined')) ?>" target="_blank" class="btn btn-sm btn-primary">
+                                            <a href="<?= e(cashierClaimStubUrl($claimRequestIds, 'combined')) ?>" target="_blank" class="btn btn-sm btn-outline">
                                                 <i class="fas fa-file-alt"></i> Combined Slip
                                             </a>
                                         <?php endif; ?>
@@ -536,7 +553,8 @@ require_once __DIR__ . '/../includes/header.php';
                                 id="paymentDatePaid"
                                 name="payment_date"
                                 form="paymentVerifyForm"
-                                max="<?= date('Y-m-d') ?>"
+                                value="<?= e(appToday()) ?>"
+                                max="<?= e(appToday()) ?>"
                                 required>
                         </div>
                     </div>

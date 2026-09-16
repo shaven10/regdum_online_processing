@@ -7,6 +7,7 @@ require_once __DIR__ . '/../includes/payments.php';
 require_once __DIR__ . '/../includes/request-items.php';
 require_once __DIR__ . '/../includes/attachments.php';
 require_once __DIR__ . '/../includes/ui.php';
+require_once __DIR__ . '/../includes/student-requests.php';
 requireRole('student');
 ensureRequestItemsSchema();
 ensureRequestCopyTypeSchema();
@@ -44,7 +45,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $postAction = $_POST['action'] ?? '';
     $shouldRedirect = true;
 
-    if ($postAction === 'set_pickup_option') {
+    if ($postAction === 'cancel_request') {
+        $result = cancelStudentOnlineRequest($requestId, (int) $user['id']);
+        if (!empty($result['ok'])) {
+            setFlash('success', 'Your request was cancelled. You may submit a new online request.', [
+                'title' => 'Request Cancelled',
+                'context' => [
+                    'Request' => $result['request_number'] ?? $request['request_number'],
+                ],
+                'action_url' => APP_URL . '/student/new-request.php',
+                'action_label' => 'New Request',
+            ]);
+        } else {
+            setFlash('error', $result['error'] ?? 'Unable to cancel this request.', [
+                'title' => 'Cancellation Failed',
+            ]);
+        }
+    } elseif ($postAction === 'set_pickup_option') {
         $result = processStudentPickupOption($requestId, $user['id'], $_POST, $_FILES);
         if ($result['success']) {
             setFlash('success', $result['message'], [
@@ -171,6 +188,7 @@ $stmt->execute([$requestId, $user['id']]);
 $request = $stmt->fetch();
 $assignedRequirements = getAssignedRequirements($requestId);
 $complianceSummary = getComplianceSummary($requestId);
+$canCancelRequest = studentCanCancelOnlineRequest($request, (int) $user['id']);
 
 $estimatedRelease = null;
 if (isOnSitePickupMethod($request['delivery_method'])) {
@@ -201,8 +219,18 @@ require_once __DIR__ . '/../includes/header.php';
         <div class="card-header">
 
             <h2><?= e($request['request_number']) ?></h2>
-
-            <?= statusBadge($request['status']) ?>
+            <div class="request-header-actions" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
+                <?= statusBadge($request['status']) ?>
+                <?php if ($canCancelRequest): ?>
+                    <form method="POST" class="inline-form" onsubmit="return confirm('Cancel this request? You can submit a new online request afterward.');">
+                        <?= csrfField() ?>
+                        <input type="hidden" name="action" value="cancel_request">
+                        <button type="submit" class="btn btn-outline btn-sm">
+                            <i class="fas fa-ban"></i> Cancel Request
+                        </button>
+                    </form>
+                <?php endif; ?>
+            </div>
 
         </div>
 
@@ -218,6 +246,17 @@ require_once __DIR__ . '/../includes/header.php';
 
                 </div>
                 <?= renderRegistrarInstructionAttachmentsHtml($requestId) ?>
+
+            <?php elseif ($request['status'] === 'cancelled'): ?>
+                <div class="alert alert-info">
+                    <i class="fas fa-ban"></i>
+                    This request was cancelled<?= isOnlineStudentRequest($request) ? ' and no longer blocks new online requests' : '' ?>.
+                </div>
+                <?php if (isOnlineStudentRequest($request)): ?>
+                    <a href="<?= APP_URL ?>/student/new-request.php" class="btn btn-primary btn-sm">
+                        <i class="fas fa-plus"></i> New Request
+                    </a>
+                <?php endif; ?>
 
             <?php elseif ($request['status'] === 'rejected'): ?>
 

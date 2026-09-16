@@ -213,7 +213,194 @@ function ensureRequestAuthenticationTypeSchema(): void {
         UNIQUE KEY uk_request_auth_doc (request_id, auth_document_type)
     )");
 
+    ensureAuthenticationDocumentTypesSchema();
     migrateLegacyAuthenticationDocumentTypes();
+}
+
+function ensureAuthenticationDocumentTypesSchema(): void {
+    static $ready = false;
+    if ($ready) {
+        return;
+    }
+    $ready = true;
+
+    $db = getDB();
+    $db->exec("CREATE TABLE IF NOT EXISTS authentication_document_types (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(50) NOT NULL UNIQUE,
+        label VARCHAR(150) NOT NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )");
+
+    seedDefaultAuthenticationDocumentTypes();
+}
+
+function defaultAuthenticationDocumentTypes(): array {
+    return [
+        ['code' => 'gwa', 'label' => 'GWA', 'sort_order' => 10],
+        ['code' => 'tor_employment', 'label' => 'TOR Employment', 'sort_order' => 20],
+        ['code' => 'diploma', 'label' => 'Diploma', 'sort_order' => 30],
+        ['code' => 'gm', 'label' => 'GM', 'sort_order' => 40],
+        ['code' => 'cav', 'label' => 'CAV', 'sort_order' => 50],
+    ];
+}
+
+function seedDefaultAuthenticationDocumentTypes(): void {
+    $db = getDB();
+    $count = (int) $db->query('SELECT COUNT(*) FROM authentication_document_types')->fetchColumn();
+    if ($count > 0) {
+        return;
+    }
+
+    $insert = $db->prepare(
+        'INSERT INTO authentication_document_types (code, label, sort_order, is_active) VALUES (?, ?, ?, 1)'
+    );
+    foreach (defaultAuthenticationDocumentTypes() as $row) {
+        $insert->execute([$row['code'], $row['label'], $row['sort_order']]);
+    }
+}
+
+function normalizeAuthenticationDocumentTypeCode(string $code): string {
+    $code = strtolower(trim($code));
+    $code = preg_replace('/[^a-z0-9_]+/', '_', $code) ?? '';
+    $code = trim($code, '_');
+    return substr($code, 0, 50);
+}
+
+/**
+ * @return list<array<string,mixed>>
+ */
+function getAllAuthenticationDocumentTypes(bool $activeOnly = false): array {
+    ensureAuthenticationDocumentTypesSchema();
+    $db = getDB();
+    $sql = 'SELECT adt.*,
+            (SELECT COUNT(*) FROM request_authentication_items rai WHERE rai.auth_document_type = adt.code) AS usage_count
+        FROM authentication_document_types adt';
+    if ($activeOnly) {
+        $sql .= ' WHERE adt.is_active = 1';
+    }
+    $sql .= ' ORDER BY adt.sort_order ASC, adt.label ASC, adt.id ASC';
+
+    return $db->query($sql)->fetchAll();
+}
+
+function getAuthenticationDocumentTypeById(int $id): ?array {
+    if ($id <= 0) {
+        return null;
+    }
+    ensureAuthenticationDocumentTypesSchema();
+    $stmt = getDB()->prepare('SELECT * FROM authentication_document_types WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $row = $stmt->fetch();
+    return $row ?: null;
+}
+
+function authenticationDocumentTypeUsageCount(string $code): int {
+    $code = trim($code);
+    if ($code === '') {
+        return 0;
+    }
+    $stmt = getDB()->prepare('SELECT COUNT(*) FROM request_authentication_items WHERE auth_document_type = ?');
+    $stmt->execute([$code]);
+    return (int) $stmt->fetchColumn();
+}
+
+/**
+ * @return array{code:string,label:string,sort_order:int,is_active:int}
+ */
+function normalizeAuthenticationDocumentTypeInput(array $input): array {
+    $label = trim((string) ($input['label'] ?? ''));
+    $code = normalizeAuthenticationDocumentTypeCode((string) ($input['code'] ?? ''));
+    if ($code === '' && $label !== '') {
+        $code = normalizeAuthenticationDocumentTypeCode($label);
+    }
+
+    return [
+        'code' => $code,
+        'label' => $label,
+        'sort_order' => max(0, (int) ($input['sort_order'] ?? 0)),
+        'is_active' => !empty($input['is_active']) ? 1 : 0,
+    ];
+}
+
+/**
+ * @return list<string>
+ */
+function validateAuthenticationDocumentTypeInput(array $data, bool $requireCode = true): array {
+    $errors = [];
+    if ($data['label'] === '') {
+        $errors[] = 'Document name is required.';
+    }
+    if ($requireCode && $data['code'] === '') {
+        $errors[] = 'Document code is required.';
+    } elseif ($data['code'] !== '' && !preg_match('/^[a-z][a-z0-9_]{0,49}$/', $data['code'])) {
+        $errors[] = 'Code must start with a letter and use lowercase letters, numbers, or underscores only.';
+    }
+
+    return $errors;
+}
+
+function createAuthenticationDocumentType(array $input): int {
+    $data = normalizeAuthenticationDocumentTypeInput($input);
+    $errors = validateAuthenticationDocumentTypeInput($data, true);
+    if ($errors) {
+        throw new InvalidArgumentException(implode(' ', $errors));
+    }
+
+    $db = getDB();
+    $db->prepare(
+        'INSERT INTO authentication_document_types (code, label, sort_order, is_active) VALUES (?, ?, ?, ?)'
+    )->execute([$data['code'], $data['label'], $data['sort_order'], $data['is_active']]);
+
+    return (int) $db->lastInsertId();
+}
+
+function updateAuthenticationDocumentType(int $id, array $input): void {
+    $existing = getAuthenticationDocumentTypeById($id);
+    if (!$existing) {
+        throw new InvalidArgumentException('Document not found.');
+    }
+
+    $data = normalizeAuthenticationDocumentTypeInput($input);
+    // Keep code stable once created so existing request rows stay valid.
+    $data['code'] = (string) $existing['code'];
+    $errors = validateAuthenticationDocumentTypeInput($data, false);
+    if ($errors) {
+        throw new InvalidArgumentException(implode(' ', $errors));
+    }
+
+    getDB()->prepare(
+        'UPDATE authentication_document_types SET label = ?, sort_order = ?, is_active = ? WHERE id = ?'
+    )->execute([$data['label'], $data['sort_order'], $data['is_active'], $id]);
+}
+
+/**
+ * @return array{deleted:bool,deactivated:bool}
+ */
+function deleteAuthenticationDocumentType(int $id): array {
+    $existing = getAuthenticationDocumentTypeById($id);
+    if (!$existing) {
+        throw new InvalidArgumentException('Document not found.');
+    }
+
+    $usage = authenticationDocumentTypeUsageCount((string) $existing['code']);
+    if ($usage > 0) {
+        getDB()->prepare('UPDATE authentication_document_types SET is_active = 0 WHERE id = ?')->execute([$id]);
+        return ['deleted' => false, 'deactivated' => true];
+    }
+
+    getDB()->prepare('DELETE FROM authentication_document_types WHERE id = ?')->execute([$id]);
+    return ['deleted' => true, 'deactivated' => false];
+}
+
+function toggleAuthenticationDocumentType(int $id): void {
+    if ($id <= 0) {
+        throw new InvalidArgumentException('Document not found.');
+    }
+    getDB()->prepare('UPDATE authentication_document_types SET is_active = NOT is_active WHERE id = ?')->execute([$id]);
 }
 
 function migrateLegacyAuthenticationDocumentTypes(): void {
@@ -232,18 +419,195 @@ function migrateLegacyAuthenticationDocumentTypes(): void {
     }
 }
 
-function authenticationDocumentTypeOptions(): array {
-    return [
-        'gwa'            => 'GWA',
-        'tor_employment' => 'TOR Employment',
-        'diploma'        => 'Diploma',
-        'gm'             => 'GM',
-        'cav'            => 'CAV',
-    ];
+/**
+ * Active documents available for Authentication / CTC selection.
+ *
+ * @return array<string,string> code => label
+ */
+function authenticationDocumentTypeOptions(bool $activeOnly = true): array {
+    ensureAuthenticationDocumentTypesSchema();
+
+    $options = [];
+    foreach (getAllAuthenticationDocumentTypes($activeOnly) as $row) {
+        $code = trim((string) ($row['code'] ?? ''));
+        $label = trim((string) ($row['label'] ?? ''));
+        if ($code === '' || $label === '') {
+            continue;
+        }
+        $options[$code] = $label;
+    }
+
+    return $options;
 }
 
 function authenticationDocumentTypeLabel(?string $type): string {
-    return authenticationDocumentTypeOptions()[$type ?? ''] ?? '—';
+    $type = trim((string) $type);
+    if ($type === '') {
+        return '—';
+    }
+
+    $active = authenticationDocumentTypeOptions(true);
+    if (isset($active[$type])) {
+        return $active[$type];
+    }
+
+    $all = authenticationDocumentTypeOptions(false);
+    if (isset($all[$type])) {
+        return $all[$type];
+    }
+
+    return ucwords(str_replace('_', ' ', $type));
+}
+
+/**
+ * Find or create an authentication document type from a free-text label.
+ */
+function ensureAuthenticationDocumentTypeFromLabel(string $label): ?string {
+    $label = trim(preg_replace('/\s+/', ' ', $label) ?? '');
+    if ($label === '') {
+        return null;
+    }
+    if (mb_strlen($label) > 150) {
+        $label = mb_substr($label, 0, 150);
+    }
+
+    ensureAuthenticationDocumentTypesSchema();
+    $db = getDB();
+
+    $stmt = $db->prepare(
+        'SELECT code FROM authentication_document_types WHERE LOWER(label) = LOWER(?) LIMIT 1'
+    );
+    $stmt->execute([$label]);
+    $byLabel = $stmt->fetchColumn();
+    if ($byLabel) {
+        $db->prepare('UPDATE authentication_document_types SET is_active = 1 WHERE code = ?')
+           ->execute([(string) $byLabel]);
+        return (string) $byLabel;
+    }
+
+    $baseCode = normalizeAuthenticationDocumentTypeCode($label);
+    if ($baseCode === '' || !preg_match('/^[a-z]/', $baseCode)) {
+        $baseCode = 'doc_' . substr(preg_replace('/[^a-z0-9]/', '', $baseCode) ?: 'custom', 0, 40);
+    }
+    $baseCode = substr($baseCode, 0, 45);
+    $code = $baseCode;
+    $suffix = 2;
+    $exists = $db->prepare('SELECT id FROM authentication_document_types WHERE code = ? LIMIT 1');
+    while (true) {
+        $exists->execute([$code]);
+        if (!$exists->fetch()) {
+            break;
+        }
+        $code = substr($baseCode, 0, 45) . '_' . $suffix;
+        $suffix++;
+        if ($suffix > 99) {
+            $code = 'doc_' . substr(sha1($label), 0, 12);
+            break;
+        }
+    }
+
+    createAuthenticationDocumentType([
+        'code' => $code,
+        'label' => $label,
+        'sort_order' => 900 + $suffix,
+        'is_active' => 1,
+    ]);
+
+    return $code;
+}
+
+/**
+ * @param array<string,mixed> $postedCatalog checkbox/sets map keyed by auth code
+ * @param list<mixed> $postedCustom custom rows with label + sets
+ * @return array{catalog:list<array{type:string,sets:int}>,custom:list<array{label:string,sets:int}>}
+ */
+function collectPostedAuthenticationBundle(array $postedCatalog, array $postedCustom = []): array {
+    $catalog = normalizeAuthenticationItems($postedCatalog);
+    $custom = [];
+
+    foreach ($postedCustom as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $label = trim(preg_replace('/\s+/', ' ', (string) ($row['label'] ?? '')) ?? '');
+        $sets = max(0, (int) ($row['sets'] ?? 0));
+        if ($label === '' || $sets < 1) {
+            continue;
+        }
+        $custom[] = [
+            'label' => mb_substr($label, 0, 150),
+            'sets' => min(99, $sets),
+        ];
+    }
+
+    return [
+        'catalog' => $catalog,
+        'custom' => $custom,
+    ];
+}
+
+/**
+ * @param array{catalog?:list<array{type:string,sets:int}>,custom?:list<array{label:string,sets:int}>} $bundle
+ */
+function validateAuthenticationItemsBundle(array $bundle): ?string {
+    $catalog = $bundle['catalog'] ?? [];
+    $custom = $bundle['custom'] ?? [];
+    if ($catalog === [] && $custom === []) {
+        return 'Select at least one document to authenticate and indicate the number of sets.';
+    }
+
+    foreach ($catalog as $item) {
+        if (($item['sets'] ?? 0) < 1 || ($item['sets'] ?? 0) > 99) {
+            return 'Each authenticated document must have between 1 and 99 sets.';
+        }
+    }
+    foreach ($custom as $item) {
+        if (trim((string) ($item['label'] ?? '')) === '') {
+            return 'Enter a document name for each added authentication document.';
+        }
+        if (($item['sets'] ?? 0) < 1 || ($item['sets'] ?? 0) > 99) {
+            return 'Each authenticated document must have between 1 and 99 sets.';
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Materialize catalog + custom rows into persisted auth item rows (creates new catalog entries as needed).
+ *
+ * @param array{catalog?:list<array{type:string,sets:int}>,custom?:list<array{label:string,sets:int}>} $bundle
+ * @return list<array{type:string,sets:int}>
+ */
+function materializeAuthenticationItems(array $bundle): array {
+    $byType = [];
+    foreach ($bundle['catalog'] ?? [] as $item) {
+        $type = trim((string) ($item['type'] ?? ''));
+        $sets = max(1, min(99, (int) ($item['sets'] ?? 1)));
+        if ($type === '') {
+            continue;
+        }
+        $byType[$type] = min(99, ($byType[$type] ?? 0) + $sets);
+    }
+
+    foreach ($bundle['custom'] ?? [] as $item) {
+        $code = ensureAuthenticationDocumentTypeFromLabel((string) ($item['label'] ?? ''));
+        if ($code === null) {
+            continue;
+        }
+        $sets = max(1, min(99, (int) ($item['sets'] ?? 1)));
+        $byType[$code] = min(99, ($byType[$code] ?? 0) + $sets);
+    }
+
+    $items = [];
+    foreach ($byType as $type => $sets) {
+        $items[] = [
+            'type' => (string) $type,
+            'sets' => (int) $sets,
+        ];
+    }
+
+    return $items;
 }
 
 function documentTypeRequiresAuthDocumentType(array $documentType): bool {

@@ -5,8 +5,10 @@ require_once __DIR__ . '/../includes/ui.php';
 requireRole('registrar');
 
 $user = currentUser();
-$period = $_GET['period'] ?? 'daily';
-$date = trim($_GET['date'] ?? date('Y-m-d'));
+$period = $_GET['period'] ?? 'monthly';
+$date = trim($_GET['date'] ?? appToday());
+$dateFrom = trim((string) ($_GET['date_from'] ?? ''));
+$dateTo = trim((string) ($_GET['date_to'] ?? ''));
 $channel = trim($_GET['channel'] ?? '');
 $status = trim($_GET['status'] ?? '');
 $search = trim($_GET['search'] ?? '');
@@ -15,6 +17,8 @@ $autoPdf = !empty($_GET['pdf']);
 $filters = [
     'period' => $period,
     'date' => $date,
+    'date_from' => $dateFrom,
+    'date_to' => $dateTo,
     'channel' => $channel,
     'status' => $status,
     'search' => $search,
@@ -30,6 +34,8 @@ $generatedAt = date('M d, Y h:i A');
 $backQuery = array_filter([
     'period' => $periodInfo['period'],
     'date' => $periodInfo['date'],
+    'date_from' => $periodInfo['from'],
+    'date_to' => $periodInfo['to'],
     'channel' => $applied['channel'],
     'status' => $applied['status'],
     'search' => $applied['search'],

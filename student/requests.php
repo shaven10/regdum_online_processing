@@ -2,12 +2,14 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/compliance.php';
 require_once __DIR__ . '/../includes/request-items.php';
+require_once __DIR__ . '/../includes/student-requests.php';
 requireRole('student');
 
 $user = currentUser();
 ensureDeliveryMethods();
 ensureRequestItemsSchema();
 $profileCompletion = getStudentProfileCompletion($user['id']);
+$blockingRequest = getStudentBlockingOnlineRequest((int) $user['id']);
 
 $db = getDB();
 $status = $_GET['status'] ?? '';
@@ -67,7 +69,7 @@ $requests = $stmt->fetchAll();
 $statusOptions = [
     'submitted', 'under_review', 'awaiting_requirements', 'needs_revision',
     'requirements_submitted', 'requirements_verified', 'payment_verified',
-    'processing', 'ready_for_pickup', 'shipped', 'completed', 'rejected',
+    'processing', 'ready_for_pickup', 'shipped', 'completed', 'rejected', 'cancelled',
 ];
 
 $pageTitle = 'My Requests';
@@ -78,10 +80,17 @@ require_once __DIR__ . '/../includes/header.php';
 <div class="card">
     <div class="card-header">
         <h2>Request History</h2>
-        <a href="<?= $profileCompletion['complete'] ? 'new-request.php' : 'profile.php' ?>" class="btn btn-primary btn-sm"><i class="fas fa-<?= $profileCompletion['complete'] ? 'plus' : 'user-edit' ?>"></i> <?= $profileCompletion['complete'] ? 'New Request' : 'Complete Profile' ?></a>
+        <?php if ($profileCompletion['complete'] && !$blockingRequest): ?>
+            <a href="new-request.php" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Request</a>
+        <?php elseif ($blockingRequest): ?>
+            <a href="request-view.php?id=<?= (int) $blockingRequest['id'] ?>" class="btn btn-primary btn-sm"><i class="fas fa-file-alt"></i> Active Request</a>
+        <?php else: ?>
+            <a href="profile.php" class="btn btn-primary btn-sm"><i class="fas fa-user-edit"></i> Complete Profile</a>
+        <?php endif; ?>
     </div>
     <div class="card-body">
         <?= renderStudentProfileIncompleteAlert($profileCompletion) ?>
+        <?= renderStudentBlockingOnlineRequestAlert($blockingRequest) ?>
         <form method="GET" class="filter-bar" id="studentRequestsFilterForm">
             <?= recordsSortFormFields($sortState) ?>
             <input type="text" name="search" placeholder="Search by request # or document..." value="<?= e($search) ?>">

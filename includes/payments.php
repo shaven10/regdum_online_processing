@@ -110,15 +110,19 @@ function loadOnsiteBatchPaymentMeta(array $batchKeys): array {
     foreach ($stmt->fetchAll() as $row) {
         $key = (string) $row['onsite_batch_key'];
         if (!isset($meta[$key])) {
-            $meta[$key] = ['size' => 0, 'pending_ids' => [], 'request_ids' => []];
+            $meta[$key] = ['size' => 0, 'pending_ids' => [], 'payment_ids' => [], 'request_ids' => []];
         }
         $requestId = (int) ($row['request_id'] ?? 0);
         if ($requestId > 0) {
             $meta[$key]['request_ids'][$requestId] = $requestId;
         }
+        $paymentId = (int) ($row['id'] ?? 0);
+        if ($paymentId > 0) {
+            $meta[$key]['payment_ids'][$paymentId] = $paymentId;
+        }
         $meta[$key]['size']++;
         if (($row['status'] ?? '') === 'pending') {
-            $meta[$key]['pending_ids'][] = (int) $row['id'];
+            $meta[$key]['pending_ids'][] = $paymentId;
         }
     }
 
@@ -173,10 +177,13 @@ function decoratePaymentsWithBatchMeta(array $payments): array {
     $meta = loadOnsiteBatchPaymentMeta($keys);
     foreach ($payments as &$payment) {
         $key = trim((string) ($payment['onsite_batch_key'] ?? ''));
-        $info = $meta[$key] ?? ['size' => 1, 'pending_ids' => [], 'request_ids' => []];
+        $info = $meta[$key] ?? ['size' => 1, 'pending_ids' => [], 'payment_ids' => [], 'request_ids' => []];
         $payment['batch_size'] = $key !== '' ? (int) $info['size'] : 1;
         $payment['batch_pending_ids'] = $key !== ''
             ? array_values(array_map('intval', $info['pending_ids']))
+            : [(int) ($payment['id'] ?? 0)];
+        $payment['batch_payment_ids'] = $key !== ''
+            ? array_values(array_map('intval', $info['payment_ids'] ?? []))
             : [(int) ($payment['id'] ?? 0)];
         $payment['batch_request_ids'] = $key !== ''
             ? array_values(array_map('intval', $info['request_ids'] ?? []))
@@ -436,11 +443,11 @@ function validatePaymentVerificationFields(?string $orNumber, ?string $paymentDa
     if ($paymentDate === '') {
         return 'Date of payment is required to verify payment.';
     }
-    $timestamp = strtotime($paymentDate);
-    if ($timestamp === false) {
+    $parsed = appDateTime($paymentDate);
+    if ($parsed === null) {
         return 'Please enter a valid date of payment.';
     }
-    if ($timestamp > strtotime('today 23:59:59')) {
+    if ($parsed->format('Y-m-d') > appToday()) {
         return 'Date of payment cannot be in the future.';
     }
 
@@ -910,10 +917,12 @@ function processPaymentAction(int $paymentId, string $action, int $verifierId, s
 
     $status = $action === 'verify' ? 'verified' : 'rejected';
     $storedOrNumber = $action === 'verify' ? trim((string) $orNumber) : null;
-    $storedPaymentDate = $action === 'verify' ? date('Y-m-d', strtotime((string) $paymentDate)) : null;
+    $parsedPaymentDate = $action === 'verify' ? appDateTime($paymentDate) : null;
+    $storedPaymentDate = $parsedPaymentDate ? $parsedPaymentDate->format('Y-m-d') : null;
+    $verifiedAt = appNow();
 
-    $db->prepare('UPDATE payments SET status = ?, verified_by = ?, verified_at = NOW(), notes = ?, or_number = ?, payment_date = ? WHERE id = ?')
-       ->execute([$status, $verifierId, $notes ?: null, $storedOrNumber, $storedPaymentDate, $paymentId]);
+    $db->prepare('UPDATE payments SET status = ?, verified_by = ?, verified_at = ?, notes = ?, or_number = ?, payment_date = ? WHERE id = ?')
+       ->execute([$status, $verifierId, $verifiedAt, $notes ?: null, $storedOrNumber, $storedPaymentDate, $paymentId]);
 
     $roleLabel = ucfirst($verifierRole);
     if ($action === 'verify') {

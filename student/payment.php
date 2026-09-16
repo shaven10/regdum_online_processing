@@ -52,8 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             $reference = generateOnsitePaymentReference();
         }
 
-        $db->prepare('INSERT INTO payments (request_id, amount, payment_method, reference_number, receipt_path) VALUES (?, ?, ?, ?, ?)')
-           ->execute([$requestId, $request['total_amount'], $method, $reference ?: null, $receiptPath]);
+        $db->prepare('INSERT INTO payments (request_id, amount, payment_method, reference_number, receipt_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+           ->execute([$requestId, $request['total_amount'], $method, $reference ?: null, $receiptPath, appNow(), appNow()]);
 
         sendNotification($user['id'], 'Payment Submitted', 'Your payment for ' . $request['request_number'] . ' is pending verification.', 'info');
         $studentName = trim(($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? ''));

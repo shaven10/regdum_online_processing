@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/compliance.php';
 require_once __DIR__ . '/../includes/dashboard.php';
+require_once __DIR__ . '/../includes/student-requests.php';
 requireRole('student');
 
 $user = currentUser();
@@ -17,6 +18,7 @@ $db = getDB();
 $userId = $user['id'];
 $profileCompletion = getStudentProfileCompletion($userId);
 $stats = studentDashboardStats($userId);
+$blockingRequest = getStudentBlockingOnlineRequest($userId);
 
 $stmt = $db->prepare('SELECT r.*, dt.name as document_name FROM requests r JOIN document_types dt ON r.document_type_id = dt.id WHERE r.user_id = ? ORDER BY r.created_at DESC LIMIT 5');
 $stmt->execute([$userId]);
@@ -33,9 +35,11 @@ require_once __DIR__ . '/../includes/header.php';
 renderDashboardWelcome($user, 'Track your document requests and progress through each workflow step.');
 echo renderStudentRegistrationStatus($profileCompletion, 'card');
 renderDashboardActions([
-    $profileCompletion['complete']
+    $profileCompletion['complete'] && !$blockingRequest
         ? ['url' => 'new-request.php', 'label' => 'New Request', 'icon' => 'fa-plus', 'class' => 'btn-primary']
-        : ['url' => 'profile.php', 'label' => 'Complete Profile', 'icon' => 'fa-user-edit', 'class' => 'btn-primary'],
+        : ($blockingRequest
+            ? ['url' => 'request-view.php?id=' . (int) $blockingRequest['id'], 'label' => 'Active Request', 'icon' => 'fa-file-alt', 'class' => 'btn-primary']
+            : ['url' => 'profile.php', 'label' => 'Complete Profile', 'icon' => 'fa-user-edit', 'class' => 'btn-primary']),
     ['url' => 'requests.php', 'label' => 'My Requests', 'icon' => 'fa-list'],
     ['url' => APP_URL . '/notifications.php', 'label' => 'Notifications', 'icon' => 'fa-bell'],
 ]);

@@ -1030,7 +1030,7 @@ function ensureRequestStatuses(): void {
     $required = [
         'submitted', 'under_review', 'awaiting_requirements', 'requirements_submitted',
         'needs_revision', 'requirements_verified', 'payment_verified', 'processing',
-        'ready_for_pickup', 'shipped', 'completed', 'rejected',
+        'ready_for_pickup', 'shipped', 'completed', 'rejected', 'cancelled',
     ];
 
     $missing = false;
@@ -1045,7 +1045,7 @@ function ensureRequestStatuses(): void {
         $db->exec("ALTER TABLE requests MODIFY status ENUM(
             'submitted','under_review','awaiting_requirements','requirements_submitted',
             'needs_revision','requirements_verified','payment_verified','processing',
-            'ready_for_pickup','shipped','completed','rejected'
+            'ready_for_pickup','shipped','completed','rejected','cancelled'
         ) DEFAULT 'submitted'");
     }
 }
@@ -1505,6 +1505,7 @@ function studentProgressStatusLabel(string $status): string {
         'shipped'                => 'Document Release',
         'completed'              => 'Completed',
         'rejected'               => 'Rejected',
+        'cancelled'              => 'Cancelled',
         default                  => ucwords(str_replace('_', ' ', $status)),
     };
 }
@@ -1530,6 +1531,7 @@ function studentProgressDescription(string $status, ?int $requestId = null): str
         'shipped'                => 'Your document has been released. Check tracking details below.',
         'completed'              => 'Your request is complete. You may download your document or leave feedback.',
         'rejected'               => 'This request was rejected. Review the reason and resubmit corrected documents if allowed.',
+        'cancelled'              => 'This request was cancelled. You may submit a new online request when ready.',
         default                  => 'Track your request progress through each step below.',
     };
 }
@@ -2286,7 +2288,7 @@ function requestStatusOptions(): array {
     return [
         'submitted', 'under_review', 'awaiting_requirements', 'requirements_submitted',
         'needs_revision', 'requirements_verified', 'payment_verified', 'processing',
-        'ready_for_pickup', 'shipped', 'completed', 'rejected',
+        'ready_for_pickup', 'shipped', 'completed', 'rejected', 'cancelled',
     ];
 }
 
