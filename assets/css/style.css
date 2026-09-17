@@ -1447,6 +1447,46 @@ a.status-bar-item {
 .radio-group { display: flex; gap: 1.5rem; }
 .radio-label { display: flex; align-items: center; gap: .4rem; cursor: pointer; }
 
+.or-print-mode-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .75rem;
+    margin-top: .35rem;
+}
+.or-print-mode-option {
+    display: flex;
+    gap: .75rem;
+    align-items: flex-start;
+    padding: .85rem 1rem;
+    border: 1px solid var(--gray-300, #cbd5e0);
+    border-radius: 10px;
+    cursor: pointer;
+    background: #fff;
+    min-width: 0;
+}
+.or-print-mode-option:has(input:checked) {
+    border-color: var(--primary, #0f766e);
+    background: var(--primary-light, #ecfdf5);
+}
+.or-print-mode-option input {
+    margin-top: .2rem;
+    flex-shrink: 0;
+}
+.or-print-mode-option span {
+    display: flex;
+    flex-direction: column;
+    gap: .2rem;
+    min-width: 0;
+}
+.or-print-mode-option small {
+    line-height: 1.35;
+}
+@media (max-width: 720px) {
+    .or-print-mode-options {
+        grid-template-columns: 1fr;
+    }
+}
+
 .profile-id-preview {
     display: flex;
     flex-wrap: wrap;

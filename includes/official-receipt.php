@@ -230,6 +230,8 @@ function fetchOfficialReceiptData(array $paymentIds, ?array $viewer = null): ?ar
         }
     }
 
+    $payments = decoratePaymentsWithBatchMeta($payments);
+
     $contextMap = buildPaymentVerificationDetailsMap(array_map(
         static fn(array $payment): int => (int) $payment['request_id'],
         $payments
@@ -322,19 +324,13 @@ function fetchOfficialReceiptData(array $paymentIds, ?array $viewer = null): ?ar
         . (!empty($primary['middle_name']) ? ' ' . $primary['middle_name'] : '')
         . ' ' . ($primary['last_name'] ?? '')
     );
-    if (count($payments) > 1) {
-        $uniquePayors = [];
-        foreach ($payments as $payment) {
-            $name = trim(($payment['first_name'] ?? '') . ' ' . ($payment['last_name'] ?? ''));
-            if ($name !== '') {
-                $uniquePayors[$name] = $name;
-            }
+    $isMultipleRequestors = paymentIsMultipleRequest($primary)
+        || (count($payments) > 1 && trim((string) ($primary['onsite_batch_key'] ?? '')) !== '');
+    if ($isMultipleRequestors) {
+        if ($payorName !== '') {
+            $payorName .= ' et al.';
         }
-        if (count($uniquePayors) > 1) {
-            $payorName = 'Multiple payors (' . count($uniquePayors) . ')';
-        }
-    }
-    if ($payorName !== '' && !empty($primary['student_id']) && count($payments) === 1) {
+    } elseif ($payorName !== '' && !empty($primary['student_id'])) {
         $payorName .= ' / ' . $primary['student_id'];
     }
 
@@ -672,22 +668,23 @@ function renderOfficialReceiptDocument(array $receipt, bool $autoPrint = false, 
         body.or-mode-data-only .or-pay-box {
             border-color: transparent !important;
         }
-        body.or-mode-data-only .or-serial .or-number {
-            color: inherit;
+        body.or-mode-data-only .or-number,
+        body.or-mode-data-only .or-sign .or-sign-line .or-data {
+            visibility: hidden !important;
         }
 
         @media print {
             @page {
-                size: 4.25in 8.5in;
-                margin: .15in;
+                size: legal portrait;
+                margin: 0;
             }
             html, body.or-print-page {
-                width: 4.25in;
-                height: 8.5in;
+                width: 8.5in;
+                height: 14in;
                 margin: 0 !important;
                 padding: 0 !important;
                 background: #fff !important;
-                min-height: 0 !important;
+                min-height: 14in !important;
                 display: flex !important;
                 flex-direction: column !important;
                 align-items: center !important;
@@ -695,15 +692,16 @@ function renderOfficialReceiptDocument(array $receipt, bool $autoPrint = false, 
             }
             .no-print { display: none !important; }
             .or-sheet {
-                width: 100% !important;
-                height: auto !important;
-                max-height: 100% !important;
+                width: 4.25in !important;
+                height: 8.5in !important;
                 max-width: none !important;
+                max-height: none !important;
                 margin: 0 auto !important;
                 border-radius: 6px;
                 box-shadow: none;
                 page-break-after: avoid;
                 page-break-inside: avoid;
+                flex-shrink: 0;
             }
             body.or-mode-data-only .or-sheet {
                 border: none !important;

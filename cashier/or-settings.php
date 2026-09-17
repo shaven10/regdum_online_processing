@@ -55,21 +55,19 @@ require_once __DIR__ . '/../includes/header.php';
 
             <div class="form-group">
                 <label>OR Print Mode *</label>
-                <div class="radio-stack" style="display:grid;gap:.75rem;margin-top:.35rem;">
-                    <label class="radio-card" style="display:flex;gap:.75rem;align-items:flex-start;padding:.85rem 1rem;border:1px solid #cbd5e0;border-radius:10px;cursor:pointer;">
+                <div class="or-print-mode-options">
+                    <label class="or-print-mode-option">
                         <input type="radio" name="or_print_mode" value="template" <?= $mode === 'template' ? 'checked' : '' ?> required>
                         <span>
                             <strong>OR template</strong>
-                            <br>
-                            <small class="text-muted">Print the full Accountable Form No. 51 (Revised June 2008) layout with filled fields.</small>
+                            <small class="text-muted">Full AF51 layout with logos, labels, and borders.</small>
                         </span>
                     </label>
-                    <label class="radio-card" style="display:flex;gap:.75rem;align-items:flex-start;padding:.85rem 1rem;border:1px solid #cbd5e0;border-radius:10px;cursor:pointer;">
+                    <label class="or-print-mode-option">
                         <input type="radio" name="or_print_mode" value="data_only" <?= $mode === 'data_only' ? 'checked' : '' ?>>
                         <span>
                             <strong>Data only</strong>
-                            <br>
-                            <small class="text-muted">Same AF51 layout and field positions, but the printed form template (logos, labels, borders) is hidden for physical OR paper.</small>
+                            <small class="text-muted">Same field positions; template artwork hidden for physical OR paper.</small>
                         </span>
                     </label>
                 </div>
