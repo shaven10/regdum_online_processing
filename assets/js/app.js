@@ -3,6 +3,8 @@ document.addEventListener('DOMContentLoaded', function () {
     initLandingNav();
     initLandingHeroCarousel();
     initRecordsPerPageSelects();
+    initModuleShortcuts();
+    initShortcutCaptureInputs();
 
     const toggle = document.getElementById('sidebarToggle');
     const sidebar = document.getElementById('sidebar');
@@ -1518,5 +1520,99 @@ function initRecordsPerPageSelects() {
                 form.submit();
             }
         });
+    });
+}
+
+function normalizeShortcutEvent(event) {
+    if (!event || !event.key) return '';
+    var key = event.key;
+    if (key === ' ') key = 'Space';
+    if (key === 'Esc') key = 'Escape';
+    if (key.length === 1) key = key.toUpperCase();
+    if (/^f([1-9]|1[0-2])$/i.test(key)) {
+        key = 'F' + key.slice(1);
+    }
+
+    var isModifierOnly = ['Control', 'Alt', 'Shift', 'Meta'].indexOf(event.key) !== -1;
+    if (isModifierOnly) return '';
+
+    var parts = [];
+    if (event.ctrlKey) parts.push('Ctrl');
+    if (event.altKey) parts.push('Alt');
+    if (event.shiftKey) parts.push('Shift');
+    if (event.metaKey) parts.push('Meta');
+
+    var needsModifier = /^[A-Z0-9]$/.test(key);
+    if (needsModifier && parts.length === 0) return '';
+
+    parts.push(key);
+    return parts.join('+');
+}
+
+function initModuleShortcuts() {
+    var bootstrap = document.getElementById('moduleShortcutBootstrap');
+    if (!bootstrap) return;
+
+    var entries = [];
+    try {
+        entries = JSON.parse(bootstrap.textContent || '[]');
+    } catch (err) {
+        entries = [];
+    }
+    if (!Array.isArray(entries) || entries.length === 0) return;
+
+    var byShortcut = {};
+    entries.forEach(function (item) {
+        if (!item || !item.shortcut || !item.url) return;
+        byShortcut[String(item.shortcut)] = String(item.url);
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.defaultPrevented) return;
+        var target = event.target;
+        if (target) {
+            var tag = (target.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable) {
+                return;
+            }
+        }
+
+        var combo = normalizeShortcutEvent(event);
+        if (!combo || !byShortcut[combo]) return;
+
+        event.preventDefault();
+        window.location.href = byShortcut[combo];
+    });
+}
+
+function initShortcutCaptureInputs() {
+    document.querySelectorAll('[data-shortcut-capture]').forEach(function (input) {
+        if (input.dataset.shortcutBound === '1') return;
+        input.dataset.shortcutBound = '1';
+
+        input.addEventListener('keydown', function (event) {
+            if (event.key === 'Tab') return;
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (event.key === 'Backspace' || event.key === 'Delete' || event.key === 'Escape') {
+                input.value = '';
+                return;
+            }
+
+            var combo = normalizeShortcutEvent(event);
+            if (combo) {
+                input.value = combo;
+            }
+        });
+
+        var row = input.closest('.shortcut-settings-input');
+        var clearBtn = row ? row.querySelector('[data-shortcut-clear]') : null;
+        if (clearBtn) {
+            clearBtn.addEventListener('click', function () {
+                input.value = '';
+                input.focus();
+            });
+        }
     });
 }

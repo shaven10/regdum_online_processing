@@ -511,9 +511,7 @@ require_once __DIR__ . '/../includes/header.php';
                         <span class="onsite-payment-code"><?= e($paymentData['reference_number']) ?></span>
                     </p>
                     <?php if (($request['request_channel'] ?? '') === 'onsite'): ?>
-                        <a href="onsite-request-slip.php?id=<?= (int) $requestId ?>&print=1" target="_blank" class="btn btn-outline btn-sm">
-                            <i class="fas fa-print"></i> Print Request Slip
-                        </a>
+                        <?= renderOnsiteRequestSlipButtonHtml((int) $requestId, true, true) ?>
                     <?php endif; ?>
                 <?php endif; ?>
                 <?php if ($canPrintRegistrarClaimSlip): ?>

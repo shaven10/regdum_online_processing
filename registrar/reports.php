@@ -256,8 +256,8 @@ require_once __DIR__ . '/../includes/header.php';
                                     <td data-label="Created"><?= e(formatDateTime($req['created_at'] ?? null)) ?></td>
                                     <td data-label="Slip / Stub">
                                         <?php if (!empty($req['document_link'])): ?>
-                                            <a href="<?= e($req['document_link']) ?>" target="_blank" class="btn btn-outline btn-sm">
-                                                <i class="fas <?= isClaimStubPrintableStatus((string) ($req['status'] ?? '')) ? 'fa-ticket-alt' : 'fa-receipt' ?>"></i>
+                                            <a href="<?= e($req['document_link']) ?>" target="_blank" rel="noopener" class="btn btn-outline btn-sm action-print-btn" title="<?= e($req['document_link_label'] === 'Claim' ? 'Print claim slip' : 'Print onsite request slip') ?>">
+                                                <i class="fas <?= isClaimStubPrintableStatus((string) ($req['status'] ?? '')) ? 'fa-ticket-alt' : 'fa-print' ?>"></i>
                                                 <?= e($req['document_link_label']) ?>
                                             </a>
                                         <?php else: ?>

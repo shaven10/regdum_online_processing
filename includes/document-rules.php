@@ -233,7 +233,15 @@ function ensureAuthenticationDocumentTypesSchema(): void {
         is_active TINYINT(1) NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )");
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    // Align collations so comparisons with request_authentication_items do not fatal.
+    try {
+        $db->exec("ALTER TABLE authentication_document_types
+            CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+    } catch (Throwable $e) {
+        // Ignore if the table cannot be altered in this environment.
+    }
 
     seedDefaultAuthenticationDocumentTypes();
 }
@@ -277,7 +285,9 @@ function getAllAuthenticationDocumentTypes(bool $activeOnly = false): array {
     ensureAuthenticationDocumentTypesSchema();
     $db = getDB();
     $sql = 'SELECT adt.*,
-            (SELECT COUNT(*) FROM request_authentication_items rai WHERE rai.auth_document_type = adt.code) AS usage_count
+            (SELECT COUNT(*) FROM request_authentication_items rai
+                WHERE rai.auth_document_type COLLATE utf8mb4_unicode_ci = adt.code COLLATE utf8mb4_unicode_ci
+            ) AS usage_count
         FROM authentication_document_types adt';
     if ($activeOnly) {
         $sql .= ' WHERE adt.is_active = 1';
@@ -303,7 +313,10 @@ function authenticationDocumentTypeUsageCount(string $code): int {
     if ($code === '') {
         return 0;
     }
-    $stmt = getDB()->prepare('SELECT COUNT(*) FROM request_authentication_items WHERE auth_document_type = ?');
+    $stmt = getDB()->prepare(
+        'SELECT COUNT(*) FROM request_authentication_items
+         WHERE auth_document_type COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci'
+    );
     $stmt->execute([$code]);
     return (int) $stmt->fetchColumn();
 }

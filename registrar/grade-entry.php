@@ -26,6 +26,10 @@ if (isset($_GET['suggest'])) {
 $search = trim((string) ($_GET['search'] ?? $_POST['search'] ?? ''));
 $studentId = (int) ($_POST['student_user_id'] ?? $_GET['student_user_id'] ?? 0);
 $student = $studentId > 0 ? loadStudentForGradesEvaluation($studentId) : null;
+if ($student && !studentAllowsGradesEvaluation($student)) {
+    setFlash('error', 'Grade entry is only available for enrolled (active) students. Graduated and inactive students are excluded.');
+    redirect(APP_URL . '/registrar/grade-entry.php');
+}
 $searchResults = strlen($search) >= 2 ? searchStudentsForGradesEvaluation($search) : [];
 
 $programId = (int) ($_POST['program_id'] ?? $_GET['program_id'] ?? 0);

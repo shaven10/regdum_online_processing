@@ -59,31 +59,35 @@ require_once __DIR__ . '/../includes/header.php';
         <div class="card-header-actions">
             <?php if ($printableIds !== []): ?>
                 <a href="<?= APP_URL ?>/registrar/onsite-request-slip.php?<?= e(onsiteBatchSlipQuery($printableIds, 'combined', true)) ?>"
-                   class="btn btn-primary btn-sm"
+                   class="btn btn-primary btn-sm action-print-btn"
                    target="_blank"
-                   rel="noopener">
-                    <i class="fas fa-file-alt"></i> Print Combined Slip
+                   rel="noopener"
+                   title="Print one combined onsite request slip for the whole batch">
+                    <i class="fas fa-file-alt"></i> Combined Slip
                 </a>
                 <a href="<?= APP_URL ?>/registrar/onsite-request-slip.php?<?= e(onsiteBatchSlipQuery($printableIds, 'separate', true)) ?>"
-                   class="btn btn-outline btn-sm"
+                   class="btn btn-outline btn-sm action-print-btn"
                    target="_blank"
-                   rel="noopener">
-                    <i class="fas fa-copy"></i> Print All Slips
+                   rel="noopener"
+                   title="Print a separate onsite request slip for each requestor">
+                    <i class="fas fa-copy"></i> All Slips
                 </a>
             <?php endif; ?>
             <?php if (count($verifiedClaimIds) > 1): ?>
                 <a href="<?= e(registrarClaimStubUrl($verifiedClaimIds, 'combined', true)) ?>"
-                   class="btn btn-primary btn-sm"
+                   class="btn btn-outline btn-sm action-print-btn"
                    target="_blank"
-                   rel="noopener">
-                    <i class="fas fa-ticket-alt"></i> Print Combined Claim Slip
+                   rel="noopener"
+                   title="Print combined claim slip for verified payments in this batch">
+                    <i class="fas fa-ticket-alt"></i> Claim
                 </a>
             <?php elseif (count($verifiedClaimIds) === 1): ?>
                 <a href="<?= e(registrarClaimStubUrl($verifiedClaimIds, '', true)) ?>"
-                   class="btn btn-primary btn-sm"
+                   class="btn btn-outline btn-sm action-print-btn"
                    target="_blank"
-                   rel="noopener">
-                    <i class="fas fa-ticket-alt"></i> Print Claim Slip
+                   rel="noopener"
+                   title="Print claim slip">
+                    <i class="fas fa-ticket-alt"></i> Claim
                 </a>
             <?php endif; ?>
             <a href="<?= APP_URL ?>/registrar/onsite-requests.php" class="btn btn-outline btn-sm">
@@ -145,12 +149,7 @@ require_once __DIR__ . '/../includes/header.php';
                             <td data-label="Action">
                                 <div class="onsite-batch-row-actions">
                                     <?php if ($paymentCode !== ''): ?>
-                                        <a class="btn btn-sm btn-outline"
-                                           href="<?= APP_URL ?>/registrar/onsite-request-slip.php?id=<?= $requestId ?>&print=1"
-                                           target="_blank"
-                                           rel="noopener">
-                                            <i class="fas fa-print"></i> Slip
-                                        </a>
+                                        <?= renderOnsiteRequestSlipButtonHtml($requestId, true, true) ?>
                                     <?php endif; ?>
                                     <?= renderRegistrarClaimSlipButtonsHtml($request, true, $slip['payment'] ?? null) ?>
                                     <a class="btn btn-sm btn-outline" href="<?= APP_URL ?>/registrar/verify-request.php?id=<?= $requestId ?>">

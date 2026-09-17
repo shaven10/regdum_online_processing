@@ -615,7 +615,11 @@ function searchStudentsForGradesEvaluation(string $search, int $limit = 15): arr
     }
 
     $terms = preg_split('/\s+/', $search, -1, PREG_SPLIT_NO_EMPTY) ?: [];
-    $where = ['u.role_id = 1', 'u.is_active = 1'];
+    $where = [
+        'u.role_id = 1',
+        'u.is_active = 1',
+        "(sp.enrollment_status = 'enrolled' OR sp.enrollment_status IS NULL OR sp.enrollment_status = '')",
+    ];
     $params = [];
     foreach ($terms as $term) {
         $like = '%' . $term . '%';
@@ -654,8 +658,12 @@ function getStudentSubjectGrades(int $userId, int $prospectusId): array {
 }
 
 function saveStudentSubjectGrades(int $userId, int $prospectusId, array $grades, int $updatedBy = 0): array {
-    if (!loadStudentForGradesEvaluation($userId)) {
+    $student = loadStudentForGradesEvaluation($userId);
+    if (!$student) {
         return ['ok' => false, 'error' => 'Student not found.'];
+    }
+    if (!studentAllowsGradesEvaluation($student)) {
+        return ['ok' => false, 'error' => 'Grades evaluation is only available for enrolled (active) students.'];
     }
     if (!getProspectusById($prospectusId)) {
         return ['ok' => false, 'error' => 'Prospectus not found.'];
@@ -726,6 +734,9 @@ function clearStudentSubjectGrades(int $userId): array {
     $student = loadStudentForGradesEvaluation($userId);
     if (!$student) {
         return ['ok' => false, 'error' => 'Student not found.'];
+    }
+    if (!studentAllowsGradesEvaluation($student)) {
+        return ['ok' => false, 'error' => 'Clear grades is only available for enrolled (active) students.'];
     }
     ensureGradesEvaluationSchema();
     $stmt = getDB()->prepare('DELETE FROM student_subject_grades WHERE user_id = ?');

@@ -41,6 +41,8 @@ if ($selectedMajorId > 0) {
 $campuses = getCampusesForStudent((int) ($student['origin_campus_id'] ?? 0));
 $currentEnrollment = $student['enrollment_status'] ?? 'enrolled';
 $formErrors = [];
+$lockStudentId = isEnrolledEnrollment($currentEnrollment);
+$lockedStudentId = trim((string) ($student['student_id'] ?? ''));
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $validIdPath = trim($student['valid_id_path'] ?? '');
@@ -88,6 +90,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         'reset_password_to_id'  => !empty($_POST['reset_password_to_id']),
     ];
 
+    // Enrolled (active) students keep their official ID number.
+    if ($lockStudentId) {
+        $fields['student_id'] = $lockedStudentId;
+    }
     if (!array_key_exists($fields['enrollment_status'], enrollmentStatusOptions())) {
         $fields['enrollment_status'] = 'enrolled';
     }
@@ -314,7 +320,13 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="form-row">
                     <div class="form-group">
                         <label for="student_id">Student ID *</label>
-                        <input type="text" id="student_id" name="student_id" value="<?= e($student['student_id'] ?? '') ?>" required maxlength="50">
+                        <?php if ($lockStudentId): ?>
+                            <input type="text" id="student_id" value="<?= e($lockedStudentId) ?>" readonly>
+                            <input type="hidden" name="student_id" value="<?= e($lockedStudentId) ?>">
+                            <small class="text-muted">Student ID cannot be changed for enrolled (active) students.</small>
+                        <?php else: ?>
+                            <input type="text" id="student_id" name="student_id" value="<?= e($student['student_id'] ?? '') ?>" required maxlength="50">
+                        <?php endif; ?>
                     </div>
                     <div class="form-group">
                         <label for="email">Email *</label>

@@ -116,6 +116,7 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/registrar/assignments.php" class="<?= $activeNav === 'assignments' ? 'active' : '' ?>"><i class="fas fa-user-tag"></i> Staff Assignment</a>
                 <a href="<?= APP_URL ?>/registrar/documents.php" class="<?= $activeNav === 'my-assignments' ? 'active' : '' ?>"><i class="fas fa-tasks"></i> My Assignments</a>
                 <a href="<?= APP_URL ?>/registrar/attachments.php" class="<?= $activeNav === 'attachments' ? 'active' : '' ?>"><i class="fas fa-paperclip"></i> Attachments</a>
+                <a href="<?= APP_URL ?>/registrar/shortcut-settings.php" class="<?= $activeNav === 'shortcut-settings' ? 'active' : '' ?>"><i class="fas fa-keyboard"></i> Shortcuts</a>
             <?php elseif (hasRole('cashier')): ?>
                 <a href="<?= APP_URL ?>/cashier/dashboard.php" class="<?= $activeNav === 'dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
                 <a href="<?= APP_URL ?>/cashier/payments.php" class="<?= $activeNav === 'payments' ? 'active' : '' ?>"><i class="fas fa-credit-card"></i> Verify Payments</a>
@@ -123,7 +124,7 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
                 <a href="<?= APP_URL ?>/cashier/documents.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-file-invoice"></i> Assigned Documents</a>
                 <a href="<?= APP_URL ?>/cashier/reports.php" class="<?= $activeNav === 'reports' ? 'active' : '' ?>"><i class="fas fa-receipt"></i> Transaction Reports</a>
                 <a href="<?= APP_URL ?>/cashier/bank-settings.php" class="<?= $activeNav === 'bank-settings' ? 'active' : '' ?>"><i class="fas fa-university"></i> Bank Settings</a>
-                <a href="<?= APP_URL ?>/cashier/or-settings.php" class="<?= $activeNav === 'or-settings' ? 'active' : '' ?>"><i class="fas fa-receipt"></i> OR Settings</a>
+                <a href="<?= APP_URL ?>/cashier/or-settings.php" class="<?= $activeNav === 'or-settings' ? 'active' : '' ?>"><i class="fas fa-cog"></i> OR / Print Settings</a>
             <?php elseif (hasRole('accounting')): ?>
                 <a href="<?= APP_URL ?>/accounting/dashboard.php" class="<?= $activeNav === 'dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
                 <a href="<?= APP_URL ?>/accounting/documents.php" class="<?= $activeNav === 'documents' ? 'active' : '' ?>"><i class="fas fa-file-invoice-dollar"></i> SOA Assignments</a>
@@ -260,4 +261,15 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
             $notificationToastPayload,
             JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS
         ) ?></script>
+        <?php
+        if (hasRole('registrar', 'cashier')) {
+            require_once __DIR__ . '/module-shortcuts.php';
+            $shortcutRole = hasRole('cashier') ? 'cashier' : 'registrar';
+            $moduleShortcutPayload = moduleShortcutRuntimeMap((int) ($user['id'] ?? 0), $shortcutRole);
+            ?>
+        <script type="application/json" id="moduleShortcutBootstrap"><?= json_encode(
+            $moduleShortcutPayload,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS
+        ) ?></script>
+        <?php } ?>
 <?php endif; ?>

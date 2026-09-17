@@ -385,10 +385,11 @@ function canViewOfficialReceipt(array $user, array $receipt): bool {
     return false;
 }
 
-function renderOfficialReceiptDocument(array $receipt, bool $autoPrint = false, string $backUrl = '', ?string $printMode = null): void {
+function renderOfficialReceiptDocument(array $receipt, bool $autoPrint = false, string $backUrl = '', ?string $printMode = null, string $claimUrl = ''): void {
     $backUrl = $backUrl !== '' ? $backUrl : (APP_URL . '/cashier/payments.php');
     $printMode = normalizeOfficialReceiptPrintMode($printMode ?? getOfficialReceiptPrintMode());
     $dataOnly = $printMode === 'data_only';
+    $claimUrl = trim($claimUrl);
 
     $logo = APP_LOGO;
     $lines = $receipt['lines'] ?? [];
@@ -720,6 +721,9 @@ function renderOfficialReceiptDocument(array $receipt, bool $autoPrint = false, 
         <a href="<?= e($backUrl) ?>" class="btn btn-outline btn-sm"><i class="fas fa-arrow-left"></i> Back</a>
         <div class="or-toolbar-actions">
             <a href="<?= e($settingsUrl) ?>" class="btn btn-outline btn-sm"><i class="fas fa-cog"></i> OR Settings</a>
+            <?php if ($claimUrl !== ''): ?>
+                <a href="<?= e($claimUrl) ?>" class="btn btn-outline btn-sm" id="orClaimSlipLink"><i class="fas fa-ticket-alt"></i> Claim Slip</a>
+            <?php endif; ?>
             <button type="button" class="btn btn-primary btn-sm" onclick="window.print()">
                 <i class="fas fa-print"></i> <?= $dataOnly ? 'Print OR Data' : 'Print OR' ?>
             </button>
@@ -846,11 +850,27 @@ function renderOfficialReceiptDocument(array $receipt, bool $autoPrint = false, 
         <p class="or-footnote or-template">Write the number and date of this receipt of check or money order received.</p>
     </article>
 
-    <?php if ($autoPrint): ?>
+    <?php if ($autoPrint || $claimUrl !== ''): ?>
     <script>
-    window.addEventListener('load', function () {
-        setTimeout(function () { window.print(); }, 300);
-    });
+    (function () {
+        var claimUrl = <?= json_encode($claimUrl, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS) ?>;
+        var claimOpened = false;
+        function openClaimSlip() {
+            if (!claimUrl || claimOpened) return;
+            claimOpened = true;
+            window.location.href = claimUrl;
+        }
+        <?php if ($autoPrint): ?>
+        window.addEventListener('load', function () {
+            setTimeout(function () { window.print(); }, 300);
+        });
+        <?php endif; ?>
+        <?php if ($claimUrl !== ''): ?>
+        window.addEventListener('afterprint', function () {
+            openClaimSlip();
+        });
+        <?php endif; ?>
+    })();
     </script>
     <?php endif; ?>
 </body>

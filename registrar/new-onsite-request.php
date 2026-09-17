@@ -28,8 +28,15 @@ $db = getDB();
 $errors = [];
 $createdResult = null;
 
-$requestMode = (($_POST['request_mode'] ?? $_GET['mode'] ?? 'single') === 'multi') ? 'multi' : 'single';
-$isMultiMode = $requestMode === 'multi';
+$requestModeRaw = strtolower(trim((string) ($_POST['request_mode'] ?? $_GET['mode'] ?? 'single')));
+$requestMode = match ($requestModeRaw) {
+    'multi', 'multi_active' => 'multi',
+    'multi_alumni', 'multi_graduated', 'multi_inactive' => 'multi_alumni',
+    default => 'single',
+};
+$isMultiMode = in_array($requestMode, ['multi', 'multi_alumni'], true);
+$isMultiActiveMode = $requestMode === 'multi';
+$isMultiAlumniMode = $requestMode === 'multi_alumni';
 
 $search = trim((string) ($_GET['search'] ?? ''));
 $selectedUserId = (int) ($_GET['student_user_id'] ?? $_POST['student_user_id'] ?? 0);
@@ -52,34 +59,33 @@ if (!array_key_exists($enrollmentStatus, enrollmentStatusOptions())) {
     $enrollmentStatus = 'enrolled';
 }
 
+// Multi active = enrolled only. Multi alumni = graduated or inactive only.
+if ($isMultiActiveMode) {
+    $enrollmentStatus = 'enrolled';
+} elseif ($isMultiAlumniMode && !in_array($enrollmentStatus, ['graduated', 'inactive'], true)) {
+    $enrollmentStatus = 'graduated';
+}
+
+$multiEnrollmentOptions = $isMultiAlumniMode
+    ? array_intersect_key(enrollmentStatusOptions(), array_flip(['graduated', 'inactive']))
+    : ($isMultiActiveMode
+        ? array_intersect_key(enrollmentStatusOptions(), array_flip(['enrolled']))
+        : enrollmentStatusOptions());
+$multiModeQuery = $isMultiMode ? ('?mode=' . urlencode($requestMode)) : '';
+$multiModeLabel = $isMultiAlumniMode
+    ? 'graduate / inactive requestors'
+    : 'active students';
+$multiBatchTitle = $isMultiAlumniMode ? 'Requestors in this batch' : 'Active students in this batch';
+$multiFindTitle = $isMultiAlumniMode ? 'Find Requestors to Add' : 'Find Active Students to Add';
+$browseStudentsTitle = $isMultiAlumniMode
+    ? 'Browse graduate / inactive requestors'
+    : ($isMultiMode ? 'Browse active students' : 'Browse active students');
+
 $docTypes = getAvailableDocumentTypesForEnrollment($enrollmentStatus);
 $isFilteredStudentSearch = strlen($search) >= 2;
 $searchResults = $isFilteredStudentSearch ? searchStudentsForOnsiteRequest($search, 15) : [];
 $browsePrograms = getActiveAcademicPrograms();
 $browseYearOptions = yearLevelOptions();
-$expandAllOnsiteSections = !empty($errors);
-$onsiteSectionExpanded = static function (string $section) use ($expandAllOnsiteSections, $selectedStudent, $isMultiMode): bool {
-    if ($expandAllOnsiteSections) {
-        return true;
-    }
-
-    // Multi-student mode: the picker is step 1, so keep it open alongside Purpose & type.
-    if ($isMultiMode) {
-        return $section === 'students' || $section === 'purpose';
-    }
-
-    // Existing student selected: focus on Purpose & type (step 2).
-    if ($selectedStudent) {
-        return $section === 'purpose';
-    }
-
-    // Walk-in / no student yet: open picker + requestor details.
-    return match ($section) {
-        'students', 'requestor' => true,
-        default => false,
-    };
-};
-
 $selectedCourseId = (int) ($selectedStudent['course_id'] ?? 0);
 $programs = getAcademicProgramsForStudent($selectedCourseId);
 $selectedCampusId = (int) ($selectedStudent['origin_campus_id'] ?? 0);
@@ -131,6 +137,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         'last_school_year' => trim((string) ($_POST['last_school_year'] ?? '')),
         'last_semester' => trim((string) ($_POST['last_semester'] ?? '')),
     ];
+    if ($isMultiActiveMode) {
+        $requestorInput['enrollment_status'] = 'enrolled';
+    } elseif ($isMultiAlumniMode && !in_array($requestorInput['enrollment_status'], ['graduated', 'inactive'], true)) {
+        $requestorInput['enrollment_status'] = 'graduated';
+    }
+    // Keep official IDs for enrolled students selected from records.
+    if ($requestorInput['user_id'] > 0) {
+        $postedExisting = findStudentUserById($requestorInput['user_id']);
+        if ($postedExisting && isEnrolledEnrollment((string) ($postedExisting['enrollment_status'] ?? 'enrolled'))) {
+            $requestorInput['student_id'] = (string) ($postedExisting['student_id'] ?? '');
+        }
+    }
     $requestorDefaults = array_merge($requestorDefaults, $requestorInput);
     $requestorDefaults['student_user_id'] = $requestorInput['user_id'];
     $programs = getAcademicProgramsForStudent((int) $requestorInput['course_id']);
@@ -158,13 +176,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
     if ($isMultiMode) {
         if ($multiStudentIds === []) {
-            $errors['multi_student_ids'] = 'Add at least one existing student to the batch.';
+            $errors['multi_student_ids'] = $isMultiAlumniMode
+                ? 'Add at least one graduate or inactive requestor to the batch.'
+                : 'Add at least one enrolled student to the batch.';
         } else {
             $multiResolved = resolveOnsiteMultiStudents($multiStudentIds, $enrollmentStatus);
             if ($multiResolved['error'] !== null) {
                 $errors['multi_student_ids'] = $multiResolved['error'];
             } elseif ($multiResolved['students'] === []) {
-                $errors['multi_student_ids'] = 'Add at least one existing student to the batch.';
+                $errors['multi_student_ids'] = $isMultiAlumniMode
+                    ? 'Add at least one graduate or inactive requestor to the batch.'
+                    : 'Add at least one enrolled student to the batch.';
             } else {
                 $multiSelectedStudents = $multiResolved['students'];
             }
@@ -468,6 +490,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
 $pageTitle = 'Onsite Request';
 $activeNav = 'onsite-request';
+$expandAllOnsiteSections = !empty($errors);
+$onsiteSectionExpanded = static function (string $section) use ($expandAllOnsiteSections, $selectedStudent, $isMultiMode): bool {
+    if ($expandAllOnsiteSections) {
+        return true;
+    }
+
+    // Multi-student mode: the picker is step 1, so keep it open alongside Purpose & type.
+    if ($isMultiMode) {
+        return $section === 'students' || $section === 'purpose';
+    }
+
+    // Existing student selected: focus on Purpose & type (step 2).
+    if ($selectedStudent) {
+        return $section === 'purpose';
+    }
+
+    // Walk-in / no student yet: open picker + requestor details.
+    return match ($section) {
+        'students', 'requestor' => true,
+        default => false,
+    };
+};
+
+$onsiteValidationDialog = null;
+if ($errors !== []) {
+    $docTypesByIdForErrors = [];
+    foreach ($docTypes as $docTypeRow) {
+        $docTypesByIdForErrors[(int) $docTypeRow['id']] = $docTypeRow;
+    }
+    $errorDetails = [];
+    foreach ($errors as $errorKey => $errorMessage) {
+        $errorMessage = trim((string) $errorMessage);
+        if ($errorMessage === '') {
+            continue;
+        }
+        if (preg_match('/^document_term_(\d+)$/', (string) $errorKey, $m)) {
+            $docName = (string) ($docTypesByIdForErrors[(int) $m[1]]['name'] ?? 'Selected document');
+            $errorDetails[] = $docName . ': ' . $errorMessage;
+            continue;
+        }
+        if (preg_match('/^document_auth_type_(\d+)$/', (string) $errorKey, $m)) {
+            $docName = (string) ($docTypesByIdForErrors[(int) $m[1]]['name'] ?? 'Selected document');
+            $errorDetails[] = $docName . ': ' . $errorMessage;
+            continue;
+        }
+        $errorDetails[] = $errorMessage;
+    }
+    $errorDetails = array_values(array_unique($errorDetails));
+    $onsiteValidationDialog = [
+        'type' => 'error',
+        'tone' => 'error',
+        'icon' => 'fa-exclamation-circle',
+        'title' => 'Cannot Create Request',
+        'message' => 'Please fix the following before generating a payment code.',
+        'details' => $errorDetails,
+        'next_step' => 'Complete the missing school year/semester or authentication details, then try again.',
+    ];
+}
+
 $selectedDocIds = array_map('intval', $_POST['document_type_ids'] ?? []);
 $postedCopies = array_map('intval', $_POST['document_copies'] ?? []);
 $postedTermLinesByDoc = $_POST['document_term_lines'] ?? [];
@@ -592,13 +673,22 @@ require_once __DIR__ . '/../includes/header.php';
                     <small>One existing student, or create a new walk-in record.</small>
                 </span>
             </a>
-            <a class="onsite-mode-option <?= $isMultiMode ? 'is-active' : '' ?>"
-               href="<?= APP_URL ?>/registrar/new-onsite-request.php?mode=multi"
-               aria-current="<?= $isMultiMode ? 'true' : 'false' ?>">
+            <a class="onsite-mode-option <?= $isMultiActiveMode ? 'is-active' : '' ?>"
+               href="<?= APP_URL ?>/registrar/new-onsite-request.php?mode=multi&enrollment_status=enrolled"
+               aria-current="<?= $isMultiActiveMode ? 'true' : 'false' ?>">
                 <span class="onsite-mode-icon" aria-hidden="true"><i class="fas fa-users"></i></span>
                 <span class="onsite-mode-copy">
-                    <strong>Multiple students</strong>
-                    <small>Up to <?= ONSITE_MULTI_STUDENT_MAX ?> existing students requesting the same documents.</small>
+                    <strong>Multiple active students</strong>
+                    <small>Up to <?= ONSITE_MULTI_STUDENT_MAX ?> enrolled students requesting the same documents.</small>
+                </span>
+            </a>
+            <a class="onsite-mode-option <?= $isMultiAlumniMode ? 'is-active' : '' ?>"
+               href="<?= APP_URL ?>/registrar/new-onsite-request.php?mode=multi_alumni&enrollment_status=graduated"
+               aria-current="<?= $isMultiAlumniMode ? 'true' : 'false' ?>">
+                <span class="onsite-mode-icon" aria-hidden="true"><i class="fas fa-user-graduate"></i></span>
+                <span class="onsite-mode-copy">
+                    <strong>Multiple graduate / inactive</strong>
+                    <small>Up to <?= ONSITE_MULTI_STUDENT_MAX ?> graduate or inactive requestors for the same document.</small>
                 </span>
             </a>
         </div>
@@ -610,15 +700,18 @@ require_once __DIR__ . '/../includes/header.php';
                 aria-controls="onsiteSectionStudents">
                 <span class="form-section-toggle-label">
                     <span class="request-step-icon" aria-hidden="true"><i class="fas fa-users"></i></span>
-                    <span class="form-section-title"><?= $isMultiMode ? 'Find Students to Add' : 'Existing Students' ?></span>
+                    <span class="form-section-title"><?= $isMultiMode ? e($multiFindTitle) : 'Existing Students' ?></span>
                 </span>
                 <i class="fas fa-chevron-down form-section-chevron" aria-hidden="true"></i>
             </button>
             <div class="form-section-body" id="onsiteSectionStudents">
                 <p class="text-muted onsite-student-picker-note">
                     <?php if ($isMultiMode): ?>
-                        Search or browse, then choose <strong>Add</strong> to put a student in the batch.
-                        Only <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> students can be added, up to <?= ONSITE_MULTI_STUDENT_MAX ?>.
+                        Search or browse, then choose <strong>Add</strong> to put a requestor in the batch.
+                        Only <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> <?= $isMultiAlumniMode ? 'requestors' : 'students' ?> can be added, up to <?= ONSITE_MULTI_STUDENT_MAX ?>.
+                        <?php if ($isMultiAlumniMode): ?>
+                            Use <strong>Add <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> Requestor</strong> when the person is not yet in the system.
+                        <?php endif; ?>
                     <?php else: ?>
                         Search by student ID or name. Records are not loaded until you search or browse, so this page stays fast.
                     <?php endif; ?>
@@ -646,10 +739,19 @@ require_once __DIR__ . '/../includes/header.php';
                 <?php endif; ?>
                 <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-search"></i> Search</button>
                 <button type="button" class="btn btn-outline btn-sm" id="onsiteBrowseStudentsBtn">
-                    <i class="fas fa-folder-open"></i> Browse active students
+                    <i class="fas fa-folder-open"></i> <?= e($browseStudentsTitle) ?>
                 </button>
+                <?php if ($isMultiAlumniMode): ?>
+                    <button type="button"
+                        class="btn btn-primary btn-sm"
+                        id="onsiteAddRequestorBtn"
+                        data-add-api-url="<?= e(APP_URL) ?>/api/onsite-add-requestor.php"
+                        data-csrf="<?= e(csrfToken()) ?>">
+                        <i class="fas fa-user-plus"></i> Add <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> Requestor
+                    </button>
+                <?php endif; ?>
                 <?php if ($selectedStudent || $isFilteredStudentSearch): ?>
-                    <a href="<?= APP_URL ?>/registrar/new-onsite-request.php<?= $isMultiMode ? '?mode=multi' : '' ?>" class="btn btn-outline btn-sm">Clear</a>
+                    <a href="<?= APP_URL ?>/registrar/new-onsite-request.php<?= e($multiModeQuery) ?>" class="btn btn-outline btn-sm">Clear</a>
                 <?php endif; ?>
             </form>
 
@@ -658,7 +760,7 @@ require_once __DIR__ . '/../includes/header.php';
             <?php if ($isMultiMode): ?>
                 <noscript>
                     <div class="alert alert-warning">
-                        Multi-student requests need JavaScript enabled. Use <strong>Single requestor</strong> mode instead.
+                        Multi-requestor batches need JavaScript enabled. Use <strong>Single requestor</strong> mode instead.
                     </div>
                 </noscript>
             <?php elseif ($isFilteredStudentSearch && empty($searchResults)): ?>
@@ -723,7 +825,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <p>No credentials are available for <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> requestors.</p>
             </div>
         <?php else: ?>
-        <form method="POST" class="form-grid request-form-simple" id="requestForm">
+        <form method="POST" class="form-grid request-form-simple" id="requestForm" novalidate>
             <?= csrfField() ?>
             <input type="hidden" name="request_mode" value="<?= e($requestMode) ?>">
             <input type="hidden" name="student_user_id" value="<?= (int) ($requestorDefaults['student_user_id'] ?? 0) ?>">
@@ -736,7 +838,7 @@ require_once __DIR__ . '/../includes/header.php';
                     aria-controls="onsiteSectionBatch">
                     <span class="form-section-toggle-label">
                         <span class="request-step-num">1</span>
-                        <span class="form-section-title">Students in this batch</span>
+                        <span class="form-section-title"><?= e($multiBatchTitle) ?></span>
                     </span>
                     <i class="fas fa-chevron-down form-section-chevron" aria-hidden="true"></i>
                 </button>
@@ -744,28 +846,37 @@ require_once __DIR__ . '/../includes/header.php';
                     <div class="form-row">
                         <div class="form-group">
                             <label for="enrollment_status">Enrollment Status *</label>
-                            <select id="enrollment_status" name="enrollment_status" required>
-                                <?php foreach (enrollmentStatusOptions() as $statusValue => $statusLabel): ?>
-                                    <option value="<?= e($statusValue) ?>" <?= $enrollmentStatus === $statusValue ? 'selected' : '' ?>><?= e($statusLabel) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                            <small class="text-muted">
-                                Available documents and fees follow this status, so every student in the batch must match it.
-                                Changing it clears the list.
-                            </small>
+                            <?php if ($isMultiActiveMode): ?>
+                                <select id="enrollment_status" name="enrollment_status" required>
+                                    <option value="enrolled" selected>Enrolled</option>
+                                </select>
+                                <small class="text-muted">
+                                    Multiple active students mode is limited to enrolled students so they can share the same documents and fees.
+                                </small>
+                            <?php else: ?>
+                                <select id="enrollment_status" name="enrollment_status" required>
+                                    <?php foreach ($multiEnrollmentOptions as $statusValue => $statusLabel): ?>
+                                        <option value="<?= e($statusValue) ?>" <?= $enrollmentStatus === $statusValue ? 'selected' : '' ?>><?= e($statusLabel) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <small class="text-muted">
+                                    Choose graduated or inactive. Available documents and fees follow this status, so every requestor in the batch must match it.
+                                    Changing it clears the list.
+                                </small>
+                            <?php endif; ?>
                         </div>
                     </div>
 
                     <div class="onsite-batch-picker" id="onsiteBatchPicker">
                         <div class="onsite-batch-picker-head">
-                            <span class="onsite-batch-picker-count" id="onsiteBatchCount">0 of <?= ONSITE_MULTI_STUDENT_MAX ?> students added</span>
+                            <span class="onsite-batch-picker-count" id="onsiteBatchCount">0 of <?= ONSITE_MULTI_STUDENT_MAX ?> <?= $isMultiAlumniMode ? 'requestors' : 'students' ?> added</span>
                             <button type="button" class="btn btn-outline btn-sm" id="onsiteBatchClear" hidden>
                                 <i class="fas fa-times"></i> Clear all
                             </button>
                         </div>
                         <ul class="onsite-batch-list" id="onsiteBatchList"></ul>
                         <p class="text-muted onsite-batch-empty" id="onsiteBatchEmpty">
-                            No students added yet — search or browse under <strong>Find Students to Add</strong> above.
+                            No <?= $isMultiAlumniMode ? 'requestors' : 'students' ?> added yet — search or browse under <strong><?= e($multiFindTitle) ?></strong> above.
                         </p>
                     </div>
 
@@ -790,8 +901,18 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="form-row">
                     <div class="form-group">
                         <label for="student_id">Student / Requestor ID</label>
-                        <input type="text" id="student_id" name="student_id" value="<?= e($requestorDefaults['student_id'] ?? '') ?>" placeholder="Leave blank to auto-generate REQ-<?= date('Y') ?>-XXXXX">
-                        <small class="text-muted">Optional. If blank, the system generates an ID like REQ-<?= date('Y') ?>-XXXXX.</small>
+                        <?php
+                        $lockOnsiteStudentId = $selectedStudent && isEnrolledEnrollment((string) ($selectedStudent['enrollment_status'] ?? 'enrolled'));
+                        $onsiteStudentIdValue = (string) ($requestorDefaults['student_id'] ?? '');
+                        ?>
+                        <?php if ($lockOnsiteStudentId): ?>
+                            <input type="text" id="student_id" value="<?= e($onsiteStudentIdValue) ?>" readonly>
+                            <input type="hidden" name="student_id" value="<?= e($onsiteStudentIdValue) ?>">
+                            <small class="text-muted">Student ID is locked for enrolled (active) students.</small>
+                        <?php else: ?>
+                            <input type="text" id="student_id" name="student_id" value="<?= e($onsiteStudentIdValue) ?>" placeholder="Leave blank to auto-generate REQ-<?= date('Y') ?>-XXXXX">
+                            <small class="text-muted">Optional. If blank, the system generates an ID like REQ-<?= date('Y') ?>-XXXXX.</small>
+                        <?php endif; ?>
                         <?php if (!empty($errors['student_id'])): ?><span class="field-error"><?= e($errors['student_id']) ?></span><?php endif; ?>
                     </div>
                     <div class="form-group">
@@ -1067,7 +1188,41 @@ require_once __DIR__ . '/../includes/header.php';
                 </button>
                 <div class="form-section-body" id="onsiteSectionDocuments">
                 <p class="text-muted document-checklist-note">Available for <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> requestors</p>
-                <div class="document-checklist">
+                <?php
+                $documentValidationErrors = array_filter(
+                    $errors,
+                    static fn($key): bool => $key === 'document_type_ids'
+                        || str_starts_with((string) $key, 'document_term_')
+                        || str_starts_with((string) $key, 'document_auth_type_'),
+                    ARRAY_FILTER_USE_KEY
+                );
+                ?>
+                <?php if ($documentValidationErrors !== []): ?>
+                    <div class="alert alert-error" id="onsiteDocumentValidationAlert">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <div>
+                            <strong>Document details incomplete.</strong>
+                            <ul class="error-list" style="margin:.4rem 0 0">
+                                <?php foreach ($documentValidationErrors as $errorKey => $errorMessage): ?>
+                                    <?php
+                                    $label = (string) $errorMessage;
+                                    if (preg_match('/^document_term_(\d+)$/', (string) $errorKey, $m)
+                                        || preg_match('/^document_auth_type_(\d+)$/', (string) $errorKey, $m)) {
+                                        foreach ($docTypes as $docTypeRow) {
+                                            if ((int) $docTypeRow['id'] === (int) $m[1]) {
+                                                $label = $docTypeRow['name'] . ': ' . $errorMessage;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    ?>
+                                    <li><?= e($label) ?></li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </div>
+                    </div>
+                <?php endif; ?>
+                <div class="document-checklist document-checklist--onsite-grid">
                     <?php foreach ($docTypes as $dt): ?>
                         <?php
                         $maxCopies = max(1, (int) ($dt['max_copies'] ?? 10));
@@ -1369,7 +1524,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <div class="payment-breakdown-list" id="paymentBreakdownList" hidden></div>
                     <div class="payment-breakdown-total">
                         <div>
-                            <span class="payment-breakdown-total-label"><?= $isMultiMode ? 'Amount per student' : 'Amount for cashier' ?></span>
+                            <span class="payment-breakdown-total-label"><?= $isMultiMode ? ($isMultiAlumniMode ? 'Amount per requestor' : 'Amount per student') : 'Amount for cashier' ?></span>
                             <small class="text-muted" id="selectedDocCount">No documents selected</small>
                         </div>
                         <strong id="totalFee">₱ 0.00</strong>
@@ -1378,7 +1533,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <div class="payment-breakdown-total onsite-batch-total-row">
                         <div>
                             <span class="payment-breakdown-total-label">Batch total</span>
-                            <small class="text-muted" id="onsiteBatchTotalNote">No students added</small>
+                            <small class="text-muted" id="onsiteBatchTotalNote">No <?= $isMultiAlumniMode ? 'requestors' : 'students' ?> added</small>
                         </div>
                         <strong id="onsiteBatchTotal">₱ 0.00</strong>
                     </div>
@@ -1403,7 +1558,7 @@ require_once __DIR__ . '/../includes/header.php';
         <div class="admin-form-modal-header">
             <div>
                 <span class="admin-form-modal-eyebrow">Onsite request</span>
-                <h2 class="admin-form-modal-title" id="onsiteBrowseStudentsTitle">Browse active students</h2>
+                <h2 class="admin-form-modal-title" id="onsiteBrowseStudentsTitle"><?= e($browseStudentsTitle) ?></h2>
             </div>
             <button type="button" class="admin-form-modal-close" data-onsite-browse-close aria-label="Close">
                 <i class="fas fa-times"></i>
@@ -1411,8 +1566,10 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
         <div class="admin-form-modal-body">
             <p class="text-muted onsite-student-picker-note">
-                <?php if ($isMultiMode): ?>
-                    Filter <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> student accounts by name, course, or year, then add up to <?= ONSITE_MULTI_STUDENT_MAX ?> to the batch.
+                <?php if ($isMultiAlumniMode): ?>
+                    Filter <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> requestor accounts by name or course, then add up to <?= ONSITE_MULTI_STUDENT_MAX ?> to the batch for the same document.
+                <?php elseif ($isMultiMode): ?>
+                    Filter enrolled student accounts by name, course, or year, then add up to <?= ONSITE_MULTI_STUDENT_MAX ?> to the batch.
                 <?php else: ?>
                     Filter enrolled student accounts by name, course, or year. Select a record to fill the requestor form.
                 <?php endif; ?>
@@ -1451,24 +1608,209 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
 </div>
 
+<?php if ($isMultiAlumniMode): ?>
+<?php
+$addRequestorPrograms = $browsePrograms ?: $programs;
+$addRequestorCampuses = $campuses;
+$addStatusLabel = enrollmentStatusLabel($enrollmentStatus);
+?>
+<div class="admin-form-modal" id="onsiteAddRequestorModal" aria-hidden="true">
+    <div class="admin-form-modal-overlay" data-onsite-add-close></div>
+    <div class="admin-form-modal-dialog wide" role="dialog" aria-labelledby="onsiteAddRequestorTitle" aria-modal="true">
+        <div class="admin-form-modal-header">
+            <div>
+                <span class="admin-form-modal-eyebrow">Multiple graduate / inactive</span>
+                <h2 class="admin-form-modal-title" id="onsiteAddRequestorTitle">Add <?= e($addStatusLabel) ?> Requestor</h2>
+            </div>
+            <button type="button" class="admin-form-modal-close" data-onsite-add-close aria-label="Close">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="admin-form-modal-body">
+            <p class="text-muted onsite-student-picker-note">
+                Create a new <?= e(strtolower($addStatusLabel)) ?> requestor and add them to this batch for the same document selection.
+                If the ID already exists, that record is updated and reused.
+            </p>
+
+            <div class="alert alert-error" id="onsiteAddRequestorError" hidden></div>
+
+            <form id="onsiteAddRequestorForm" class="form-grid" novalidate>
+                <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                <input type="hidden" name="enrollment_status" id="add_req_enrollment_status" value="<?= e($enrollmentStatus) ?>">
+                <input type="hidden" name="course_id" id="add_req_course_id" value="0">
+                <input type="hidden" name="origin_campus_id" id="add_req_origin_campus_id" value="0">
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="add_req_student_id">Student / Requestor ID</label>
+                        <input type="text" id="add_req_student_id" name="student_id" placeholder="Leave blank to auto-generate REQ-<?= date('Y') ?>-XXXXX">
+                        <small class="text-muted">Optional. Auto-generated if blank.</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Enrollment Status</label>
+                        <input type="text" value="<?= e($addStatusLabel) ?>" readonly>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="add_req_first_name">First Name *</label>
+                        <input type="text" id="add_req_first_name" name="first_name" class="input-uppercase" autocapitalize="characters" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="add_req_last_name">Last Name *</label>
+                        <input type="text" id="add_req_last_name" name="last_name" class="input-uppercase" autocapitalize="characters" required>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="add_req_middle_name">Middle Name</label>
+                        <input type="text" id="add_req_middle_name" name="middle_name" class="input-uppercase" autocapitalize="characters">
+                    </div>
+                    <div class="form-group">
+                        <label for="add_req_phone">Phone</label>
+                        <input type="text" id="add_req_phone" name="phone">
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="add_req_email">Email</label>
+                        <input type="email" id="add_req_email" name="email" placeholder="Optional — auto-generated if blank">
+                    </div>
+                </div>
+
+                <div class="onsite-academic-fields" id="onsiteAddRequestorAcademic">
+                    <div id="onsiteAddAcademicGraduated"
+                        class="onsite-academic-panel academic-status-panel"
+                        data-add-enrollment-panel="graduated"
+                        style="display: <?= $enrollmentStatus === 'graduated' ? 'block' : 'none' ?>;">
+                        <p class="text-muted academic-panel-note">Graduation details for this requestor.</p>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="add_req_course_graduated">Course / Program</label>
+                                <select id="add_req_course_graduated" data-add-course-select="graduated">
+                                    <option value="">— Select course/program —</option>
+                                    <?php foreach ($addRequestorPrograms as $program): ?>
+                                        <option value="<?= (int) $program['id'] ?>">
+                                            <?= e($program['name']) ?> (<?= e($program['code']) ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="add_req_year_graduated">Year of Graduation *</label>
+                                <select id="add_req_year_graduated" name="year_graduated" <?= $enrollmentStatus === 'graduated' ? 'required' : 'disabled' ?>>
+                                    <option value="">— Select year —</option>
+                                    <?php foreach (yearGraduatedOptions() as $yearValue => $yearLabel): ?>
+                                        <option value="<?= e($yearValue) ?>"><?= e($yearLabel) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="add_req_campus_graduated">Campus *</label>
+                                <select id="add_req_campus_graduated" data-add-campus-select="graduated" <?= $enrollmentStatus === 'graduated' ? 'required' : 'disabled' ?>>
+                                    <option value="">— Select campus —</option>
+                                    <?php foreach ($addRequestorCampuses as $campus): ?>
+                                        <option value="<?= (int) $campus['id'] ?>">
+                                            <?= e($campus['name']) ?> (<?= e($campus['code']) ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="onsiteAddAcademicInactive"
+                        class="onsite-academic-panel academic-status-panel"
+                        data-add-enrollment-panel="inactive"
+                        style="display: <?= $enrollmentStatus === 'inactive' ? 'block' : 'none' ?>;">
+                        <p class="text-muted academic-panel-note">Last enrollment details for this requestor.</p>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="add_req_course_inactive">Last Course / Program Attended</label>
+                                <select id="add_req_course_inactive" data-add-course-select="inactive">
+                                    <option value="">— Select course/program —</option>
+                                    <?php foreach ($addRequestorPrograms as $program): ?>
+                                        <option value="<?= (int) $program['id'] ?>">
+                                            <?= e($program['name']) ?> (<?= e($program['code']) ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="add_req_last_school_year">Last School Year Attended *</label>
+                                <select id="add_req_last_school_year" name="last_school_year" <?= $enrollmentStatus === 'inactive' ? 'required' : 'disabled' ?>>
+                                    <option value="">— Select school year —</option>
+                                    <?php foreach (schoolYearOptions() as $yearValue => $yearLabel): ?>
+                                        <option value="<?= e($yearValue) ?>"><?= e($yearLabel) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="add_req_last_semester">Semester Attended *</label>
+                                <select id="add_req_last_semester" name="last_semester" <?= $enrollmentStatus === 'inactive' ? 'required' : 'disabled' ?>>
+                                    <option value="">— Select semester —</option>
+                                    <?php foreach (semesterOptions() as $semValue => $semLabel): ?>
+                                        <option value="<?= e($semValue) ?>"><?= e($semLabel) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="add_req_campus_inactive">Campus *</label>
+                                <select id="add_req_campus_inactive" data-add-campus-select="inactive" <?= $enrollmentStatus === 'inactive' ? 'required' : 'disabled' ?>>
+                                    <option value="">— Select campus —</option>
+                                    <?php foreach ($addRequestorCampuses as $campus): ?>
+                                        <option value="<?= (int) $campus['id'] ?>">
+                                            <?= e($campus['name']) ?> (<?= e($campus['code']) ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-form-modal-actions" style="display:flex;gap:.6rem;flex-wrap:wrap;justify-content:flex-end;margin-top:.5rem">
+                    <button type="button" class="btn btn-outline" data-onsite-add-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="onsiteAddRequestorSubmit">
+                        <i class="fas fa-user-plus"></i> Save &amp; Add to Batch
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
 <script>
 const purposeSuggestions = <?= json_encode($purposeSuggestions, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
 const purposeHints = <?= json_encode($purposeHints, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
 const onsiteBatchMode = <?= $isMultiMode ? 'true' : 'false' ?>;
 const onsiteBatchMax = <?= ONSITE_MULTI_STUDENT_MAX ?>;
 const onsiteBatchStatus = <?= json_encode($enrollmentStatus, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
+const onsiteRequestMode = <?= json_encode($requestMode, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
 const onsiteBatchSeed = <?= json_encode($multiStudentRows, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
+const onsiteBatchPersonLabel = <?= json_encode($isMultiAlumniMode ? 'requestor' : 'student', JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
+const onsiteValidationDialog = <?= json_encode($onsiteValidationDialog, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) ?>;
 
 document.getElementById('enrollment_status')?.addEventListener('change', function () {
     toggleOnsiteAcademicPanels();
 
     if (onsiteBatchMode) {
+        if (onsiteRequestMode === 'multi') {
+            this.value = 'enrolled';
+            return;
+        }
         if (onsiteBatch.count() > 0
-            && !window.confirm('Changing the enrollment status clears the ' + onsiteBatch.count() + ' student(s) already added. Continue?')) {
+            && !window.confirm('Changing the enrollment status clears the ' + onsiteBatch.count() + ' ' + onsiteBatchPersonLabel + '(s) already added. Continue?')) {
             this.value = onsiteBatchStatus;
             return;
         }
-        window.location.href = '<?= APP_URL ?>/registrar/new-onsite-request.php?mode=multi&enrollment_status='
+        window.location.href = '<?= APP_URL ?>/registrar/new-onsite-request.php?mode='
+            + encodeURIComponent(onsiteRequestMode)
+            + '&enrollment_status='
             + encodeURIComponent(this.value);
         return;
     }
@@ -1539,8 +1881,8 @@ const onsiteBatch = (function () {
             empty.hidden = students.length > 0;
         }
         if (countEl) {
-            countEl.textContent = students.length + ' of ' + onsiteBatchMax + ' student'
-                + (onsiteBatchMax === 1 ? '' : 's') + ' added';
+            const personWord = onsiteBatchPersonLabel + (onsiteBatchMax === 1 ? '' : 's');
+            countEl.textContent = students.length + ' of ' + onsiteBatchMax + ' ' + personWord + ' added';
             countEl.classList.toggle('is-full', isFull());
         }
         if (clearBtn) {
@@ -1556,7 +1898,7 @@ const onsiteBatch = (function () {
             return false;
         }
         if (isFull()) {
-            alert('A multi-student request can include at most ' + onsiteBatchMax + ' students.');
+            alert('A multi-requestor batch can include at most ' + onsiteBatchMax + ' ' + onsiteBatchPersonLabel + 's.');
             return false;
         }
         students.push(student);
@@ -1627,8 +1969,8 @@ function updateBatchTotal() {
     totalEl.textContent = formatPeso(perStudent * students);
     if (noteEl) {
         noteEl.textContent = students === 0
-            ? 'No students added'
-            : students + ' student' + (students === 1 ? '' : 's') + ' × ' + formatPeso(perStudent);
+            ? ('No ' + onsiteBatchPersonLabel + 's added')
+            : students + ' ' + onsiteBatchPersonLabel + (students === 1 ? '' : 's') + ' × ' + formatPeso(perStudent);
     }
 }
 
@@ -2090,9 +2432,12 @@ function setOnsiteFormSectionExpanded(section, expanded) {
     }
 }
 
-function expandOnsiteDocumentsSection() {
+function expandOnsiteDocumentsSection(scrollIntoView) {
     const section = document.getElementById('onsiteSectionDocuments')?.closest('[data-form-section-collapsible]');
     setOnsiteFormSectionExpanded(section, true);
+    if (scrollIntoView && section) {
+        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
 }
 
 function syncFrequentDocumentChips() {
@@ -2386,6 +2731,9 @@ document.querySelectorAll('.auth-doc-custom-label').forEach(function (input) {
 document.getElementById('purpose')?.addEventListener('change', function () {
     togglePurposeOtherField();
     updatePurposeSuggestions(true);
+    if (this.value) {
+        expandOnsiteDocumentsSection(true);
+    }
 });
 document.getElementById('applyPurposeSuggestions')?.addEventListener('click', function () {
     applyPurposeSuggestions(true);
@@ -2398,17 +2746,129 @@ document.querySelectorAll('[data-frequent-doc-id]').forEach(function (chip) {
 document.getElementById('requestForm')?.addEventListener('submit', function (event) {
     syncOnsiteCourseIdField();
     syncOnsiteOriginCampusField();
-    const checked = document.querySelectorAll('input[name="document_type_ids[]"]:checked');
-    if (!checked.length) {
+
+    const validation = validateOnsiteRequestBeforeSubmit();
+    if (!validation.ok) {
         event.preventDefault();
-        alert('Please select at least one document to request.');
+        showOnsiteValidationDialog(validation);
         return;
     }
-    if (onsiteBatchMode && onsiteBatch.count() === 0) {
-        event.preventDefault();
-        alert('Add at least one existing student to the batch.');
-    }
 });
+
+function validateOnsiteRequestBeforeSubmit() {
+    const details = [];
+    const focusTargets = [];
+
+    const checked = document.querySelectorAll('.document-checklist-checkbox:checked');
+    if (!checked.length) {
+        details.push('Select at least one document to request.');
+        return {
+            ok: false,
+            title: 'Cannot Create Request',
+            message: 'Please fix the following before generating a payment code.',
+            details: details,
+            next_step: 'Choose a document in step 3, complete any required term or authentication fields, then try again.',
+            focusDocId: null,
+        };
+    }
+
+    if (onsiteBatchMode && onsiteBatch.count() === 0) {
+        details.push('Add at least one existing ' + onsiteBatchPersonLabel + ' to the batch.');
+    }
+
+    checked.forEach(function (checkbox) {
+        const item = checkbox.closest('.document-checklist-item');
+        const docName = checkbox.getAttribute('data-doc-name') || 'Selected document';
+        const docId = checkbox.value;
+
+        if (checkbox.getAttribute('data-requires-term') === '1') {
+            const lines = item ? item.querySelectorAll('[data-term-line]') : [];
+            let hasCompleteTerm = false;
+
+            lines.forEach(function (line) {
+                const schoolYear = (line.querySelector('select[name*="[school_year]"]')?.value || '').trim();
+                const semester = (line.querySelector('select[name*="[semester]"]')?.value || '').trim();
+                if (schoolYear !== '' && semester !== '') {
+                    hasCompleteTerm = true;
+                }
+            });
+
+            if (!hasCompleteTerm) {
+                details.push(docName + ': select school year and semester before creating the payment code.');
+                focusTargets.push(docId);
+            }
+        }
+
+        if (checkbox.getAttribute('data-requires-auth-type') === '1') {
+            const selectedAuth = item ? item.querySelectorAll('.auth-doc-select:checked') : [];
+            const customRows = item ? item.querySelectorAll('[data-auth-custom-row]') : [];
+            let hasAuth = selectedAuth.length > 0;
+            customRows.forEach(function (row) {
+                const label = (row.querySelector('.auth-doc-custom-label')?.value || '').trim();
+                if (label !== '') {
+                    hasAuth = true;
+                }
+            });
+            if (!hasAuth) {
+                details.push(docName + ': choose at least one document to authenticate, or add a custom document name.');
+                focusTargets.push(docId);
+            }
+        }
+    });
+
+    const purpose = (document.getElementById('purpose')?.value || '').trim();
+    if (!purpose) {
+        details.push('Select a purpose in step 2.');
+    }
+
+    return {
+        ok: details.length === 0,
+        title: 'Cannot Create Request',
+        message: 'Please fix the following before generating a payment code.',
+        details: details,
+        next_step: 'Complete the missing school year/semester or authentication details, then try again.',
+        focusDocId: focusTargets.length ? focusTargets[0] : null,
+    };
+}
+
+function showOnsiteValidationDialog(validation) {
+    expandOnsiteDocumentsSection(true);
+    if (validation.focusDocId) {
+        const checkbox = document.getElementById('doc_type_' + validation.focusDocId)
+            || document.querySelector('.document-checklist-checkbox[value="' + validation.focusDocId + '"]');
+        const item = checkbox ? checkbox.closest('.document-checklist-item') : null;
+        if (item) {
+            item.classList.add('is-expanded');
+            item.classList.remove('is-collapsed');
+            const summary = item.querySelector('.document-checklist-summary');
+            if (summary) {
+                summary.setAttribute('aria-expanded', 'true');
+            }
+            item.querySelectorAll('[data-extra-fields]').forEach(function (block) {
+                block.hidden = false;
+            });
+            setTimeout(function () {
+                item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 50);
+        }
+    }
+
+    if (typeof window.openStatusModal === 'function') {
+        window.openStatusModal({
+            type: 'error',
+            tone: 'error',
+            icon: 'fa-exclamation-circle',
+            title: validation.title || 'Cannot Create Request',
+            message: validation.message || 'Please fix the highlighted issues.',
+            details: validation.details || [],
+            next_step: validation.next_step || '',
+            timestamp: 'Just now',
+        });
+        return;
+    }
+
+    alert((validation.details || []).join('\n') || validation.message || 'Please complete the required fields.');
+}
 bindTermLineControls(document);
 document.querySelectorAll('[data-term-lines]').forEach(function (container) {
     reindexTermLines(container);
@@ -2422,6 +2882,213 @@ initDocumentChecklistToggles();
 toggleOnsiteAcademicPanels();
 initOnsiteStudentPicker();
 initOnsiteBatchPicker();
+initOnsiteAddRequestorModal();
+if (onsiteValidationDialog && typeof window.openStatusModal === 'function') {
+    window.openStatusModal(onsiteValidationDialog);
+    expandOnsiteDocumentsSection(true);
+    const alertEl = document.getElementById('onsiteDocumentValidationAlert');
+    if (alertEl) {
+        setTimeout(function () {
+            alertEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 150);
+    }
+}
+
+function initOnsiteAddRequestorModal() {
+    const modal = document.getElementById('onsiteAddRequestorModal');
+    const openBtn = document.getElementById('onsiteAddRequestorBtn');
+    const form = document.getElementById('onsiteAddRequestorForm');
+    if (!modal || !openBtn || !form || onsiteRequestMode !== 'multi_alumni') {
+        return;
+    }
+
+    const errorBox = document.getElementById('onsiteAddRequestorError');
+    const submitBtn = document.getElementById('onsiteAddRequestorSubmit');
+    const apiUrl = openBtn.getAttribute('data-add-api-url') || '';
+    let saving = false;
+
+    function syncHiddenIds() {
+        const status = onsiteBatchStatus === 'inactive' ? 'inactive' : 'graduated';
+        const courseSelect = form.querySelector('[data-add-course-select="' + status + '"]');
+        const campusSelect = form.querySelector('[data-add-campus-select="' + status + '"]');
+        const courseHidden = document.getElementById('add_req_course_id');
+        const campusHidden = document.getElementById('add_req_origin_campus_id');
+        if (courseHidden) {
+            courseHidden.value = courseSelect ? String(courseSelect.value || '0') : '0';
+        }
+        if (campusHidden) {
+            campusHidden.value = campusSelect ? String(campusSelect.value || '0') : '0';
+        }
+    }
+
+    function toggleAddPanels() {
+        const status = onsiteBatchStatus === 'inactive' ? 'inactive' : 'graduated';
+        const statusInput = document.getElementById('add_req_enrollment_status');
+        if (statusInput) {
+            statusInput.value = status;
+        }
+
+        form.querySelectorAll('[data-add-enrollment-panel]').forEach(function (panel) {
+            const match = panel.getAttribute('data-add-enrollment-panel') === status;
+            panel.style.display = match ? 'block' : 'none';
+            panel.querySelectorAll('select, input').forEach(function (field) {
+                if (field.hasAttribute('data-add-course-select') || field.hasAttribute('data-add-campus-select') || field.name) {
+                    field.disabled = !match;
+                    if (match && (field.name === 'year_graduated' || field.name === 'last_school_year' || field.name === 'last_semester' || field.hasAttribute('data-add-campus-select'))) {
+                        field.required = true;
+                    } else {
+                        field.required = false;
+                    }
+                }
+            });
+        });
+        syncHiddenIds();
+    }
+
+    function showError(message) {
+        if (!errorBox) return;
+        errorBox.hidden = !message;
+        errorBox.innerHTML = message
+            ? '<i class="fas fa-exclamation-circle"></i> ' + escapeHtml(message)
+            : '';
+    }
+
+    function resetForm() {
+        form.reset();
+        showError('');
+        toggleAddPanels();
+        syncHiddenIds();
+    }
+
+    function openModal() {
+        if (onsiteBatch.isFull()) {
+            alert('A multi-requestor batch can include at most ' + onsiteBatchMax + ' ' + onsiteBatchPersonLabel + 's.');
+            return;
+        }
+        resetForm();
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+        document.getElementById('add_req_first_name')?.focus();
+    }
+
+    function closeModal() {
+        if (saving) return;
+        modal.classList.remove('is-open');
+        modal.setAttribute('aria-hidden', 'true');
+        showError('');
+    }
+
+    openBtn.addEventListener('click', openModal);
+    modal.querySelectorAll('[data-onsite-add-close]').forEach(function (el) {
+        el.addEventListener('click', closeModal);
+    });
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && modal.classList.contains('is-open')) {
+            closeModal();
+        }
+    });
+
+    form.querySelectorAll('[data-add-course-select], [data-add-campus-select]').forEach(function (select) {
+        select.addEventListener('change', syncHiddenIds);
+    });
+
+    form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        if (saving) return;
+        if (onsiteBatch.isFull()) {
+            showError('Batch is full. Remove a requestor before adding another.');
+            return;
+        }
+
+        syncHiddenIds();
+        const firstName = (document.getElementById('add_req_first_name')?.value || '').trim();
+        const lastName = (document.getElementById('add_req_last_name')?.value || '').trim();
+        if (!firstName || !lastName) {
+            showError('First name and last name are required.');
+            return;
+        }
+
+        const status = onsiteBatchStatus === 'inactive' ? 'inactive' : 'graduated';
+        if (status === 'graduated') {
+            if (!(document.getElementById('add_req_year_graduated')?.value || '')) {
+                showError('Please select a year of graduation.');
+                return;
+            }
+            if (!(document.getElementById('add_req_campus_graduated')?.value || '')) {
+                showError('Please select a campus.');
+                return;
+            }
+        } else {
+            if (!(document.getElementById('add_req_last_school_year')?.value || '')) {
+                showError('Please select the last school year attended.');
+                return;
+            }
+            if (!(document.getElementById('add_req_last_semester')?.value || '')) {
+                showError('Please select the semester attended.');
+                return;
+            }
+            if (!(document.getElementById('add_req_campus_inactive')?.value || '')) {
+                showError('Please select a campus.');
+                return;
+            }
+        }
+
+        saving = true;
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…';
+        }
+        showError('');
+
+        const body = new FormData(form);
+        body.set('enrollment_status', status);
+
+        fetch(apiUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+            body: body
+        }).then(function (res) {
+            return res.json().then(function (data) {
+                return { status: res.status, data: data };
+            });
+        }).then(function (result) {
+            const data = result.data || {};
+            if (!data.ok || !data.student) {
+                throw new Error(data.error || 'Unable to save the requestor.');
+            }
+            if (onsiteBatch.has(data.student.id)) {
+                saving = false;
+                closeModal();
+                alert((data.student.display_name || 'This requestor') + ' is already in the batch.');
+                return;
+            }
+            if (!onsiteBatch.add(data.student)) {
+                throw new Error('Could not add the requestor to the batch.');
+            }
+            saving = false;
+            closeModal();
+            const liveBox = document.getElementById('onsiteStudentLiveResults');
+            if (liveBox) {
+                liveBox.hidden = false;
+                liveBox.innerHTML = '<div class="alert alert-success"><i class="fas fa-check-circle"></i> '
+                    + escapeHtml(data.student.display_name || 'Requestor')
+                    + ' was ' + (data.created ? 'created' : 'updated')
+                    + ' and added to the batch.</div>';
+            }
+        }).catch(function (err) {
+            showError(err && err.message ? err.message : 'Unable to save the requestor right now.');
+        }).finally(function () {
+            saving = false;
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="fas fa-user-plus"></i> Save &amp; Add to Batch';
+            }
+        });
+    });
+
+    toggleAddPanels();
+}
 
 function initOnsiteStudentPicker() {
     const form = document.getElementById('onsiteStudentSearchForm');
@@ -2540,12 +3207,15 @@ function initOnsiteStudentPicker() {
             }
             const total = Number(data.total || 0);
             const emptyText = onsiteBatchMode
-                ? 'No matching students found for this enrollment status.'
+                ? ('No matching ' + onsiteBatchPersonLabel + 's found for this enrollment status.')
                 : 'No matching students found. Enter requestor details below for a walk-in.';
             let html = renderStudentTable(data.students || [], emptyText);
             if (total > (data.students || []).length) {
+                const browseHint = onsiteRequestMode === 'multi_alumni'
+                    ? 'Browse graduate / inactive requestors'
+                    : 'Browse active students';
                 html += '<p class="text-muted onsite-student-list-note">Showing ' + (data.students || []).length + ' of ' + total
-                    + ' matches. Use <strong>Browse active students</strong> to filter by course or year.</p>';
+                    + ' matches. Use <strong>' + browseHint + '</strong> to filter further.</p>';
             }
             liveBox.innerHTML = html;
         }).catch(function (err) {

@@ -48,12 +48,12 @@ function registrarRequestDocumentUrl(array $row): ?string {
 
 function registrarRequestDocumentLabel(array $row): string {
     if (isClaimStubPrintableStatus((string) ($row['status'] ?? ''))) {
-        return 'Claim Slip';
+        return 'Claim';
     }
 
     return isOnsiteRequestChannel($row['request_channel'] ?? null)
-        ? 'Onsite Request Slip'
-        : 'Claim Slip';
+        ? 'Slip'
+        : 'Claim';
 }
 
 /**

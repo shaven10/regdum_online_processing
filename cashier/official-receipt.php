@@ -29,5 +29,30 @@ if (!canViewOfficialReceipt($user, $receipt)) {
     redirect(dashboardUrl());
 }
 
-renderOfficialReceiptDocument($receipt, $autoPrint, $backUrl, getOfficialReceiptPrintMode((int) ($user['id'] ?? 0)));
+$claimUrl = trim((string) ($_GET['claim_url'] ?? ''));
+if ($claimUrl !== '') {
+    $appBase = rtrim(APP_URL, '/');
+    $allowedPrefixes = [
+        $appBase . '/cashier/claim-stub.php',
+        $appBase . '/registrar/claim-stub.php',
+    ];
+    $isAllowed = false;
+    foreach ($allowedPrefixes as $prefix) {
+        if (str_starts_with($claimUrl, $prefix)) {
+            $isAllowed = true;
+            break;
+        }
+    }
+    if (!$isAllowed) {
+        $claimUrl = '';
+    }
+}
+
+renderOfficialReceiptDocument(
+    $receipt,
+    $autoPrint,
+    $backUrl,
+    getOfficialReceiptPrintMode((int) ($user['id'] ?? 0)),
+    $claimUrl
+);
 exit;

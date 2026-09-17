@@ -368,6 +368,17 @@ function isEnrolledEnrollment(?string $enrollmentStatus): bool {
 }
 
 /**
+ * Grades evaluation / clear-grades actions are limited to currently enrolled students.
+ */
+function studentAllowsGradesEvaluation(?array $student): bool {
+    if ($student === null) {
+        return false;
+    }
+    $status = trim((string) ($student['enrollment_status'] ?? ''));
+    return $status === '' || isEnrolledEnrollment($status);
+}
+
+/**
  * Label/value rows for cashier slip and claim stub based on enrollment status.
  * Inactive last-semester is stored in student_profiles.current_semester.
  *

@@ -144,8 +144,13 @@ require_once __DIR__ . '/../includes/header.php';
                                         <?= renderStudentRecordNameLink($s, studentRecordsPageUrl($listQuery, (int) $s['id'])) ?>
                                         <span class="student-record-id"><?= e($s['student_id'] ?: 'No student ID') ?></span>
                                         <div class="student-record-grade-actions">
-                                            <a class="student-record-eval" href="<?= e(APP_URL . '/registrar/grades-evaluation.php?student_user_id=' . (int) $s['id']) ?>">Evaluate grades</a>
-                                            <?= renderClearStudentGradesForm((int) $s['id'], studentRecordName($s), 'link') ?>
+                                            <?= renderEvaluateGradesActionHtml($s, 'link') ?>
+                                            <?= renderClearStudentGradesForm(
+                                                (int) $s['id'],
+                                                studentRecordName($s),
+                                                'link',
+                                                isset($s['enrollment_status']) ? (string) $s['enrollment_status'] : null
+                                            ) ?>
                                         </div>
                                         <span class="student-record-email" title="<?= e($s['email']) ?>"><?= e($s['email']) ?></span>
                                     </div>

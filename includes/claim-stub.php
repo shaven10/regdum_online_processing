@@ -178,20 +178,83 @@ function renderRegistrarClaimSlipButtonsHtml(array $request, bool $compact = fal
     }
 
     $relatedIds = claimStubRelatedRequestIds($request);
-    $btnClass = $compact ? 'btn btn-sm btn-outline' : 'btn btn-outline';
-    $primaryClass = $compact ? 'btn btn-sm btn-primary' : 'btn btn-primary';
+    $isBatch = count($relatedIds) > 1;
+    $url = $isBatch
+        ? registrarClaimStubUrl($relatedIds, 'combined', true)
+        : registrarClaimStubUrl([$requestId], '', true);
+    $btnClass = $compact ? 'btn btn-sm btn-outline action-print-btn' : 'btn btn-primary action-print-btn';
+    $label = $compact ? 'Claim' : ($isBatch ? 'Print Combined Claim Slip' : 'Print Claim Slip');
+    $title = $isBatch
+        ? 'Print combined claim slip for this batch'
+        : 'Print claim slip';
 
-    $html = '<a href="' . e(registrarClaimStubUrl([$requestId], '', true)) . '" target="_blank" class="' . $primaryClass . '">'
-        . '<i class="fas fa-print"></i> Print Claim Slip</a> ';
-    $html .= '<a href="' . e(registrarClaimStubUrl([$requestId])) . '" target="_blank" class="' . $btnClass . '">'
-        . '<i class="fas fa-ticket-alt"></i> Preview Claim Slip</a>';
+    return '<a href="' . e($url) . '" target="_blank" rel="noopener" class="' . $btnClass . '" title="' . e($title) . '">'
+        . '<i class="fas fa-ticket-alt"></i> ' . e($label) . '</a>';
+}
 
-    if (count($relatedIds) > 1) {
-        $html .= ' <a href="' . e(registrarClaimStubUrl($relatedIds, 'combined')) . '" target="_blank" class="' . $btnClass . '">'
-            . '<i class="fas fa-file-alt"></i> Combined Claim Slip</a>';
+/**
+ * Compact claim-slip action for cashier payment lists.
+ * Batch payments open the combined slip; singles open one slip.
+ *
+ * @param list<int> $requestIds
+ */
+function renderCashierClaimSlipButtonsHtml(array $requestIds, bool $compact = true): string {
+    $requestIds = normalizeClaimStubRequestIds($requestIds);
+    if ($requestIds === []) {
+        return '';
     }
 
-    return $html;
+    $isBatch = count($requestIds) > 1;
+    $url = $isBatch
+        ? cashierClaimStubUrl($requestIds, 'combined', true)
+        : cashierClaimStubUrl([$requestIds[0]], '', true);
+    $btnClass = $compact ? 'btn btn-sm btn-outline action-print-btn' : 'btn btn-outline action-print-btn';
+    $label = $compact ? 'Claim' : ($isBatch ? 'Print Combined Claim Slip' : 'Print Claim Slip');
+    $title = $isBatch
+        ? 'Print combined claim slip for this batch'
+        : 'Print claim slip';
+
+    return '<a href="' . e($url) . '" target="_blank" rel="noopener" class="' . $btnClass . '" title="' . e($title) . '">'
+        . '<i class="fas fa-ticket-alt"></i> ' . e($label) . '</a>';
+}
+
+/**
+ * Compact onsite request-slip action button.
+ */
+function renderOnsiteRequestSlipButtonHtml(int $requestId, bool $compact = true, bool $autoPrint = false): string {
+    if ($requestId <= 0) {
+        return '';
+    }
+
+    $query = ['id' => $requestId];
+    if ($autoPrint) {
+        $query['print'] = '1';
+    }
+    $url = APP_URL . '/registrar/onsite-request-slip.php?' . http_build_query($query);
+    $btnClass = $compact ? 'btn btn-sm btn-outline action-print-btn' : 'btn btn-outline action-print-btn';
+
+    return '<a href="' . e($url) . '" target="_blank" rel="noopener" class="' . $btnClass . '" title="Print onsite request slip">'
+        . '<i class="fas fa-print"></i> ' . ($compact ? 'Slip' : 'Print Slip') . '</a>';
+}
+
+/**
+ * Compact combined onsite request-slip action for multi-requestor batches.
+ *
+ * @param list<int> $requestIds
+ */
+function renderOnsiteCombinedSlipButtonHtml(array $requestIds, bool $compact = true, bool $autoPrint = false): string {
+    require_once __DIR__ . '/onsite-request.php';
+    $requestIds = array_values(array_unique(array_filter(array_map('intval', $requestIds))));
+    if (count($requestIds) < 2) {
+        return '';
+    }
+
+    $url = APP_URL . '/registrar/onsite-request-slip.php?' . onsiteBatchSlipQuery($requestIds, 'combined', $autoPrint);
+    $btnClass = $compact ? 'btn btn-sm btn-outline action-print-btn' : 'btn btn-outline action-print-btn';
+    $label = $compact ? 'Combined' : 'Print Combined Slip';
+
+    return '<a href="' . e($url) . '" target="_blank" rel="noopener" class="' . $btnClass . '" title="Print combined onsite request slip for this batch">'
+        . '<i class="fas fa-file-alt"></i> ' . e($label) . '</a>';
 }
 
 /**

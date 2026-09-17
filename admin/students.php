@@ -475,8 +475,13 @@ require_once __DIR__ . '/../includes/header.php';
                                 <td data-label="Actions" class="action-cell">
                                     <div class="action-cell-buttons">
                                         <a href="<?= e(APP_URL . '/admin/student-edit.php?id=' . (int) $s['id'] . '&return=' . urlencode($listUrl)) ?>" <?= adminSettingsIconBtnAttrs('edit') ?>><?= adminSettingsIconBtnContent('edit') ?></a>
-                                        <a href="<?= e(APP_URL . '/registrar/grades-evaluation.php?student_user_id=' . (int) $s['id']) ?>" <?= adminSettingsIconBtnAttrs('evaluate') ?>><?= adminSettingsIconBtnContent('evaluate') ?></a>
-                                        <?= renderClearStudentGradesForm((int) $s['id'], studentRecordName($s), 'icon') ?>
+                                        <?= renderEvaluateGradesActionHtml($s, 'icon') ?>
+                                        <?= renderClearStudentGradesForm(
+                                            (int) $s['id'],
+                                            studentRecordName($s),
+                                            'icon',
+                                            isset($s['enrollment_status']) ? (string) $s['enrollment_status'] : null
+                                        ) ?>
                                         <form method="POST" class="student-delete-form"
                                             data-confirm-title="Delete Student?"
                                             data-confirm-message="<?= e($confirmMessage) ?>"

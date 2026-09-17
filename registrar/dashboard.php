@@ -77,8 +77,6 @@ renderDashboardActions([
     <?= statCardLink('compliance.php?filter=', 'orange', 'fa-spinner', (string) $volume['active'], 'Active Requests') ?>
     <?= statCardLink('reports.php?channel=online', 'blue', 'fa-globe', (string) $channels['online'], 'Online Requests') ?>
     <?= statCardLink('reports.php?channel=onsite', 'purple', 'fa-store', (string) $channels['onsite'], 'Onsite Requests') ?>
-    <?= statCardLink('compliance.php?filter=completed', 'green', 'fa-check-circle', (string) $volume['completed'], 'Completed') ?>
-    <?= statCardLink('compliance.php?filter=completed', 'gold', 'fa-hourglass-half', number_format((float) $volume['avg_processing_days'], 1) . 'd', 'Avg. Processing') ?>
 </div>
 
 <div class="stats-grid">

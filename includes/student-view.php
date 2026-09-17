@@ -1,8 +1,17 @@
 <?php
 
-function renderClearStudentGradesForm(int $userId, string $studentName, string $variant = 'outline'): string {
+function renderClearStudentGradesForm(int $userId, string $studentName, string $variant = 'outline', ?string $enrollmentStatus = null): string {
     if ($userId <= 0 || !function_exists('hasRole') || !hasRole('admin', 'registrar')) {
         return '';
+    }
+    if ($enrollmentStatus !== null && $enrollmentStatus !== '' && !isEnrolledEnrollment($enrollmentStatus)) {
+        return '';
+    }
+    if ($enrollmentStatus === null && function_exists('loadStudentForGradesEvaluation')) {
+        $student = loadStudentForGradesEvaluation($userId);
+        if (!studentAllowsGradesEvaluation($student)) {
+            return '';
+        }
     }
 
     $name = trim($studentName) !== '' ? $studentName : 'this student';
@@ -27,9 +36,18 @@ function renderClearStudentGradesForm(int $userId, string $studentName, string $
         . '<button type="submit" class="btn btn-outline"><i class="fas fa-eraser"></i> Clear grades</button></form>';
 }
 
-function renderClearStudentGradesFormSm(int $userId, string $studentName): string {
+function renderClearStudentGradesFormSm(int $userId, string $studentName, ?string $enrollmentStatus = null): string {
     if ($userId <= 0 || !function_exists('hasRole') || !hasRole('admin', 'registrar')) {
         return '';
+    }
+    if ($enrollmentStatus !== null && $enrollmentStatus !== '' && !isEnrolledEnrollment($enrollmentStatus)) {
+        return '';
+    }
+    if ($enrollmentStatus === null && function_exists('loadStudentForGradesEvaluation')) {
+        $student = loadStudentForGradesEvaluation($userId);
+        if (!studentAllowsGradesEvaluation($student)) {
+            return '';
+        }
     }
 
     $name = trim($studentName) !== '' ? $studentName : 'this student';
@@ -41,6 +59,24 @@ function renderClearStudentGradesFormSm(int $userId, string $studentName): strin
         . '<input type="hidden" name="user_id" value="' . (int) $userId . '">'
         . '<button type="submit" class="btn btn-outline btn-sm btn-danger"><i class="fas fa-eraser"></i> Clear grades</button>'
         . '</form>';
+}
+
+function renderEvaluateGradesActionHtml(array $student, string $variant = 'link'): string {
+    if (!studentAllowsGradesEvaluation($student) || !function_exists('hasRole') || !hasRole('admin', 'registrar')) {
+        return '';
+    }
+
+    $url = APP_URL . '/registrar/grades-evaluation.php?student_user_id=' . (int) ($student['id'] ?? 0);
+    if ($variant === 'icon') {
+        return '<a href="' . e($url) . '" ' . adminSettingsIconBtnAttrs('evaluate') . '>'
+            . adminSettingsIconBtnContent('evaluate') . '</a>';
+    }
+    if ($variant === 'button') {
+        return '<a href="' . e($url) . '" class="btn btn-outline">'
+            . '<i class="fas fa-clipboard-list"></i> Grades Evaluation</a>';
+    }
+
+    return '<a class="student-record-eval" href="' . e($url) . '">Evaluate grades</a>';
 }
 
 function studentRecordsPageUrl(array $params, ?int $viewId = null): string {
@@ -316,11 +352,16 @@ function renderStudentRecordViewModal(?array $student, string $closeUrl, ?string
                     <i class="fas fa-edit"></i> Edit Information
                 </a>
             <?php endif; ?>
-            <?php if (function_exists('hasRole') && hasRole('admin', 'registrar')): ?>
+            <?php if (function_exists('hasRole') && hasRole('admin', 'registrar') && studentAllowsGradesEvaluation($student)): ?>
                 <a href="<?= e(APP_URL . '/registrar/grades-evaluation.php?student_user_id=' . (int) $student['id']) ?>" class="btn <?= $editUrl !== '' ? 'btn-outline' : 'btn-primary' ?>">
                     <i class="fas fa-clipboard-list"></i> Grades Evaluation
                 </a>
-                <?= renderClearStudentGradesForm((int) $student['id'], studentRecordDisplayName($student)) ?>
+                <?= renderClearStudentGradesForm(
+                    (int) $student['id'],
+                    studentRecordDisplayName($student),
+                    'outline',
+                    isset($student['enrollment_status']) ? (string) $student['enrollment_status'] : null
+                ) ?>
             <?php endif; ?>
             <a href="<?= e($closeUrl) ?>" class="btn btn-outline">Close</a>
         </div>

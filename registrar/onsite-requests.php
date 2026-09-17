@@ -13,9 +13,24 @@ $search = trim((string) ($_GET['search'] ?? ''));
 $sortColumns = [
     'request_number' => ['type' => 'string', 'sql' => 'r.request_number'],
     'name' => ['type' => 'string', 'sql' => 'u.last_name, u.first_name'],
+    'request_type' => [
+        'type' => 'string',
+        'sql' => "CASE WHEN r.onsite_batch_key IS NULL OR r.onsite_batch_key = '' THEN 0 ELSE 1 END",
+    ],
     'document_summary' => ['type' => 'string', 'sql' => 'dt.name'],
     'payment_code' => ['type' => 'string', 'sql' => 'p.reference_number'],
-    'amount' => ['type' => 'number', 'sql' => 'COALESCE(p.amount, r.total_amount)', 'default_dir' => 'desc'],
+    'amount' => [
+        'type' => 'number',
+        'sql' => "CASE
+            WHEN r.onsite_batch_key IS NOT NULL AND r.onsite_batch_key <> '' THEN (
+                SELECT COALESCE(SUM(r2.total_amount), 0)
+                FROM requests r2
+                WHERE r2.onsite_batch_key = r.onsite_batch_key
+            )
+            ELSE COALESCE(p.amount, r.total_amount)
+        END",
+        'default_dir' => 'desc',
+    ],
     'status' => ['type' => 'string', 'sql' => 'r.status'],
     'created_at' => ['type' => 'date', 'sql' => 'r.created_at', 'default_dir' => 'desc'],
 ];
@@ -100,11 +115,10 @@ require_once __DIR__ . '/../includes/header.php';
                 <table class="data-table data-table-responsive">
                     <thead>
                         <tr>
-                            <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
-                            <?= renderRecordsSortHeader('Requestor', 'name', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Request / Requestor', 'request_number', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Type', 'request_type', $sortState, $sortQuery) ?>
                             <?= renderRecordsSortHeader('Documents', 'document_summary', $sortState, $sortQuery) ?>
-                            <?= renderRecordsSortHeader('Payment Code', 'payment_code', $sortState, $sortQuery) ?>
-                            <?= renderRecordsSortHeader('Amount', 'amount', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Payment / Amount', 'payment_code', $sortState, $sortQuery) ?>
                             <th>Clearance</th>
                             <?= renderRecordsSortHeader('Status', 'status', $sortState, $sortQuery) ?>
                             <?= renderRecordsSortHeader('Created', 'created_at', $sortState, $sortQuery) ?>
@@ -114,13 +128,25 @@ require_once __DIR__ . '/../includes/header.php';
                     <tbody>
                         <?php foreach ($requests as $req): ?>
                             <tr>
-                                <td data-label="Request #"><strong><?= e($req['request_number']) ?></strong></td>
-                                <td data-label="Requestor">
+                                <td data-label="Request / Requestor">
+                                    <strong><?= e($req['request_number']) ?></strong>
+                                    <br>
                                     <?= e(trim(($req['first_name'] ?? '') . ' ' . ($req['last_name'] ?? ''))) ?>
                                     <br><small class="text-muted"><?= e($req['student_id'] ?? '—') ?></small>
                                 </td>
+                                <td data-label="Type">
+                                    <?php if (!empty($req['is_multiple'])): ?>
+                                        <?php $batchSize = max(2, (int) ($req['batch_size'] ?? 2)); ?>
+                                        <span class="payment-scope-pill is-multiple onsite-type-pill" title="<?= $batchSize ?> requestors">
+                                            <span class="onsite-type-pill-label">Multiple</span>
+                                            <span class="onsite-type-pill-count"><?= $batchSize ?> requestors</span>
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="payment-scope-pill is-single">Single</span>
+                                    <?php endif; ?>
+                                </td>
                                 <td data-label="Documents"><?= e($req['document_summary'] ?? '—') ?></td>
-                                <td data-label="Payment Code">
+                                <td data-label="Payment / Amount">
                                     <?php if (!empty($req['payment_code'])): ?>
                                         <strong><?= e($req['payment_code']) ?></strong>
                                         <?php if (!empty($req['payment_status'])): ?>
@@ -129,8 +155,12 @@ require_once __DIR__ . '/../includes/header.php';
                                     <?php else: ?>
                                         <span class="text-muted">—</span>
                                     <?php endif; ?>
+                                    <br>
+                                    <strong><?= formatMoney((float) ($req['display_amount'] ?? $req['payment_amount'] ?? $req['total_amount'] ?? 0)) ?></strong>
+                                    <?php if (!empty($req['is_multiple'])): ?>
+                                        <br><small class="text-muted">Batch total</small>
+                                    <?php endif; ?>
                                 </td>
-                                <td data-label="Amount"><strong><?= formatMoney((float) ($req['payment_amount'] ?? $req['total_amount'] ?? 0)) ?></strong></td>
                                 <td data-label="Clearance">
                                     <?php if (!empty($req['clearance_required'])): ?>
                                         <?php if (!empty($req['clearance_blocked'])): ?>
@@ -155,9 +185,10 @@ require_once __DIR__ . '/../includes/header.php';
                                     <a href="<?= APP_URL ?>/registrar/verify-request.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-primary">
                                         <i class="fas fa-eye"></i> View
                                     </a>
-                                    <a href="<?= APP_URL ?>/registrar/onsite-request-slip.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-outline" target="_blank">
-                                        <i class="fas fa-print"></i> Slip
-                                    </a>
+                                    <?= renderOnsiteRequestSlipButtonHtml((int) $req['id'], true) ?>
+                                    <?php if (!empty($req['is_multiple'])): ?>
+                                        <?= renderOnsiteCombinedSlipButtonHtml($req['batch_request_ids'] ?? [], true) ?>
+                                    <?php endif; ?>
                                     <?= renderRegistrarClaimSlipButtonsHtml(
                                         $req,
                                         true,

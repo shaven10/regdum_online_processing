@@ -448,6 +448,139 @@ function resolveOnsiteRequestor(array $input): array {
 }
 
 /**
+ * Create (or update) a graduate/inactive requestor for a multi-alumni onsite batch.
+ * Forces enrollment_status to the batch status and returns a picker-ready row.
+ *
+ * @return array{ok:bool,student:?array,created:bool,error:?string,errors:array<string,string>}
+ */
+function createOnsiteAlumniRequestorForBatch(array $input, string $batchEnrollmentStatus): array {
+    ensureEnrollmentStatuses();
+
+    $status = trim($batchEnrollmentStatus);
+    if (!in_array($status, ['graduated', 'inactive'], true)) {
+        return [
+            'ok' => false,
+            'student' => null,
+            'created' => false,
+            'error' => 'Add requestor is only available for graduated or inactive batches.',
+            'errors' => ['enrollment_status' => 'Invalid batch enrollment status.'],
+        ];
+    }
+
+    $firstName = normalizePersonName($input['first_name'] ?? '');
+    $lastName = normalizePersonName($input['last_name'] ?? '');
+    $middleName = normalizePersonName($input['middle_name'] ?? '');
+    $email = trim((string) ($input['email'] ?? ''));
+    $phone = trim((string) ($input['phone'] ?? ''));
+    $studentId = trim((string) ($input['student_id'] ?? ''));
+    $courseId = (int) ($input['course_id'] ?? 0);
+    $yearGraduated = (int) ($input['year_graduated'] ?? 0);
+    $originCampusId = (int) ($input['origin_campus_id'] ?? 0);
+    $lastSchoolYear = trim((string) ($input['last_school_year'] ?? ''));
+    $lastSemester = trim((string) ($input['last_semester'] ?? ''));
+
+    $errors = [];
+    if ($firstName === '') {
+        $errors['first_name'] = 'First name is required.';
+    }
+    if ($lastName === '') {
+        $errors['last_name'] = 'Last name is required.';
+    }
+    if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $errors['email'] = 'Enter a valid email address.';
+    }
+    if ($courseId > 0 && !resolveAcademicProgramFromPost($courseId)) {
+        $errors['course_id'] = 'Please select a valid course/program.';
+    }
+
+    if ($status === 'graduated') {
+        if ($yearGraduated <= 0 || !array_key_exists((string) $yearGraduated, yearGraduatedOptions())) {
+            $errors['year_graduated'] = 'Please select a valid year of graduation.';
+        }
+        if ($originCampusId <= 0 || !getCampusById($originCampusId)) {
+            $errors['origin_campus_id'] = 'Please select a campus.';
+        }
+        $lastSchoolYear = '';
+        $lastSemester = '';
+    } else {
+        if ($lastSchoolYear === '' || !array_key_exists($lastSchoolYear, schoolYearOptions())) {
+            $errors['last_school_year'] = 'Please select the last school year attended.';
+        }
+        if ($lastSemester === '' || !array_key_exists($lastSemester, semesterOptions())) {
+            $errors['last_semester'] = 'Please select the semester attended.';
+        }
+        if ($originCampusId <= 0 || !getCampusById($originCampusId)) {
+            $errors['origin_campus_id'] = 'Please select a campus.';
+        }
+        $yearGraduated = 0;
+    }
+
+    if ($errors !== []) {
+        return [
+            'ok' => false,
+            'student' => null,
+            'created' => false,
+            'error' => reset($errors) ?: 'Please complete the required requestor fields.',
+            'errors' => $errors,
+        ];
+    }
+
+    try {
+        $resolved = resolveOnsiteRequestor([
+            'user_id' => 0,
+            'student_id' => $studentId,
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'middle_name' => $middleName,
+            'email' => $email,
+            'phone' => $phone,
+            'enrollment_status' => $status,
+            'course_id' => $courseId,
+            'year_level' => '',
+            'year_graduated' => $yearGraduated,
+            'origin_campus_id' => $originCampusId,
+            'last_school_year' => $lastSchoolYear,
+            'last_semester' => $lastSemester,
+        ]);
+    } catch (InvalidArgumentException $e) {
+        return [
+            'ok' => false,
+            'student' => null,
+            'created' => false,
+            'error' => $e->getMessage(),
+            'errors' => ['general' => $e->getMessage()],
+        ];
+    } catch (Throwable $e) {
+        return [
+            'ok' => false,
+            'student' => null,
+            'created' => false,
+            'error' => 'Unable to save the requestor right now. Try again.',
+            'errors' => ['general' => 'Unable to save the requestor right now. Try again.'],
+        ];
+    }
+
+    $user = $resolved['user'] ?? null;
+    if (!$user) {
+        return [
+            'ok' => false,
+            'student' => null,
+            'created' => false,
+            'error' => 'Unable to save the requestor right now. Try again.',
+            'errors' => ['general' => 'Unable to save the requestor right now. Try again.'],
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'student' => formatOnsitePickerStudent($user),
+        'created' => !empty($resolved['created']),
+        'error' => null,
+        'errors' => [],
+    ];
+}
+
+/**
  * Normalize posted student user IDs for a multi-student onsite request.
  * Duplicates are dropped and the list is capped at ONSITE_MULTI_STUDENT_MAX.
  *
@@ -512,7 +645,7 @@ function resolveOnsiteMultiStudents(array $ids, string $enrollmentStatus): array
     } elseif ($inactive !== []) {
         $error = 'These student accounts are deactivated and cannot be added: ' . implode('; ', $inactive) . '.';
     } elseif ($mismatched !== []) {
-        $error = 'Every student in a multi-student request must be '
+        $error = 'Every requestor in this batch must be '
             . enrollmentStatusLabel($enrollmentStatus)
             . ' to share the same documents. Remove or change: ' . implode('; ', $mismatched) . '.';
     }
@@ -536,10 +669,10 @@ function createOnsiteCredentialRequestsForStudents(
     array $itemDrafts
 ): array {
     if ($students === []) {
-        throw new InvalidArgumentException('Select at least one student for a multi-student request.');
+        throw new InvalidArgumentException('Select at least one requestor for a multi-requestor batch.');
     }
     if (count($students) > ONSITE_MULTI_STUDENT_MAX) {
-        throw new InvalidArgumentException('A multi-student request can include at most ' . ONSITE_MULTI_STUDENT_MAX . ' students.');
+        throw new InvalidArgumentException('A multi-requestor batch can include at most ' . ONSITE_MULTI_STUDENT_MAX . ' requestors.');
     }
 
     $created = [];
@@ -989,8 +1122,63 @@ function getOnsiteRequestsList(string $status = '', string $search = '', int $li
     $stmt->execute($params);
     $rows = $stmt->fetchAll();
 
+    $batchSizes = [];
+    $batchTotals = [];
+    $batchRequestIds = [];
+    $batchKeys = [];
+    foreach ($rows as $row) {
+        $batchKey = trim((string) ($row['onsite_batch_key'] ?? ''));
+        if ($batchKey !== '') {
+            $batchKeys[$batchKey] = true;
+        }
+    }
+    if ($batchKeys !== []) {
+        $placeholders = implode(',', array_fill(0, count($batchKeys), '?'));
+        $sizeStmt = $db->prepare(
+            "SELECT onsite_batch_key,
+                    COUNT(*) AS batch_size,
+                    COALESCE(SUM(total_amount), 0) AS batch_total
+             FROM requests
+             WHERE onsite_batch_key IN ($placeholders)
+             GROUP BY onsite_batch_key"
+        );
+        $sizeStmt->execute(array_keys($batchKeys));
+        foreach ($sizeStmt->fetchAll() as $sizeRow) {
+            $key = (string) $sizeRow['onsite_batch_key'];
+            $batchSizes[$key] = (int) $sizeRow['batch_size'];
+            $batchTotals[$key] = (float) $sizeRow['batch_total'];
+        }
+
+        $idStmt = $db->prepare(
+            "SELECT id, onsite_batch_key
+             FROM requests
+             WHERE onsite_batch_key IN ($placeholders)
+             ORDER BY id ASC"
+        );
+        $idStmt->execute(array_keys($batchKeys));
+        foreach ($idStmt->fetchAll() as $idRow) {
+            $key = (string) $idRow['onsite_batch_key'];
+            $batchRequestIds[$key][] = (int) $idRow['id'];
+        }
+    }
+
     foreach ($rows as &$row) {
         $requestId = (int) $row['id'];
+        $batchKey = trim((string) ($row['onsite_batch_key'] ?? ''));
+        $row['is_multiple'] = $batchKey !== '';
+        $row['batch_size'] = $batchKey !== ''
+            ? max(2, (int) ($batchSizes[$batchKey] ?? 2))
+            : 1;
+        $row['batch_request_ids'] = $batchKey !== ''
+            ? array_values(array_filter($batchRequestIds[$batchKey] ?? [$requestId]))
+            : [$requestId];
+        $row['batch_total_amount'] = $batchKey !== ''
+            ? (float) ($batchTotals[$batchKey] ?? ($row['total_amount'] ?? 0))
+            : (float) ($row['payment_amount'] ?? $row['total_amount'] ?? 0);
+        $row['display_amount'] = !empty($row['is_multiple'])
+            ? (float) $row['batch_total_amount']
+            : (float) ($row['payment_amount'] ?? $row['total_amount'] ?? 0);
+        $row['request_type_label'] = $row['is_multiple'] ? 'Multiple' : 'Single';
         $row['items'] = getRequestItems($requestId);
         $row['document_summary'] = formatRequestItemsSummary($row['items'], 2);
         if ($row['document_summary'] === '—' && !empty($row['document_name'])) {

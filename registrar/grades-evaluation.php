@@ -11,6 +11,10 @@ $search = trim((string) ($_GET['search'] ?? ''));
 $studentId = (int) ($_GET['student_user_id'] ?? $_POST['student_user_id'] ?? 0);
 $prospectusId = (int) ($_GET['prospectus_id'] ?? $_POST['prospectus_id'] ?? 0);
 $student = $studentId > 0 ? loadStudentForGradesEvaluation($studentId) : null;
+if ($student && !studentAllowsGradesEvaluation($student)) {
+    setFlash('error', 'Grades evaluation is only available for enrolled (active) students. Graduated and inactive students are excluded.');
+    redirect(APP_URL . '/registrar/grades-evaluation.php');
+}
 $searchResults = strlen($search) >= 2 ? searchStudentsForGradesEvaluation($search) : [];
 
 $prospectus = null;
@@ -241,7 +245,11 @@ require_once __DIR__ . '/../includes/header.php';
                        href="?<?= e(http_build_query(['student_user_id' => (int) $student['id'], 'prospectus_id' => (int) $prospectus['id'], 'export' => 'csv'])) ?>">
                         <i class="fas fa-file-csv"></i> Export CSV
                     </a>
-                    <?= renderClearStudentGradesFormSm((int) $student['id'], studentRecordName($student)) ?>
+                    <?= renderClearStudentGradesFormSm(
+                        (int) $student['id'],
+                        studentRecordName($student),
+                        isset($student['enrollment_status']) ? (string) $student['enrollment_status'] : null
+                    ) ?>
                 </div>
 
                 <form method="POST" class="grades-paste-panel">
