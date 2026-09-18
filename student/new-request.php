@@ -349,6 +349,42 @@ if (!isValidCopyRequestType($selectedCopyType)) {
     $selectedCopyType = 'first_request';
 }
 
+$requestValidationDialog = null;
+if ($errors !== []) {
+    $docTypesByIdForErrors = [];
+    foreach ($docTypes as $docTypeRow) {
+        $docTypesByIdForErrors[(int) $docTypeRow['id']] = $docTypeRow;
+    }
+    $errorDetails = [];
+    foreach ($errors as $errorKey => $errorMessage) {
+        $errorMessage = trim((string) $errorMessage);
+        if ($errorMessage === '') {
+            continue;
+        }
+        if (preg_match('/^document_term_(\d+)$/', (string) $errorKey, $m)) {
+            $docName = (string) ($docTypesByIdForErrors[(int) $m[1]]['name'] ?? 'Selected document');
+            $errorDetails[] = $docName . ': ' . $errorMessage;
+            continue;
+        }
+        if (preg_match('/^document_auth_type_(\d+)$/', (string) $errorKey, $m)) {
+            $docName = (string) ($docTypesByIdForErrors[(int) $m[1]]['name'] ?? 'Selected document');
+            $errorDetails[] = $docName . ': ' . $errorMessage;
+            continue;
+        }
+        $errorDetails[] = $errorMessage;
+    }
+    $errorDetails = array_values(array_unique($errorDetails));
+    $requestValidationDialog = [
+        'type' => 'error',
+        'tone' => 'error',
+        'icon' => 'fa-exclamation-circle',
+        'title' => 'Cannot Submit Request',
+        'message' => 'Please fix the following before submitting your request.',
+        'details' => $errorDetails,
+        'next_step' => 'Complete the missing school year/semester or authentication details, then try again.',
+    ];
+}
+
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
@@ -382,7 +418,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <a href="<?= APP_URL ?>/student/request-view.php?id=<?= (int) $blockingRequest['id'] ?>" class="btn btn-primary">View Active Request</a>
             </div>
         <?php else: ?>
-        <form method="POST" class="form-grid request-form-simple" id="requestForm">
+        <form method="POST" class="form-grid request-form-simple" id="requestForm" novalidate>
             <?= csrfField() ?>
 
             <section class="form-section request-form-step">
@@ -427,7 +463,41 @@ require_once __DIR__ . '/../includes/header.php';
 
             <section class="form-section request-form-step">
                 <h3><span class="request-step-num">2</span> Select documents</h3>
-                <div class="document-checklist">
+                <?php
+                $documentValidationErrors = array_filter(
+                    $errors,
+                    static fn($key): bool => $key === 'document_type_ids'
+                        || str_starts_with((string) $key, 'document_term_')
+                        || str_starts_with((string) $key, 'document_auth_type_'),
+                    ARRAY_FILTER_USE_KEY
+                );
+                ?>
+                <?php if ($documentValidationErrors !== []): ?>
+                    <div class="alert alert-error" id="studentDocumentValidationAlert">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <div>
+                            <strong>Document details incomplete.</strong>
+                            <ul class="error-list" style="margin:.4rem 0 0">
+                                <?php foreach ($documentValidationErrors as $errorKey => $errorMessage): ?>
+                                    <?php
+                                    $label = (string) $errorMessage;
+                                    if (preg_match('/^document_term_(\d+)$/', (string) $errorKey, $m)
+                                        || preg_match('/^document_auth_type_(\d+)$/', (string) $errorKey, $m)) {
+                                        foreach ($docTypes as $docTypeRow) {
+                                            if ((int) $docTypeRow['id'] === (int) $m[1]) {
+                                                $label = $docTypeRow['name'] . ': ' . $errorMessage;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    ?>
+                                    <li><?= e($label) ?></li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </div>
+                    </div>
+                <?php endif; ?>
+                <div class="document-checklist document-checklist--request-grid">
                     <?php foreach ($docTypes as $dt): ?>
                         <?php
                         $maxCopies = max(1, (int) ($dt['max_copies'] ?? 10));
@@ -659,7 +729,6 @@ require_once __DIR__ . '/../includes/header.php';
                         </div>
                     <?php endforeach; ?>
                 </div>
-                <?php if (!empty($errors['document_type_ids'])): ?><span class="field-error"><?= e($errors['document_type_ids']) ?></span><?php endif; ?>
             </section>
 
             <section class="form-section request-form-step">
@@ -693,6 +762,7 @@ require_once __DIR__ . '/../includes/header.php';
 <script>
 const purposeSuggestions = <?= json_encode($purposeSuggestions, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
 const purposeHints = <?= json_encode($purposeHints, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
+const requestValidationDialog = <?= json_encode($requestValidationDialog ?? null, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) ?>;
 
 function formatPeso(amount) {
     return '₱ ' + amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -1276,12 +1346,135 @@ document.getElementById('applyPurposeSuggestions')?.addEventListener('click', fu
     applyPurposeSuggestions(true);
 });
 document.getElementById('requestForm')?.addEventListener('submit', function (event) {
-    const checked = document.querySelectorAll('input[name="document_type_ids[]"]:checked');
-    if (!checked.length) {
+    const validation = validateStudentRequestBeforeSubmit();
+    if (!validation.ok) {
         event.preventDefault();
-        alert('Please select at least one document to request.');
+        showStudentRequestValidationDialog(validation);
     }
 });
+
+function validateStudentRequestBeforeSubmit() {
+    const details = [];
+    const focusTargets = [];
+
+    const purpose = (document.getElementById('purpose')?.value || '').trim();
+    if (!purpose) {
+        details.push('Select a purpose in step 1.');
+    }
+
+    const copyType = (document.getElementById('copy_request_type')?.value || '').trim();
+    if (!copyType) {
+        details.push('Select whether this is a first request or a second copy.');
+    }
+
+    const checked = document.querySelectorAll('.document-checklist-checkbox:checked');
+    if (!checked.length) {
+        details.push('Select at least one document to request.');
+        return {
+            ok: false,
+            title: 'Cannot Submit Request',
+            message: 'Please fix the following before submitting your request.',
+            details: details,
+            next_step: 'Choose a document in step 2, complete any required term or authentication fields, then try again.',
+            focusDocId: null,
+        };
+    }
+
+    checked.forEach(function (checkbox) {
+        const item = checkbox.closest('.document-checklist-item');
+        const docName = checkbox.getAttribute('data-doc-name') || 'Selected document';
+        const docId = checkbox.value;
+
+        if (checkbox.getAttribute('data-requires-term') === '1') {
+            const lines = item ? item.querySelectorAll('[data-term-line]') : [];
+            let hasCompleteTerm = false;
+            const seenTerms = {};
+
+            lines.forEach(function (line) {
+                const schoolYear = (line.querySelector('select[name*="[school_year]"]')?.value || '').trim();
+                const semester = (line.querySelector('select[name*="[semester]"]')?.value || '').trim();
+                if (schoolYear !== '' && semester !== '') {
+                    hasCompleteTerm = true;
+                    const termKey = schoolYear + '|' + semester;
+                    if (seenTerms[termKey]) {
+                        details.push(docName + ': each school year and semester combination can only be added once.');
+                        focusTargets.push(docId);
+                    }
+                    seenTerms[termKey] = true;
+                }
+            });
+
+            if (!hasCompleteTerm) {
+                details.push(docName + ': select school year and semester before submitting.');
+                focusTargets.push(docId);
+            }
+        }
+
+        if (checkbox.getAttribute('data-requires-auth-type') === '1') {
+            const selectedAuth = item ? item.querySelectorAll('.auth-doc-select:checked') : [];
+            const customRows = item ? item.querySelectorAll('[data-auth-custom-row]') : [];
+            let hasAuth = selectedAuth.length > 0;
+            customRows.forEach(function (row) {
+                const label = (row.querySelector('.auth-doc-custom-label')?.value || '').trim();
+                if (label !== '') {
+                    hasAuth = true;
+                }
+            });
+            if (!hasAuth) {
+                details.push(docName + ': choose at least one document to authenticate, or add a custom document name.');
+                focusTargets.push(docId);
+            }
+        }
+    });
+
+    return {
+        ok: details.length === 0,
+        title: 'Cannot Submit Request',
+        message: 'Please fix the following before submitting your request.',
+        details: details,
+        next_step: 'Complete the missing school year/semester or authentication details, then try again.',
+        focusDocId: focusTargets.length ? focusTargets[0] : null,
+    };
+}
+
+function showStudentRequestValidationDialog(validation) {
+    if (validation.focusDocId) {
+        const checkbox = document.getElementById('doc_type_' + validation.focusDocId)
+            || document.querySelector('.document-checklist-checkbox[value="' + validation.focusDocId + '"]');
+        const item = checkbox ? checkbox.closest('.document-checklist-item') : null;
+        if (item) {
+            item.classList.add('is-expanded');
+            item.classList.remove('is-collapsed');
+            const summary = item.querySelector('.document-checklist-summary');
+            if (summary) {
+                summary.setAttribute('aria-expanded', 'true');
+            }
+            item.querySelectorAll('[data-extra-fields]').forEach(function (block) {
+                block.hidden = false;
+            });
+            setTimeout(function () {
+                item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 50);
+        }
+    }
+
+    if (typeof window.openStatusModal === 'function') {
+        window.openStatusModal({
+            type: 'error',
+            tone: 'error',
+            icon: 'fa-exclamation-circle',
+            title: validation.title || 'Cannot Submit Request',
+            message: validation.message || 'Please fix the highlighted issues.',
+            details: validation.details || [],
+            next_step: validation.next_step || '',
+            timestamp: 'Just now',
+        });
+        return;
+    }
+
+    alert((validation.details || []).join('\n') || validation.message || 'Please complete the required fields.');
+}
+
 bindTermLineControls(document);
 document.querySelectorAll('[data-term-lines]').forEach(function (container) {
     reindexTermLines(container);
@@ -1291,6 +1484,15 @@ toggleDocumentExtraFields();
 togglePurposeOtherField();
 updatePurposeSuggestions(false);
 initDocumentChecklistToggles();
+if (requestValidationDialog && typeof window.openStatusModal === 'function') {
+    window.openStatusModal(requestValidationDialog);
+    const alertEl = document.getElementById('studentDocumentValidationAlert');
+    if (alertEl) {
+        setTimeout(function () {
+            alertEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 150);
+    }
+}
 </script>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

@@ -3552,47 +3552,55 @@ a.feature-card-link:hover {
     margin-bottom: 1.25rem;
 }
 
-.document-checklist--onsite-grid {
+.document-checklist--onsite-grid,
+.document-checklist--request-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: .75rem;
     align-items: start;
 }
 
-.document-checklist--onsite-grid .document-checklist-item {
+.document-checklist--onsite-grid .document-checklist-item,
+.document-checklist--request-grid .document-checklist-item {
     min-width: 0;
     height: 100%;
 }
 
-.document-checklist--onsite-grid .document-checklist-item.is-expanded {
+.document-checklist--onsite-grid .document-checklist-item.is-expanded,
+.document-checklist--request-grid .document-checklist-item.is-expanded {
     grid-column: 1 / -1;
 }
 
-.document-checklist--onsite-grid .document-checklist-header {
+.document-checklist--onsite-grid .document-checklist-header,
+.document-checklist--request-grid .document-checklist-header {
     flex-direction: column;
     align-items: flex-start;
     gap: .2rem;
 }
 
-.document-checklist--onsite-grid .document-checklist-item.is-expanded .document-checklist-header {
+.document-checklist--onsite-grid .document-checklist-item.is-expanded .document-checklist-header,
+.document-checklist--request-grid .document-checklist-item.is-expanded .document-checklist-header {
     flex-direction: row;
     align-items: flex-start;
     justify-content: space-between;
     gap: 1rem;
 }
 
-.document-checklist--onsite-grid .document-checklist-summary-meta {
+.document-checklist--onsite-grid .document-checklist-summary-meta,
+.document-checklist--request-grid .document-checklist-summary-meta {
     font-size: .78rem;
 }
 
 @media (max-width: 1100px) {
-    .document-checklist--onsite-grid {
+    .document-checklist--onsite-grid,
+    .document-checklist--request-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
 @media (max-width: 720px) {
-    .document-checklist--onsite-grid {
+    .document-checklist--onsite-grid,
+    .document-checklist--request-grid {
         grid-template-columns: 1fr;
     }
 }
