@@ -1375,6 +1375,179 @@ function fetchOnsiteRequestSlipBatch(array $requestIds, array $viewer): array {
 }
 
 /**
+ * All requestors that share an onsite multi-student batch key.
+ *
+ * @return list<array{
+ *   request_id:int,
+ *   request_number:string,
+ *   status:string,
+ *   total_amount:float,
+ *   first_name:string,
+ *   last_name:string,
+ *   middle_name:string,
+ *   student_id:string,
+ *   course:string,
+ *   year_level:string,
+ *   enrollment_status:string,
+ *   payment_code:string,
+ *   payment_status:string
+ * }>
+ */
+function listOnsiteBatchRequestors(string $batchKey): array {
+    $batchKey = trim($batchKey);
+    if ($batchKey === '') {
+        return [];
+    }
+
+    ensureOnsiteRequestSchema();
+    ensurePaymentMethodSchema();
+
+    $stmt = getDB()->prepare(
+        "SELECT r.id AS request_id, r.request_number, r.status, r.total_amount,
+                u.first_name, u.last_name, u.middle_name, u.student_id,
+                sp.course, sp.year_level, sp.enrollment_status,
+                p.reference_number AS payment_code, p.status AS payment_status
+         FROM requests r
+         JOIN users u ON u.id = r.user_id
+         LEFT JOIN student_profiles sp ON sp.user_id = u.id
+         LEFT JOIN payments p ON p.id = (
+             SELECT p2.id FROM payments p2
+             WHERE p2.request_id = r.id AND p2.payment_method = 'onsite_payment'
+             ORDER BY p2.created_at DESC
+             LIMIT 1
+         )
+         WHERE r.onsite_batch_key = ?
+         ORDER BY u.last_name ASC, u.first_name ASC, r.id ASC"
+    );
+    $stmt->execute([$batchKey]);
+
+    $members = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $members[] = [
+            'request_id' => (int) ($row['request_id'] ?? 0),
+            'request_number' => (string) ($row['request_number'] ?? ''),
+            'status' => (string) ($row['status'] ?? ''),
+            'total_amount' => (float) ($row['total_amount'] ?? 0),
+            'first_name' => (string) ($row['first_name'] ?? ''),
+            'last_name' => (string) ($row['last_name'] ?? ''),
+            'middle_name' => (string) ($row['middle_name'] ?? ''),
+            'student_id' => (string) ($row['student_id'] ?? ''),
+            'course' => (string) ($row['course'] ?? ''),
+            'year_level' => (string) ($row['year_level'] ?? ''),
+            'enrollment_status' => (string) ($row['enrollment_status'] ?? ''),
+            'payment_code' => (string) ($row['payment_code'] ?? ''),
+            'payment_status' => (string) ($row['payment_status'] ?? ''),
+        ];
+    }
+
+    return $members;
+}
+
+/**
+ * HTML block listing every student/requestor in an onsite batch.
+ */
+function renderOnsiteBatchRequestorsHtml(string $batchKey, int $currentRequestId = 0, string $viewBaseUrl = ''): string {
+    $members = listOnsiteBatchRequestors($batchKey);
+    if (count($members) < 2) {
+        return '';
+    }
+
+    $viewBaseUrl = trim($viewBaseUrl);
+    $showLinks = $viewBaseUrl !== '';
+    $batchIds = array_values(array_filter(array_map(
+        static fn(array $m): int => (int) ($m['request_id'] ?? 0),
+        $members
+    )));
+    $batchPageUrl = APP_URL . '/registrar/onsite-request-batch.php?ids=' . implode(',', $batchIds);
+    $canOpenBatchPage = function_exists('hasRole') && hasRole('registrar', 'admin');
+    $batchTotal = 0.0;
+    foreach ($members as $member) {
+        $batchTotal += (float) ($member['total_amount'] ?? 0);
+    }
+
+    ob_start();
+    ?>
+    <section class="onsite-batch-requestors-panel assignment-detail-section">
+        <div class="onsite-batch-requestors-head">
+            <h3><i class="fas fa-users"></i> Batch Requestors (<?= count($members) ?>)</h3>
+            <?php if ($canOpenBatchPage): ?>
+                <a href="<?= e($batchPageUrl) ?>" class="btn btn-outline btn-sm" target="_blank" rel="noopener">
+                    <i class="fas fa-external-link-alt"></i> Open Batch
+                </a>
+            <?php endif; ?>
+        </div>
+        <p class="text-muted onsite-batch-requestors-note">
+            These students share the same multi-requestor onsite batch.
+            Batch total: <strong><?= e(formatMoney($batchTotal)) ?></strong>
+        </p>
+        <div class="table-responsive">
+            <table class="data-table data-table-responsive onsite-batch-requestors-table">
+                <thead>
+                    <tr>
+                        <th>Requestor</th>
+                        <th>Request #</th>
+                        <th>Payment Code</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <?php if ($showLinks): ?><th></th><?php endif; ?>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($members as $member): ?>
+                        <?php
+                        $memberId = (int) ($member['request_id'] ?? 0);
+                        $isCurrent = $currentRequestId > 0 && $memberId === $currentRequestId;
+                        $name = trim(($member['first_name'] ?? '') . ' ' . ($member['last_name'] ?? ''));
+                        $courseYear = trim(
+                            (string) ($member['course'] ?? '')
+                            . (!empty($member['year_level']) ? ' · ' . $member['year_level'] : '')
+                        );
+                        ?>
+                        <tr class="<?= $isCurrent ? 'is-current-batch-requestor' : '' ?>">
+                            <td data-label="Requestor">
+                                <strong><?= e($name !== '' ? $name : '—') ?></strong>
+                                <?php if ($isCurrent): ?>
+                                    <span class="badge badge-processing">Current</span>
+                                <?php endif; ?>
+                                <br><small class="text-muted"><?= e($member['student_id'] !== '' ? $member['student_id'] : 'No ID') ?></small>
+                                <?php if ($courseYear !== ''): ?>
+                                    <br><small class="text-muted"><?= e($courseYear) ?></small>
+                                <?php endif; ?>
+                            </td>
+                            <td data-label="Request #"><strong><?= e($member['request_number'] ?: '—') ?></strong></td>
+                            <td data-label="Payment Code">
+                                <?php if ($member['payment_code'] !== ''): ?>
+                                    <strong><?= e($member['payment_code']) ?></strong>
+                                    <?php if ($member['payment_status'] !== ''): ?>
+                                        <br><small class="text-muted"><?= e(ucfirst($member['payment_status'])) ?></small>
+                                    <?php endif; ?>
+                                <?php else: ?>
+                                    <span class="text-muted">—</span>
+                                <?php endif; ?>
+                            </td>
+                            <td data-label="Amount"><?= e(formatMoney((float) ($member['total_amount'] ?? 0))) ?></td>
+                            <td data-label="Status"><?= statusBadge((string) ($member['status'] ?? '')) ?></td>
+                            <?php if ($showLinks): ?>
+                                <td data-label="Action">
+                                    <?php if ($memberId > 0 && !$isCurrent): ?>
+                                        <a href="<?= e($viewBaseUrl . (str_contains($viewBaseUrl, '?') ? '&' : '?') . 'id=' . $memberId) ?>"
+                                           class="btn btn-sm btn-outline">View</a>
+                                    <?php elseif ($isCurrent): ?>
+                                        <span class="text-muted">Viewing</span>
+                                    <?php endif; ?>
+                                </td>
+                            <?php endif; ?>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </section>
+    <?php
+    return (string) ob_get_clean();
+}
+
+/**
  * Shared document / purpose / fee summary for a multi-student batch slip.
  *
  * @param list<array> $slips

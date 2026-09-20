@@ -10,22 +10,96 @@
  * - $processBaseUrl (e.g. APP_URL.'/cashier/process-document.php')
  * - $officeLabel
  * - $listPageUrl (optional)
+ * - $documentCodeFilter (optional string|list)
  */
 
 require_once __DIR__ . '/request-items.php';
 require_once __DIR__ . '/student.php';
 ensureRequestItemsSchema();
 
+if (!function_exists('currentScriptPageUrl')) {
+    function currentScriptPageUrl(): string {
+        $scriptPath = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? ''));
+        if ($scriptPath === '') {
+            return rtrim(APP_URL, '/');
+        }
+
+        $appUrlPath = parse_url(APP_URL, PHP_URL_PATH);
+        $appUrlPath = is_string($appUrlPath) ? rtrim($appUrlPath, '/') : '';
+
+        if ($appUrlPath !== '' && str_starts_with($scriptPath, $appUrlPath)) {
+            $scriptPath = substr($scriptPath, strlen($appUrlPath)) ?: '/';
+        }
+
+        return rtrim(APP_URL, '/') . $scriptPath;
+    }
+}
+
+$listPageUrl = $listPageUrl ?? currentScriptPageUrl();
 $status = trim($_GET['status'] ?? '');
 $search = trim($_GET['search'] ?? '');
+
+$allowedDocumentCodes = null;
+if (!empty($documentCodeFilter)) {
+    $allowedDocumentCodes = is_array($documentCodeFilter)
+        ? array_values(array_filter(array_map(
+            static fn($code): string => strtoupper(trim((string) $code)),
+            $documentCodeFilter
+        )))
+        : [strtoupper(trim((string) $documentCodeFilter))];
+}
+
+$listRedirectQuery = array_filter([
+    'status' => $status !== '' ? $status : null,
+    'search' => $search !== '' ? $search : null,
+], static fn($value) => $value !== null && $value !== '');
+$listRedirectUrl = $listPageUrl . ($listRedirectQuery !== [] ? '?' . http_build_query($listRedirectQuery) : '');
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
+    $action = (string) ($_POST['action'] ?? '');
+    if ($action === 'batch_update_status') {
+        $newStatus = trim((string) ($_POST['status'] ?? ''));
+        $requestIds = array_map('intval', (array) ($_POST['request_ids'] ?? []));
+        $result = batchUpdateAssignedRequestItemStatuses(
+            $requestIds,
+            $newStatus,
+            (int) ($user['id'] ?? 0),
+            $allowedDocumentCodes
+        );
+
+        $statusLabel = $newStatus === 'ready_for_pickup'
+            ? 'Ready for Pickup'
+            : ($newStatus === 'completed' ? 'Completed' : ucwords(str_replace('_', ' ', $newStatus)));
+
+        if (($result['updated'] ?? 0) > 0) {
+            setFlash('success', $result['updated'] . ' document item' . ((int) $result['updated'] === 1 ? '' : 's')
+                . ' updated to ' . $statusLabel . '.', [
+                'title' => 'Batch Status Updated',
+                'context' => array_filter([
+                    'Updated' => (string) $result['updated'],
+                    'Skipped' => ((int) ($result['skipped'] ?? 0) > 0) ? (string) $result['skipped'] : null,
+                ]),
+                'details' => array_slice($result['failed'] ?? [], 0, 8),
+            ]);
+        } elseif (($result['skipped'] ?? 0) > 0 && empty($result['failed'])) {
+            setFlash('info', 'Selected assignments are already at that status or cannot move to ' . $statusLabel . ' yet.', [
+                'title' => 'No Changes Needed',
+            ]);
+        } else {
+            setFlash('error', implode(' ', $result['failed'] ?? ['Unable to update selected assignments.']), [
+                'title' => 'Batch Update Failed',
+            ]);
+        }
+
+        redirect($listRedirectUrl);
+    }
+}
+
 $items = getStaffAssignedItems((int) $user['id'], $status);
 
-if (!empty($documentCodeFilter)) {
-    $allowedCodes = is_array($documentCodeFilter)
-        ? array_map(static fn($code): string => strtoupper(trim((string) $code)), $documentCodeFilter)
-        : [strtoupper(trim((string) $documentCodeFilter))];
-    $items = array_values(array_filter($items, static function (array $row) use ($allowedCodes): bool {
-        return in_array(strtoupper(trim((string) ($row['document_code'] ?? ''))), $allowedCodes, true);
+if ($allowedDocumentCodes !== null) {
+    $items = array_values(array_filter($items, static function (array $row) use ($allowedDocumentCodes): bool {
+        return in_array(strtoupper(trim((string) ($row['document_code'] ?? ''))), $allowedDocumentCodes, true);
     }));
 }
 
@@ -56,26 +130,6 @@ if ($search !== '') {
 }
 
 $items = groupStaffAssignedItemsByRequest($items);
-
-if (!function_exists('currentScriptPageUrl')) {
-    function currentScriptPageUrl(): string {
-        $scriptPath = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? ''));
-        if ($scriptPath === '') {
-            return rtrim(APP_URL, '/');
-        }
-
-        $appUrlPath = parse_url(APP_URL, PHP_URL_PATH);
-        $appUrlPath = is_string($appUrlPath) ? rtrim($appUrlPath, '/') : '';
-
-        if ($appUrlPath !== '' && str_starts_with($scriptPath, $appUrlPath)) {
-            $scriptPath = substr($scriptPath, strlen($appUrlPath)) ?: '/';
-        }
-
-        return rtrim(APP_URL, '/') . $scriptPath;
-    }
-}
-
-$listPageUrl = $listPageUrl ?? currentScriptPageUrl();
 
 $exportBaseQuery = array_filter([
     'status' => $status !== '' ? $status : null,
@@ -178,52 +232,198 @@ require_once __DIR__ . '/header.php';
         <?php if (empty($items)): ?>
             <div class="empty-state"><i class="fas fa-inbox"></i><p>No document assignments found.</p></div>
         <?php else: ?>
-            <table class="data-table data-table-responsive assigned-documents-table">
-                <thead>
-                    <tr>
-                        <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
-                        <?= renderRecordsSortHeader('Method', 'method', $sortState, $sortQuery) ?>
-                        <?= renderRecordsSortHeader('Document/s Requested', 'document_name', $sortState, $sortQuery) ?>
-                        <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
-                        <?= renderRecordsSortHeader('Course / Year', 'course', $sortState, $sortQuery) ?>
-                        <?= renderRecordsSortHeader('Enrollment', 'enrollment_status', $sortState, $sortQuery) ?>
-                        <?= renderRecordsSortHeader('Copies', 'copies', $sortState, $sortQuery) ?>
-                        <?= renderRecordsSortHeader('Doc Status', 'item_status', $sortState, $sortQuery) ?>
-                        <?= renderRecordsSortHeader('Batch Status', 'request_status', $sortState, $sortQuery) ?>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($items as $item): ?>
-                    <tr>
-                        <td data-label="Request #"><strong><?= e($item['request_number']) ?></strong></td>
-                        <td data-label="Method"><?= renderAssignedItemMethodHtml($item) ?></td>
-                        <td data-label="Document/s Requested" class="assigned-documents-docs">
-                            <?= renderAssignedDocumentLabelsHtml($item) ?>
-                        </td>
-                        <td data-label="Student"><?= renderAssignedStudentNameIdHtml($item) ?></td>
-                        <td data-label="Course / Year"><?= renderAssignedStudentCourseYearHtml($item) ?></td>
-                        <td data-label="Enrollment"><?= e(enrollmentStatusLabel($item['enrollment_status'] ?? null)) ?></td>
-                        <td data-label="Copies"><?= (int) $item['copies'] ?></td>
-                        <td data-label="Doc Status">
-                            <?= requestItemStatusBadge($item['item_status']) ?>
-                            <?php if (($item['item_status'] ?? '') === 'mixed' && !empty($item['item_status_detail'])): ?>
-                                <br><small class="text-muted"><?= e((string) $item['item_status_detail']) ?></small>
-                            <?php endif; ?>
-                        </td>
-                        <td data-label="Batch Status"><?= statusBadge($item['request_status']) ?></td>
-                        <td data-label="Action" class="payment-actions-cell">
-                            <a href="<?= e($processBaseUrl) ?>?item_id=<?= (int) $item['id'] ?>" class="btn btn-sm btn-primary">
-                                <i class="fas fa-eye"></i> View / Process
-                            </a>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
+            <div class="batch-action-bar" id="assignedBatchActionBar" hidden>
+                <span class="batch-action-count"><strong id="assignedBatchSelectedCount">0</strong> selected</span>
+                <div class="batch-action-buttons">
+                    <button type="button" class="btn btn-primary btn-sm" id="openAssignedBatchStatusModal">
+                        <i class="fas fa-sync-alt"></i> Update Status
+                    </button>
+                </div>
+            </div>
+
+            <div class="table-wrap">
+                <table class="data-table data-table-responsive assigned-documents-table">
+                    <thead>
+                        <tr>
+                            <th class="batch-select-col">
+                                <label class="checkbox-label batch-select-all-label">
+                                    <input type="checkbox" id="assignedSelectAllRequests" aria-label="Select all assignments">
+                                </label>
+                            </th>
+                            <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Method', 'method', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Document/s Requested', 'document_name', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Course / Year', 'course', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Enrollment', 'enrollment_status', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Copies', 'copies', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Doc Status', 'item_status', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Batch Status', 'request_status', $sortState, $sortQuery) ?>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($items as $item): ?>
+                            <?php
+                            $rowRequestId = (int) ($item['request_id'] ?? 0);
+                            $rowStatus = (string) ($item['item_status'] ?? '');
+                            $canBatchSelect = $rowRequestId > 0 && in_array($rowStatus, ['processing', 'ready_for_pickup', 'mixed'], true);
+                            ?>
+                            <tr>
+                                <td class="batch-select-col" data-label="Select">
+                                    <?php if ($canBatchSelect): ?>
+                                        <label class="checkbox-label">
+                                            <input type="checkbox"
+                                                class="assigned-request-select"
+                                                value="<?= $rowRequestId ?>"
+                                                data-doc-status="<?= e($rowStatus) ?>"
+                                                aria-label="Select <?= e((string) ($item['request_number'] ?? 'request')) ?>">
+                                        </label>
+                                    <?php endif; ?>
+                                </td>
+                                <td data-label="Request #"><strong><?= e($item['request_number']) ?></strong></td>
+                                <td data-label="Method"><?= renderAssignedItemMethodHtml($item) ?></td>
+                                <td data-label="Document/s Requested" class="assigned-documents-docs">
+                                    <?= renderAssignedDocumentLabelsHtml($item) ?>
+                                </td>
+                                <td data-label="Student"><?= renderAssignedStudentNameIdHtml($item) ?></td>
+                                <td data-label="Course / Year"><?= renderAssignedStudentCourseYearHtml($item) ?></td>
+                                <td data-label="Enrollment"><?= e(enrollmentStatusLabel($item['enrollment_status'] ?? null)) ?></td>
+                                <td data-label="Copies"><?= (int) $item['copies'] ?></td>
+                                <td data-label="Doc Status">
+                                    <?= requestItemStatusBadge($item['item_status']) ?>
+                                    <?php if (($item['item_status'] ?? '') === 'mixed' && !empty($item['item_status_detail'])): ?>
+                                        <br><small class="text-muted"><?= e((string) $item['item_status_detail']) ?></small>
+                                    <?php endif; ?>
+                                </td>
+                                <td data-label="Batch Status"><?= statusBadge($item['request_status']) ?></td>
+                                <td data-label="Action" class="payment-actions-cell">
+                                    <a href="<?= e($processBaseUrl) ?>?item_id=<?= (int) $item['id'] ?>" class="btn btn-sm btn-primary">
+                                        <i class="fas fa-eye"></i> View / Process
+                                    </a>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
             <?= $pagedAssignedDocuments['html'] ?>
         <?php endif; ?>
     </div>
 </div>
+
+<?php if (!empty($items)): ?>
+<?php renderAdminFormModalOpen($officeLabel ?? 'My Assignments', 'Batch Update Status', 'assignedBatchStatusModal'); ?>
+<form method="POST" id="assignedBatchStatusForm">
+    <?= csrfField() ?>
+    <input type="hidden" name="action" value="batch_update_status">
+    <div id="assignedBatchStatusHiddenIds"></div>
+    <p class="text-muted">
+        Updates your assigned documents on the selected requests.
+        Only <strong>Processing → Ready for Pickup</strong> and <strong>Ready for Pickup → Completed</strong> are allowed.
+    </p>
+    <div class="form-group">
+        <label for="assigned_batch_status">New Status *</label>
+        <select id="assigned_batch_status" name="status" required>
+            <option value="ready_for_pickup">Ready for Pickup</option>
+            <option value="completed">Completed</option>
+        </select>
+    </div>
+    <?php renderAdminFormModalFooter('Update Selected', 'fa-sync-alt'); ?>
+</form>
+<?php renderAdminFormModalClose(); ?>
+
+<script>
+(function () {
+    const batchBar = document.getElementById('assignedBatchActionBar');
+    const countEl = document.getElementById('assignedBatchSelectedCount');
+    const selectAll = document.getElementById('assignedSelectAllRequests');
+    const statusModal = document.getElementById('assignedBatchStatusModal');
+    const statusHiddenIds = document.getElementById('assignedBatchStatusHiddenIds');
+    const openBtn = document.getElementById('openAssignedBatchStatusModal');
+
+    function rowChecks() {
+        return Array.from(document.querySelectorAll('.assigned-request-select'));
+    }
+
+    function selectedChecks() {
+        return rowChecks().filter(function (cb) { return cb.checked; });
+    }
+
+    function syncBatchBar() {
+        const selected = selectedChecks();
+        const count = selected.length;
+        if (countEl) countEl.textContent = String(count);
+        if (batchBar) batchBar.hidden = count === 0;
+        if (selectAll) {
+            const all = rowChecks();
+            selectAll.checked = all.length > 0 && count === all.length;
+            selectAll.indeterminate = count > 0 && count < all.length;
+        }
+    }
+
+    function fillHiddenIds(container, selected) {
+        if (!container) return;
+        container.innerHTML = '';
+        selected.forEach(function (cb) {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'request_ids[]';
+            input.value = cb.value;
+            container.appendChild(input);
+        });
+    }
+
+    function openModal(modal) {
+        if (!modal) return;
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeModal(modal) {
+        if (!modal) return;
+        modal.classList.remove('is-open');
+        modal.setAttribute('aria-hidden', 'true');
+        document.body.style.overflow = '';
+    }
+
+    if (selectAll) {
+        selectAll.addEventListener('change', function () {
+            rowChecks().forEach(function (cb) { cb.checked = selectAll.checked; });
+            syncBatchBar();
+        });
+    }
+    rowChecks().forEach(function (cb) {
+        cb.addEventListener('change', syncBatchBar);
+    });
+
+    if (statusModal) {
+        statusModal.querySelectorAll('[data-close-admin-form]').forEach(function (el) {
+            el.addEventListener('click', function () { closeModal(statusModal); });
+        });
+    }
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && statusModal && statusModal.classList.contains('is-open')) {
+            closeModal(statusModal);
+        }
+    });
+
+    openBtn?.addEventListener('click', function () {
+        const selected = selectedChecks();
+        if (!selected.length) {
+            alert('Select at least one assignment.');
+            return;
+        }
+        fillHiddenIds(statusHiddenIds, selected);
+        openModal(statusModal);
+        document.getElementById('assigned_batch_status')?.focus();
+    });
+
+    syncBatchBar();
+})();
+</script>
+<?php endif; ?>
 
 <?php require_once __DIR__ . '/footer.php'; ?>

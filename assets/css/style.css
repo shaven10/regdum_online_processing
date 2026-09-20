@@ -5522,6 +5522,40 @@ a.feature-card-link:hover {
     text-align: right;
 }
 
+.onsite-batch-requestors-panel {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px dashed var(--border-color, #e2e8f0);
+}
+
+.onsite-batch-requestors-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    flex-wrap: wrap;
+    margin-bottom: .35rem;
+}
+
+.onsite-batch-requestors-head h3 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.onsite-batch-requestors-note {
+    margin: 0 0 .75rem;
+    font-size: .85rem;
+}
+
+.onsite-batch-requestors-table tr.is-current-batch-requestor {
+    background: var(--primary-light, #ecfdf5);
+}
+
+.onsite-batch-requestors-table .badge {
+    margin-left: .35rem;
+    vertical-align: middle;
+}
+
 .payment-batch-member-meta code {
     font-weight: 700;
     letter-spacing: .04em;

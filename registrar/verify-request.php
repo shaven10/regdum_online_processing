@@ -7,6 +7,7 @@ require_once __DIR__ . '/../includes/request-items.php';
 require_once __DIR__ . '/../includes/clearance.php';
 require_once __DIR__ . '/../includes/assignment-offices.php';
 require_once __DIR__ . '/../includes/claim-stub.php';
+require_once __DIR__ . '/../includes/onsite-request.php';
 requireRole('registrar');
 
 $user = currentUser();
@@ -462,6 +463,17 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="detail-item"><label>Year Level</label><span><?= e($request['year_level'] ?? '—') ?></span></div>
 
             </div>
+
+            <?php
+            $batchKey = trim((string) ($request['onsite_batch_key'] ?? ''));
+            if ($batchKey !== '' && function_exists('renderOnsiteBatchRequestorsHtml')) {
+                echo renderOnsiteBatchRequestorsHtml(
+                    $batchKey,
+                    (int) $requestId,
+                    APP_URL . '/registrar/verify-request.php'
+                );
+            }
+            ?>
 
 
 

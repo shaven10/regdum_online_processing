@@ -564,6 +564,110 @@ function updateRequestItemStatus(int $itemId, string $status): bool {
     return true;
 }
 
+/**
+ * Batch-update assigned document items for a processor.
+ * Targets are limited to ready_for_pickup (from processing) and completed (from ready_for_pickup).
+ *
+ * @param list<int|string> $requestIds
+ * @param list<string>|null $allowedDocumentCodes
+ * @return array{updated:int,skipped:int,failed:list<string>,ok:bool}
+ */
+function batchUpdateAssignedRequestItemStatuses(
+    array $requestIds,
+    string $newStatus,
+    int $staffId,
+    ?array $allowedDocumentCodes = null
+): array {
+    $result = [
+        'updated' => 0,
+        'skipped' => 0,
+        'failed' => [],
+        'ok' => false,
+    ];
+
+    if (!in_array($newStatus, ['ready_for_pickup', 'completed'], true)) {
+        $result['failed'][] = 'Status can only be updated to Ready for Pickup or Completed.';
+        return $result;
+    }
+
+    if ($staffId <= 0) {
+        $result['failed'][] = 'Invalid processor account.';
+        return $result;
+    }
+
+    $requestIds = array_values(array_unique(array_filter(array_map('intval', $requestIds), static fn(int $id): bool => $id > 0)));
+    if ($requestIds === []) {
+        $result['failed'][] = 'Select at least one assignment.';
+        return $result;
+    }
+
+    $allowedCodes = null;
+    if (is_array($allowedDocumentCodes) && $allowedDocumentCodes !== []) {
+        $allowedCodes = array_values(array_filter(array_map(
+            static fn($code): string => strtoupper(trim((string) $code)),
+            $allowedDocumentCodes
+        )));
+        if ($allowedCodes === []) {
+            $allowedCodes = null;
+        }
+    }
+
+    $requiredCurrent = $newStatus === 'ready_for_pickup' ? 'processing' : 'ready_for_pickup';
+    $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
+    $stmt = getDB()->prepare(
+        "SELECT ri.id, ri.item_status, ri.request_id, r.request_number, dt.name AS document_name, dt.code AS document_code
+         FROM request_items ri
+         JOIN requests r ON r.id = ri.request_id
+         JOIN document_types dt ON dt.id = ri.document_type_id
+         WHERE ri.assigned_to = ?
+           AND ri.request_id IN ($placeholders)
+         ORDER BY r.request_number ASC, ri.id ASC"
+    );
+    $stmt->execute(array_merge([$staffId], $requestIds));
+    $rows = $stmt->fetchAll();
+
+    if ($rows === []) {
+        $result['failed'][] = 'No assignments found for the selected requests.';
+        return $result;
+    }
+
+    foreach ($rows as $row) {
+        $itemId = (int) ($row['id'] ?? 0);
+        $requestNumber = (string) ($row['request_number'] ?? ('#' . (int) ($row['request_id'] ?? 0)));
+        $documentName = (string) ($row['document_name'] ?? 'Document');
+        $label = $requestNumber . ' — ' . $documentName;
+        $currentStatus = (string) ($row['item_status'] ?? '');
+
+        if ($allowedCodes !== null) {
+            $code = strtoupper(trim((string) ($row['document_code'] ?? '')));
+            if (!in_array($code, $allowedCodes, true)) {
+                $result['skipped']++;
+                continue;
+            }
+        }
+
+        if ($currentStatus === $newStatus) {
+            $result['skipped']++;
+            continue;
+        }
+
+        if ($currentStatus !== $requiredCurrent) {
+            $result['skipped']++;
+            continue;
+        }
+
+        if (!updateRequestItemStatus($itemId, $newStatus)) {
+            $result['failed'][] = 'Unable to update ' . $label . '.';
+            continue;
+        }
+
+        $result['updated']++;
+    }
+
+    $result['ok'] = $result['updated'] > 0 || ($result['skipped'] > 0 && $result['failed'] === []);
+    return $result;
+}
+
 function syncRequestBatchStatus(int $requestId): void {
     $db = getDB();
     $stmt = $db->prepare('SELECT item_status FROM request_items WHERE request_id = ?');
@@ -1426,6 +1530,16 @@ function renderAssignmentRequestDetailsHtml(array $context, ?array $activeItem =
                 <?php endif; ?>
             </div>
         </section>
+
+        <?php
+        $batchKey = trim((string) ($request['onsite_batch_key'] ?? ''));
+        if ($batchKey !== '' && function_exists('renderOnsiteBatchRequestorsHtml')) {
+            $batchViewUrl = (function_exists('hasRole') && hasRole('registrar', 'admin'))
+                ? (APP_URL . '/registrar/verify-request.php')
+                : '';
+            echo renderOnsiteBatchRequestorsHtml($batchKey, (int) ($request['id'] ?? 0), $batchViewUrl);
+        }
+        ?>
 
         <?php if ($activeItem): ?>
         <section class="assignment-detail-section">
