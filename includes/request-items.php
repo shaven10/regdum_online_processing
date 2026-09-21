@@ -761,17 +761,54 @@ function getStaffAssignedItems(int $staffId, string $status = ''): array {
     return decorateAssignedItemsWithPaymentMethod(decorateAssignedItemsWithRequestDocuments($rows));
 }
 
-function assignedRequestDocumentName(array $item): string {
-    $name = trim((string) ($item['document_name'] ?? 'Document'));
-    if ($name === '') {
-        $name = 'Document';
-    }
-    $copies = (int) ($item['copies'] ?? 1);
-    if ($copies > 1) {
-        $name .= ' ×' . $copies;
+/**
+ * Documents on a request assigned to a specific processor account.
+ *
+ * @param list<string>|null $allowedDocumentCodes
+ * @return list<array<string,mixed>>
+ */
+function getProcessorAssignedItemsForRequest(int $requestId, int $staffId, ?array $allowedDocumentCodes = null): array {
+    if ($requestId <= 0 || $staffId <= 0) {
+        return [];
     }
 
-    return $name;
+    $allowedCodes = null;
+    if (is_array($allowedDocumentCodes) && $allowedDocumentCodes !== []) {
+        $allowedCodes = array_values(array_filter(array_map(
+            static fn($code): string => strtoupper(trim((string) $code)),
+            $allowedDocumentCodes
+        )));
+        if ($allowedCodes === []) {
+            $allowedCodes = null;
+        }
+    }
+
+    return array_values(array_filter(getRequestItems($requestId), static function (array $item) use ($staffId, $allowedCodes): bool {
+        if ((int) ($item['assigned_to'] ?? 0) !== $staffId) {
+            return false;
+        }
+
+        if ($allowedCodes === null) {
+            return true;
+        }
+
+        return in_array(strtoupper(trim((string) ($item['document_code'] ?? ''))), $allowedCodes, true);
+    }));
+}
+
+function assignedRequestDocumentName(array $item): string {
+    $name = trim((string) ($item['document_name'] ?? 'Document'));
+    return $name !== '' ? $name : 'Document';
+}
+
+function assignedRequestDocumentAbbreviation(array $item): string {
+    $code = strtoupper(trim((string) ($item['document_code'] ?? '')));
+    return $code !== '' ? $code : assignedRequestDocumentName($item);
+}
+
+function assignedRequestCopyLabel(int $copies): string {
+    $copies = max(1, $copies);
+    return $copies . ' cop' . ($copies === 1 ? 'y' : 'ies');
 }
 
 function assignedItemTermLabel(array $item): string {
@@ -789,17 +826,29 @@ function assignedItemTermLabel(array $item): string {
 }
 
 /**
- * @return list<array{name:string,term:string,label:string}>
+ * @return list<array{id:int,name:string,full_name:string,code:string,copies:int,copies_label:string,term:string,status:string,label:string}>
  */
 function assignedRequestDocumentEntries(array $items): array {
     $entries = [];
     foreach ($items as $item) {
-        $name = assignedRequestDocumentName($item);
+        $fullName = assignedRequestDocumentName($item);
+        $abbrev = assignedRequestDocumentAbbreviation($item);
         $term = assignedItemTermLabel($item);
+        $copies = max(1, (int) ($item['copies'] ?? 1));
+        $label = $copies > 1 ? $abbrev . ' ×' . $copies : $abbrev;
+        if ($term !== '') {
+            $label .= ' (' . $term . ')';
+        }
         $entries[] = [
-            'name' => $name,
+            'id' => (int) ($item['id'] ?? 0),
+            'name' => $abbrev,
+            'full_name' => $fullName,
+            'code' => $abbrev !== $fullName ? $abbrev : '',
+            'copies' => $copies,
+            'copies_label' => $copies > 1 ? '×' . $copies : '',
             'term' => $term,
-            'label' => $term !== '' ? $name . ' (' . $term . ')' : $name,
+            'status' => trim((string) ($item['item_status'] ?? '')),
+            'label' => $label,
         ];
     }
 
@@ -865,16 +914,33 @@ function renderAssignedDocumentLabelsHtml(array $item): string {
             return e(assignedItemDocumentSummary($item));
         }
         $entries = array_map(
-            static fn(string $label): array => ['name' => $label, 'term' => '', 'label' => $label],
+            static fn(string $label): array => [
+                'name' => $label,
+                'full_name' => $label,
+                'label' => $label,
+                'term' => '',
+                'copies' => 0,
+                'copies_label' => '',
+            ],
             $labels
         );
     }
 
     $html = '<div class="assigned-document-list">';
     foreach ($entries as $entry) {
-        $html .= '<div class="assigned-document-item">';
-        $html .= '<div class="assigned-document-name">' . e((string) ($entry['name'] ?? $entry['label'] ?? 'Document')) . '</div>';
+        $abbrev = trim((string) ($entry['name'] ?? 'Document'));
+        $copiesLabel = trim((string) ($entry['copies_label'] ?? ''));
+        $displayName = $copiesLabel !== '' ? $abbrev . ' ' . $copiesLabel : $abbrev;
         $term = trim((string) ($entry['term'] ?? ''));
+        $fullName = trim((string) ($entry['full_name'] ?? ''));
+        $nameTitle = $fullName !== '' && strcasecmp($fullName, $abbrev) !== 0
+            ? $fullName
+            : '';
+
+        $html .= '<div class="assigned-document-item">';
+        $html .= '<span class="assigned-document-name"'
+            . ($nameTitle !== '' ? ' title="' . e($nameTitle) . '"' : '')
+            . '>' . e($displayName !== '' ? $displayName : 'Document') . '</span>';
         if ($term !== '') {
             $html .= '<small class="assigned-document-term text-muted">' . e($term) . '</small>';
         }
@@ -886,47 +952,46 @@ function renderAssignedDocumentLabelsHtml(array $item): string {
 }
 
 /**
+ * Label a grouped assignment row using only the supplied (assigned) documents.
+ *
+ * @param array<string,mixed> $row
+ * @param list<array<string,mixed>> $sourceItems
+ * @return array<string,mixed>
+ */
+function applyAssignedItemsDocumentLabels(array $row, array $sourceItems): array {
+    if ($sourceItems === []) {
+        $sourceItems = [$row];
+    }
+
+    usort($sourceItems, static function (array $left, array $right): int {
+        $order = ((int) ($left['sort_order'] ?? 0)) <=> ((int) ($right['sort_order'] ?? 0));
+        if ($order !== 0) {
+            return $order;
+        }
+
+        return ((int) ($left['id'] ?? 0)) <=> ((int) ($right['id'] ?? 0));
+    });
+
+    $entries = assignedRequestDocumentEntries($sourceItems);
+    $row['document_entries'] = $entries;
+    $row['document_labels'] = array_map(
+        static fn(array $entry): string => $entry['label'],
+        $entries
+    );
+    $row['document_summary'] = $row['document_labels'] !== []
+        ? implode(', ', $row['document_labels'])
+        : '—';
+
+    return $row;
+}
+
+/**
  * @param list<array<string,mixed>> $rows
  * @return list<array<string,mixed>>
  */
 function decorateAssignedItemsWithRequestDocuments(array $rows): array {
-    $requestIds = array_values(array_unique(array_filter(array_map(
-        static fn(array $row): int => (int) ($row['request_id'] ?? 0),
-        $rows
-    ))));
-
-    $itemsByRequest = [];
-    if ($requestIds !== []) {
-        $db = getDB();
-        $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
-        $stmt = $db->prepare(
-            "SELECT ri.request_id, ri.copies, ri.request_school_year, ri.request_semester, dt.name AS document_name
-             FROM request_items ri
-             JOIN document_types dt ON ri.document_type_id = dt.id
-             WHERE ri.request_id IN ($placeholders)
-             ORDER BY ri.request_id, ri.sort_order, ri.id"
-        );
-        $stmt->execute($requestIds);
-        foreach ($stmt->fetchAll() as $item) {
-            $itemsByRequest[(int) $item['request_id']][] = $item;
-        }
-    }
-
     foreach ($rows as &$row) {
-        $requestId = (int) ($row['request_id'] ?? 0);
-        $sourceItems = $itemsByRequest[$requestId] ?? [];
-        if ($sourceItems === [] && trim((string) ($row['document_name'] ?? '')) !== '') {
-            $sourceItems = [$row];
-        }
-        $entries = assignedRequestDocumentEntries($sourceItems);
-        $row['document_entries'] = $entries;
-        $row['document_labels'] = array_map(
-            static fn(array $entry): string => $entry['label'],
-            $entries
-        );
-        $row['document_summary'] = $row['document_labels'] !== []
-            ? implode(', ', $row['document_labels'])
-            : '—';
+        $row = applyAssignedItemsDocumentLabels($row, [$row]);
     }
     unset($row);
 
@@ -1043,7 +1108,7 @@ function renderAssignedItemMethodHtml(array $item): string {
 
     $scope = trim((string) ($item['payment_scope_label'] ?? ''));
     $html = '<div class="assigned-method">';
-    $html .= '<div class="assigned-method-name">' . e($method) . '</div>';
+    $html .= '<small class="assigned-method-name">' . e($method) . '</small>';
     if ($scope !== '') {
         $scopeText = !empty($item['is_multiple'])
             ? 'Multiple · ' . max(2, (int) ($item['batch_size'] ?? 2)) . ' requestors'
@@ -1164,14 +1229,14 @@ function exportAssignedDocumentsCsv(array $items, string $filename = 'my_assignm
             assignedStudentNameIdLabel($item),
             assignedStudentCourseYearLabel($item),
             enrollmentStatusLabel($item['enrollment_status'] ?? null),
-            (string) (int) ($item['copies'] ?? 0),
+            assignedItemReleaseLabel($item),
             $statusLabel,
             ucwords(str_replace('_', ' ', (string) ($item['request_status'] ?? ''))),
         ];
     }
 
     exportCSV(
-        ['Request #', 'Document/s Requested', 'Student', 'Course / Year', 'Enrollment Status', 'Copies', 'Doc Status', 'Batch Status'],
+        ['Request #', 'Document/s Requested', 'Student', 'Course / Year', 'Enrollment Status', 'Release Date', 'Doc Status', 'Batch Status'],
         $rows,
         $filename
     );
@@ -1221,6 +1286,7 @@ function groupStaffAssignedItemsByRequest(array $items): array {
             $row = $item;
             $row['assigned_item_ids'] = [(int) ($item['id'] ?? 0)];
             $row['assigned_item_statuses'] = [trim((string) ($item['item_status'] ?? ''))];
+            $row['assigned_items'] = [$item];
             $row['copies'] = (int) ($item['copies'] ?? 0);
             $groups[$requestId] = $row;
             $order[] = $requestId;
@@ -1229,6 +1295,7 @@ function groupStaffAssignedItemsByRequest(array $items): array {
 
         $groups[$requestId]['assigned_item_ids'][] = (int) ($item['id'] ?? 0);
         $groups[$requestId]['assigned_item_statuses'][] = trim((string) ($item['item_status'] ?? ''));
+        $groups[$requestId]['assigned_items'][] = $item;
         $groups[$requestId]['copies'] = (int) ($groups[$requestId]['copies'] ?? 0) + (int) ($item['copies'] ?? 0);
 
         if (trim((string) ($groups[$requestId]['or_number'] ?? '')) === '' && trim((string) ($item['or_number'] ?? '')) !== '') {
@@ -1254,6 +1321,10 @@ function groupStaffAssignedItemsByRequest(array $items): array {
     }
 
     foreach ($groups as &$group) {
+        $sourceItems = $group['assigned_items'] ?? [$group];
+        $group = applyAssignedItemsDocumentLabels($group, $sourceItems);
+        unset($group['assigned_items']);
+
         $statuses = array_values(array_unique(array_filter(
             $group['assigned_item_statuses'] ?? [],
             static fn(string $status): bool => $status !== ''
@@ -1452,6 +1523,18 @@ function renderAssignmentRequestDetailsHtml(array $context, ?array $activeItem =
     $clearanceRequired = !empty($context['clearance_required']);
     $progress = $context['clearance_progress'] ?? [];
     $activeItemId = (int) ($activeItem['id'] ?? 0);
+    $processorId = (int) ($activeItem['assigned_to'] ?? 0);
+    $assignedItems = $items;
+    if ($processorId > 0) {
+        $assignedItems = array_values(array_filter(
+            $items,
+            static fn(array $requestItem): bool => (int) ($requestItem['assigned_to'] ?? 0) === $processorId
+        ));
+    }
+    $documentListItems = $processorId > 0 ? $assignedItems : $items;
+    $documentListTitle = $processorId > 0
+        ? 'Your Assigned Documents (' . count($documentListItems) . ')'
+        : 'Documents in Request (' . count($documentListItems) . ')';
     $isOnsite = isOnsiteRequestChannel($request['request_channel'] ?? null);
     $isGraduated = isGraduatedEnrollment($request['enrollment_status'] ?? null);
     $isInactive = isInactiveEnrollment($request['enrollment_status'] ?? null);
@@ -1543,16 +1626,16 @@ function renderAssignmentRequestDetailsHtml(array $context, ?array $activeItem =
 
         <?php if ($activeItem): ?>
         <section class="assignment-detail-section">
-            <h3><i class="fas fa-tasks"></i> Assigned Document</h3>
+            <h3><i class="fas fa-tasks"></i> <?= count($assignedItems) > 1 ? 'Selected Assigned Document' : 'Assigned Document' ?></h3>
             <?= renderRequestItemDetailsHtml($activeItem) ?>
         </section>
         <?php endif; ?>
 
-        <?php if (!empty($items)): ?>
+        <?php if (!empty($documentListItems) && ($processorId <= 0 || count($documentListItems) > 1)): ?>
         <section class="assignment-detail-section">
-            <h3><i class="fas fa-layer-group"></i> Documents in Request (<?= count($items) ?>)</h3>
+            <h3><i class="fas fa-layer-group"></i> <?= e($documentListTitle) ?></h3>
             <div class="request-items-summary-list">
-                <?php foreach ($items as $requestItem): ?>
+                <?php foreach ($documentListItems as $requestItem): ?>
                     <?php $isActive = $activeItemId > 0 && (int) $requestItem['id'] === $activeItemId; ?>
                     <div class="request-item-summary-row<?= $isActive ? ' is-active-assignment' : '' ?>">
                         <strong><?= e($requestItem['document_name'] ?? 'Document') ?><?= $isActive ? ' <small class="text-muted">(this assignment)</small>' : '' ?></strong>

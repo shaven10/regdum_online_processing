@@ -1296,12 +1296,22 @@ a.status-bar-item {
 
 .assigned-documents-table .assigned-documents-docs,
 .assigned-document-list {
-    max-width: 20rem;
+    max-width: 16rem;
     line-height: 1.35;
+}
+
+.assigned-documents-table td[data-label="Release Date"] {
+    white-space: nowrap;
 }
 
 .assigned-document-item + .assigned-document-item {
     margin-top: .35rem;
+}
+
+.assigned-document-name {
+    display: block;
+    font-weight: 700;
+    letter-spacing: .02em;
 }
 
 .assigned-document-term {
@@ -1314,13 +1324,20 @@ a.status-bar-item {
     margin-top: .1rem;
 }
 
-.assigned-student-id {
+.assigned-student-id,
+.assigned-method-name {
     display: block;
     margin-top: .1rem;
+    font-size: .8rem;
+}
+
+.assigned-method-name {
+    margin-top: 0;
 }
 
 .assigned-method .payment-scope-pill {
     margin-top: .2rem;
+    font-size: .8rem;
 }
 
 .stat-info h3 { font-size: 1.5rem; font-weight: 700; }
@@ -4820,6 +4837,61 @@ a.feature-card-link:hover {
 }
 
 .assignment-actions-card .action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .75rem;
+}
+
+.assignment-process-header-status {
+    display: grid;
+    justify-items: end;
+    gap: .25rem;
+    text-align: right;
+}
+
+.assignment-doc-action-list {
+    display: grid;
+    gap: .75rem;
+    margin-bottom: 1rem;
+}
+
+.assignment-doc-action-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    padding: .75rem;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius);
+    background: var(--gray-50);
+}
+
+.assignment-doc-action-row.is-current {
+    border-color: var(--primary, #1e40af);
+    background: #eff6ff;
+}
+
+.assignment-doc-action-meta {
+    display: grid;
+    gap: .25rem;
+    min-width: 0;
+}
+
+.assignment-doc-action-meta-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .4rem;
+}
+
+.assignment-doc-action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+}
+
+.assignment-bulk-actions {
     display: flex;
     flex-wrap: wrap;
     gap: .75rem;

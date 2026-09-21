@@ -107,7 +107,8 @@ if ($search !== '') {
     $items = array_values(array_filter($items, static function (array $row) use ($search): bool {
         $haystack = strtolower(
             ($row['request_number'] ?? '') . ' '
-            . ($row['document_name'] ?? '') . ' '
+            .             ($row['document_name'] ?? '') . ' '
+            . ($row['document_code'] ?? '') . ' '
             . assignedItemDocumentSummary($row) . ' '
             . assignedItemSchoolYear($row) . ' '
             . assignedItemSemester($row) . ' '
@@ -123,6 +124,8 @@ if ($search !== '') {
             . assignedItemMethodLabel($row) . ' '
             . ($row['payment_method_label'] ?? '') . ' '
             . ($row['payment_scope_label'] ?? '') . ' '
+            . assignedItemReleaseLabel($row) . ' '
+            . ($row['release_date'] ?? '') . ' '
             . enrollmentStatusLabel($row['enrollment_status'] ?? null)
         );
         return str_contains($haystack, strtolower($search));
@@ -177,7 +180,17 @@ $sortColumns = [
         },
     ],
     'enrollment_status' => ['type' => 'string'],
-    'copies' => ['type' => 'number', 'default_dir' => 'desc'],
+    'release_date' => [
+        'type' => 'date',
+        'get' => static function (array $r): string {
+            $date = trim((string) ($r['release_date'] ?? ''));
+            if ($date === '') {
+                return '';
+            }
+            $time = trim((string) ($r['release_time'] ?? ''));
+            return $time !== '' ? $date . ' ' . $time : $date;
+        },
+    ],
     'item_status' => ['type' => 'string'],
     'request_status' => ['type' => 'string'],
 ];
@@ -204,7 +217,7 @@ require_once __DIR__ . '/header.php';
     <div class="card-header">
         <div>
             <h2><?= e($officeLabel ?? 'Document Assignments') ?></h2>
-            <p class="text-muted" style="margin:.35rem 0 0">Requests assigned to your office for processing (grouped by request).</p>
+            <p class="text-muted" style="margin:.35rem 0 0">Documents assigned to your account, grouped by request. Other documents on the same request are hidden unless they are also assigned to you.</p>
         </div>
         <?php if ($items !== []): ?>
             <div class="card-header-actions payment-report-actions grades-eval-export-actions">
@@ -218,7 +231,7 @@ require_once __DIR__ . '/header.php';
     <div class="card-body">
         <form method="GET" class="filter-bar" id="assignedDocumentsFilterForm">
             <?= recordsSortFormFields($sortState) ?>
-            <input type="text" name="search" placeholder="Search request #, method, document, school year, semester, student..." value="<?= e($search) ?>">
+            <input type="text" name="search" placeholder="Search request #, method, document, school year, semester, student, release date..." value="<?= e($search) ?>">
             <select name="status">
                 <option value="">Active Assignments</option>
                 <option value="processing" <?= $status === 'processing' ? 'selected' : '' ?>>Processing</option>
@@ -236,7 +249,7 @@ require_once __DIR__ . '/header.php';
                 <span class="batch-action-count"><strong id="assignedBatchSelectedCount">0</strong> selected</span>
                 <div class="batch-action-buttons">
                     <button type="button" class="btn btn-primary btn-sm" id="openAssignedBatchStatusModal">
-                        <i class="fas fa-sync-alt"></i> Update Status
+                        <i class="fas fa-sync-alt"></i> Update Assigned Documents
                     </button>
                 </div>
             </div>
@@ -256,7 +269,7 @@ require_once __DIR__ . '/header.php';
                             <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
                             <?= renderRecordsSortHeader('Course / Year', 'course', $sortState, $sortQuery) ?>
                             <?= renderRecordsSortHeader('Enrollment', 'enrollment_status', $sortState, $sortQuery) ?>
-                            <?= renderRecordsSortHeader('Copies', 'copies', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Release Date', 'release_date', $sortState, $sortQuery) ?>
                             <?= renderRecordsSortHeader('Doc Status', 'item_status', $sortState, $sortQuery) ?>
                             <?= renderRecordsSortHeader('Batch Status', 'request_status', $sortState, $sortQuery) ?>
                             <th>Action</th>
@@ -289,7 +302,7 @@ require_once __DIR__ . '/header.php';
                                 <td data-label="Student"><?= renderAssignedStudentNameIdHtml($item) ?></td>
                                 <td data-label="Course / Year"><?= renderAssignedStudentCourseYearHtml($item) ?></td>
                                 <td data-label="Enrollment"><?= e(enrollmentStatusLabel($item['enrollment_status'] ?? null)) ?></td>
-                                <td data-label="Copies"><?= (int) $item['copies'] ?></td>
+                                <td data-label="Release Date"><?= e(assignedItemReleaseLabel($item)) ?></td>
                                 <td data-label="Doc Status">
                                     <?= requestItemStatusBadge($item['item_status']) ?>
                                     <?php if (($item['item_status'] ?? '') === 'mixed' && !empty($item['item_status_detail'])): ?>
@@ -298,9 +311,17 @@ require_once __DIR__ . '/header.php';
                                 </td>
                                 <td data-label="Batch Status"><?= statusBadge($item['request_status']) ?></td>
                                 <td data-label="Action" class="payment-actions-cell">
+                                    <?php $assignedCount = count($item['assigned_item_ids'] ?? [(int) ($item['id'] ?? 0)]); ?>
                                     <a href="<?= e($processBaseUrl) ?>?item_id=<?= (int) $item['id'] ?>" class="btn btn-sm btn-primary">
-                                        <i class="fas fa-eye"></i> View / Process
+                                        <i class="fas fa-eye"></i> <?= $assignedCount > 1 ? 'View / Process All' : 'View / Process' ?>
                                     </a>
+                                    <?php if ($canBatchSelect): ?>
+                                        <button type="button"
+                                            class="btn btn-sm btn-outline assigned-row-update-status"
+                                            data-request-id="<?= $rowRequestId ?>">
+                                            <i class="fas fa-sync-alt"></i> Update Status
+                                        </button>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -319,7 +340,8 @@ require_once __DIR__ . '/header.php';
     <input type="hidden" name="action" value="batch_update_status">
     <div id="assignedBatchStatusHiddenIds"></div>
     <p class="text-muted">
-        Updates your assigned documents on the selected requests.
+        Updates all of your assigned documents on the selected requests.
+        Documents assigned to other accounts are not changed.
         Only <strong>Processing → Ready for Pickup</strong> and <strong>Ready for Pickup → Completed</strong> are allowed.
     </p>
     <div class="form-group">
@@ -362,16 +384,20 @@ require_once __DIR__ . '/header.php';
         }
     }
 
-    function fillHiddenIds(container, selected) {
+    function fillHiddenRequestIds(container, ids) {
         if (!container) return;
         container.innerHTML = '';
-        selected.forEach(function (cb) {
+        ids.forEach(function (id) {
             const input = document.createElement('input');
             input.type = 'hidden';
             input.name = 'request_ids[]';
-            input.value = cb.value;
+            input.value = String(id);
             container.appendChild(input);
         });
+    }
+
+    function fillHiddenIds(container, selected) {
+        fillHiddenRequestIds(container, selected.map(function (cb) { return cb.value; }));
     }
 
     function openModal(modal) {
@@ -419,6 +445,18 @@ require_once __DIR__ . '/header.php';
         fillHiddenIds(statusHiddenIds, selected);
         openModal(statusModal);
         document.getElementById('assigned_batch_status')?.focus();
+    });
+
+    document.querySelectorAll('.assigned-row-update-status').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            const requestId = btn.getAttribute('data-request-id');
+            if (!requestId) {
+                return;
+            }
+            fillHiddenRequestIds(statusHiddenIds, [requestId]);
+            openModal(statusModal);
+            document.getElementById('assigned_batch_status')?.focus();
+        });
     });
 
     syncBatchBar();
