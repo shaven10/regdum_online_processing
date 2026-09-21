@@ -267,11 +267,9 @@ require_once __DIR__ . '/header.php';
                             <?= renderRecordsSortHeader('Method', 'method', $sortState, $sortQuery) ?>
                             <?= renderRecordsSortHeader('Document/s Requested', 'document_name', $sortState, $sortQuery) ?>
                             <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
-                            <?= renderRecordsSortHeader('Course / Year', 'course', $sortState, $sortQuery) ?>
-                            <?= renderRecordsSortHeader('Enrollment', 'enrollment_status', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Course / Enrollment', 'course', $sortState, $sortQuery) ?>
                             <?= renderRecordsSortHeader('Release Date', 'release_date', $sortState, $sortQuery) ?>
-                            <?= renderRecordsSortHeader('Doc Status', 'item_status', $sortState, $sortQuery) ?>
-                            <?= renderRecordsSortHeader('Batch Status', 'request_status', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Status', 'item_status', $sortState, $sortQuery) ?>
                             <th>Action</th>
                         </tr>
                     </thead>
@@ -300,16 +298,9 @@ require_once __DIR__ . '/header.php';
                                     <?= renderAssignedDocumentLabelsHtml($item) ?>
                                 </td>
                                 <td data-label="Student"><?= renderAssignedStudentNameIdHtml($item) ?></td>
-                                <td data-label="Course / Year"><?= renderAssignedStudentCourseYearHtml($item) ?></td>
-                                <td data-label="Enrollment"><?= e(enrollmentStatusLabel($item['enrollment_status'] ?? null)) ?></td>
+                                <td data-label="Course / Enrollment"><?= renderAssignedStudentCourseYearHtml($item) ?></td>
                                 <td data-label="Release Date"><?= e(assignedItemReleaseLabel($item)) ?></td>
-                                <td data-label="Doc Status">
-                                    <?= requestItemStatusBadge($item['item_status']) ?>
-                                    <?php if (($item['item_status'] ?? '') === 'mixed' && !empty($item['item_status_detail'])): ?>
-                                        <br><small class="text-muted"><?= e((string) $item['item_status_detail']) ?></small>
-                                    <?php endif; ?>
-                                </td>
-                                <td data-label="Batch Status"><?= statusBadge($item['request_status']) ?></td>
+                                <td data-label="Status"><?= renderAssignedStatusesHtml($item) ?></td>
                                 <td data-label="Action" class="payment-actions-cell">
                                     <?php $assignedCount = count($item['assigned_item_ids'] ?? [(int) ($item['id'] ?? 0)]); ?>
                                     <a href="<?= e($processBaseUrl) ?>?item_id=<?= (int) $item['id'] ?>" class="btn btn-sm btn-primary">

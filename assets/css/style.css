@@ -1296,7 +1296,7 @@ a.status-bar-item {
 
 .assigned-documents-table .assigned-documents-docs,
 .assigned-document-list {
-    max-width: 16rem;
+    max-width: 22rem;
     line-height: 1.35;
 }
 
@@ -1304,24 +1304,29 @@ a.status-bar-item {
     white-space: nowrap;
 }
 
+.assigned-document-item {
+    white-space: nowrap;
+}
+
 .assigned-document-item + .assigned-document-item {
-    margin-top: .35rem;
+    margin-top: .2rem;
 }
 
 .assigned-document-name {
-    display: block;
     font-weight: 700;
     letter-spacing: .02em;
 }
 
 .assigned-document-term {
-    display: block;
-    margin-top: .1rem;
+    font-size: .8rem;
+    font-weight: 500;
+    color: var(--gray-500, #6b7280);
 }
 
 .assigned-course-year-year {
     display: block;
     margin-top: .1rem;
+    font-size: .8rem;
 }
 
 .assigned-student-id,
@@ -1338,6 +1343,34 @@ a.status-bar-item {
 .assigned-method .payment-scope-pill {
     margin-top: .2rem;
     font-size: .8rem;
+}
+
+.assigned-status {
+    display: grid;
+    gap: .3rem;
+}
+
+.assigned-status-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: .35rem;
+    white-space: nowrap;
+}
+
+.assigned-status-label {
+    flex: 0 0 auto;
+    font-size: .8rem;
+    font-weight: 600;
+    color: var(--gray-500, #6b7280);
+}
+
+.assigned-status-detail {
+    font-size: .8rem;
+}
+
+.assigned-status-row .badge {
+    font-size: .72rem;
 }
 
 .stat-info h3 { font-size: 1.5rem; font-weight: 700; }

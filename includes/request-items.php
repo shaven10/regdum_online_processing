@@ -833,11 +833,26 @@ function assignedRequestDocumentEntries(array $items): array {
     foreach ($items as $item) {
         $fullName = assignedRequestDocumentName($item);
         $abbrev = assignedRequestDocumentAbbreviation($item);
-        $term = assignedItemTermLabel($item);
+        $year = assignedItemSchoolYear($item);
+        $semester = assignedItemSemester($item);
         $copies = max(1, (int) ($item['copies'] ?? 1));
-        $label = $copies > 1 ? $abbrev . ' ×' . $copies : $abbrev;
-        if ($term !== '') {
-            $label .= ' (' . $term . ')';
+        $termParts = [];
+        if ($year !== '—') {
+            $termParts[] = $year;
+        }
+        if ($semester !== '—') {
+            $termParts[] = $semester;
+        }
+        $term = $termParts !== [] ? implode(' · ', $termParts) : '';
+        $label = $abbrev;
+        if ($year !== '—') {
+            $label .= '-' . $year;
+        }
+        if ($semester !== '—') {
+            $label .= ' · ' . $semester;
+        }
+        if ($copies > 1) {
+            $label .= ' ×' . $copies;
         }
         $entries[] = [
             'id' => (int) ($item['id'] ?? 0),
@@ -846,6 +861,7 @@ function assignedRequestDocumentEntries(array $items): array {
             'code' => $abbrev !== $fullName ? $abbrev : '',
             'copies' => $copies,
             'copies_label' => $copies > 1 ? '×' . $copies : '',
+            'year' => $year !== '—' ? $year : '',
             'term' => $term,
             'status' => trim((string) ($item['item_status'] ?? '')),
             'label' => $label,
@@ -929,20 +945,28 @@ function renderAssignedDocumentLabelsHtml(array $item): string {
     $html = '<div class="assigned-document-list">';
     foreach ($entries as $entry) {
         $abbrev = trim((string) ($entry['name'] ?? 'Document'));
+        if ($abbrev === '') {
+            $abbrev = 'Document';
+        }
         $copiesLabel = trim((string) ($entry['copies_label'] ?? ''));
-        $displayName = $copiesLabel !== '' ? $abbrev . ' ' . $copiesLabel : $abbrev;
+        $year = trim((string) ($entry['year'] ?? ''));
         $term = trim((string) ($entry['term'] ?? ''));
         $fullName = trim((string) ($entry['full_name'] ?? ''));
         $nameTitle = $fullName !== '' && strcasecmp($fullName, $abbrev) !== 0
             ? $fullName
             : '';
+        $displayName = $copiesLabel !== '' ? $abbrev . ' ' . $copiesLabel : $abbrev;
+        $termDisplay = '';
+        if ($term !== '') {
+            $termDisplay = ($year !== '' ? '-' : ' · ') . $term;
+        }
 
         $html .= '<div class="assigned-document-item">';
         $html .= '<span class="assigned-document-name"'
             . ($nameTitle !== '' ? ' title="' . e($nameTitle) . '"' : '')
-            . '>' . e($displayName !== '' ? $displayName : 'Document') . '</span>';
-        if ($term !== '') {
-            $html .= '<small class="assigned-document-term text-muted">' . e($term) . '</small>';
+            . '>' . e($displayName) . '</span>';
+        if ($termDisplay !== '') {
+            $html .= '<span class="assigned-document-term">' . e($termDisplay) . '</span>';
         }
         $html .= '</div>';
     }
@@ -1106,13 +1130,14 @@ function renderAssignedItemMethodHtml(array $item): string {
         return '—';
     }
 
+    $method = trim((string) preg_replace('/\s+payment$/i', '', $method));
     $scope = trim((string) ($item['payment_scope_label'] ?? ''));
     $html = '<div class="assigned-method">';
-    $html .= '<small class="assigned-method-name">' . e($method) . '</small>';
+    $html .= '<small class="assigned-method-name">' . e($method !== '' ? $method : '—') . '</small>';
     if ($scope !== '') {
         $scopeText = !empty($item['is_multiple'])
-            ? 'Multiple · ' . max(2, (int) ($item['batch_size'] ?? 2)) . ' requestors'
-            : 'Single request';
+            ? 'Multiple · ' . max(2, (int) ($item['batch_size'] ?? 2))
+            : 'Single';
         $html .= '<small class="payment-scope-pill ' . (!empty($item['is_multiple']) ? 'is-multiple' : 'is-single') . '">'
             . e($scopeText)
             . '</small>';
@@ -1151,23 +1176,57 @@ function assignedStudentCourseYearLabel(array $item): string {
     return $parts !== [] ? implode(' · ', $parts) : '—';
 }
 
+function assignedStudentEnrollmentLabel(array $item): string {
+    if (!function_exists('enrollmentStatusLabel')) {
+        require_once __DIR__ . '/student.php';
+    }
+
+    $label = trim(enrollmentStatusLabel($item['enrollment_status'] ?? null));
+    return $label !== '' ? $label : '—';
+}
+
+function assignedStudentCourseYearEnrollmentLabel(array $item): string {
+    $courseYear = assignedStudentCourseYearLabel($item);
+    $enrollment = assignedStudentEnrollmentLabel($item);
+    if ($courseYear === '—' && $enrollment === '—') {
+        return '—';
+    }
+    if ($enrollment === '—') {
+        return $courseYear;
+    }
+    if ($courseYear === '—') {
+        return $enrollment;
+    }
+
+    return $courseYear . ' · ' . $enrollment;
+}
+
 function renderAssignedStudentCourseYearHtml(array $item): string {
     $course = assignedStudentCourseLabel($item);
     $year = assignedStudentYearLabel($item);
-    if ($course === '—' && $year === '—') {
-        return '—';
+    $enrollment = assignedStudentEnrollmentLabel($item);
+    $metaParts = [];
+    if ($year !== '—') {
+        $metaParts[] = $year;
     }
-    if ($year === '—') {
-        return e($course);
-    }
-    if ($course === '—') {
-        return e($year);
+    if ($enrollment !== '—') {
+        $metaParts[] = $enrollment;
     }
 
-    return '<div class="assigned-course-year">'
-        . '<div class="assigned-course-year-course">' . e($course) . '</div>'
-        . '<small class="assigned-course-year-year text-muted">' . e($year) . '</small>'
-        . '</div>';
+    if ($course === '—' && $metaParts === []) {
+        return '—';
+    }
+
+    $html = '<div class="assigned-course-year">';
+    if ($course !== '—') {
+        $html .= '<div class="assigned-course-year-course">' . e($course) . '</div>';
+    }
+    if ($metaParts !== []) {
+        $html .= '<small class="assigned-course-year-year text-muted">' . e(implode(' · ', $metaParts)) . '</small>';
+    }
+    $html .= '</div>';
+
+    return $html;
 }
 
 function assignedStudentNameLabel(array $item): string {
@@ -1219,24 +1278,18 @@ function exportAssignedDocumentsCsv(array $items, string $filename = 'my_assignm
     require_once __DIR__ . '/student.php';
     $rows = [];
     foreach ($items as $item) {
-        $statusLabel = requestItemStatusLabel((string) ($item['item_status'] ?? ''));
-        if (($item['item_status'] ?? '') === 'mixed' && !empty($item['item_status_detail'])) {
-            $statusLabel = (string) $item['item_status_detail'];
-        }
         $rows[] = [
             (string) ($item['request_number'] ?? ''),
             assignedItemDocumentSummary($item),
             assignedStudentNameIdLabel($item),
-            assignedStudentCourseYearLabel($item),
-            enrollmentStatusLabel($item['enrollment_status'] ?? null),
+            assignedStudentCourseYearEnrollmentLabel($item),
             assignedItemReleaseLabel($item),
-            $statusLabel,
-            ucwords(str_replace('_', ' ', (string) ($item['request_status'] ?? ''))),
+            assignedItemStatusesLabel($item),
         ];
     }
 
     exportCSV(
-        ['Request #', 'Document/s Requested', 'Student', 'Course / Year', 'Enrollment Status', 'Release Date', 'Doc Status', 'Batch Status'],
+        ['Request #', 'Document/s Requested', 'Student', 'Course / Enrollment', 'Release Date', 'Status'],
         $rows,
         $filename
     );
@@ -1264,6 +1317,56 @@ function requestItemStatusBadge(string $status): string {
     };
 
     return '<span class="badge ' . $class . '">' . e(requestItemStatusLabel($status)) . '</span>';
+}
+
+function assignedItemDocStatusLabel(array $item): string {
+    $status = (string) ($item['item_status'] ?? '');
+    if ($status === 'mixed' && !empty($item['item_status_detail'])) {
+        return (string) $item['item_status_detail'];
+    }
+
+    return requestItemStatusLabel($status);
+}
+
+function assignedItemBatchStatusLabel(array $item): string {
+    $status = trim((string) ($item['request_status'] ?? ''));
+    return $status !== '' ? ucwords(str_replace('_', ' ', $status)) : '—';
+}
+
+function assignedItemStatusesLabel(array $item): string {
+    $doc = assignedItemDocStatusLabel($item);
+    $batch = assignedItemBatchStatusLabel($item);
+    $parts = [];
+    if ($doc !== '' && $doc !== '—') {
+        $parts[] = 'Docs: ' . $doc;
+    }
+    if ($batch !== '' && $batch !== '—') {
+        $parts[] = 'Batch: ' . $batch;
+    }
+
+    return $parts !== [] ? implode(' · ', $parts) : '—';
+}
+
+function renderAssignedStatusesHtml(array $item): string {
+    $docStatus = (string) ($item['item_status'] ?? '');
+    $batchStatus = trim((string) ($item['request_status'] ?? ''));
+    $html = '<div class="assigned-status">';
+    $html .= '<div class="assigned-status-row">';
+    $html .= '<small class="assigned-status-label">Docs -</small>';
+    $html .= requestItemStatusBadge($docStatus);
+    if ($docStatus === 'mixed' && !empty($item['item_status_detail'])) {
+        $html .= '<small class="assigned-status-detail text-muted">' . e((string) $item['item_status_detail']) . '</small>';
+    }
+    $html .= '</div>';
+    if ($batchStatus !== '') {
+        $html .= '<div class="assigned-status-row">';
+        $html .= '<small class="assigned-status-label">Batch -</small>';
+        $html .= statusBadge($batchStatus);
+        $html .= '</div>';
+    }
+    $html .= '</div>';
+
+    return $html;
 }
 
 /**
