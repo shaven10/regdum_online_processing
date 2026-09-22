@@ -759,11 +759,11 @@ function createOnsiteCredentialRequest(
     }
 
     $stmt = $db->prepare('INSERT INTO requests (
-        request_number, user_id, document_type_id, purpose, purpose_other, copy_request_type, copies, delivery_method,
+        request_number, user_id, document_type_id, purpose, purpose_other, tor_specific_purpose, copy_request_type, copies, delivery_method,
         pickup_date, pickup_time, representative_name, representative_relationship, representative_phone,
         representative_id_number, total_amount, verification_code, notes, request_channel, created_by, onsite_batch_key,
         created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, \'onsite\', ?, ?, ?, ?)');
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, \'onsite\', ?, ?, ?, ?)');
     $createdAt = appNow();
     $stmt->execute([
         $requestNumber,
@@ -771,6 +771,7 @@ function createOnsiteCredentialRequest(
         $primaryDocumentTypeId,
         $payload['purpose'],
         $payload['purpose_other'] ?: null,
+        !empty($payload['tor_specific_purpose']) ? $payload['tor_specific_purpose'] : null,
         $payload['copy_request_type'],
         'pickup',
         $batchTotal,
@@ -1221,6 +1222,7 @@ function buildOnsiteRequestSlipRows(array $data): array {
         ['Documents', $documentSummary],
         ['Request Type', copyRequestTypeLabel($request['copy_request_type'] ?? null)],
         ['Purpose', purposeLabel($request['purpose'] ?? '') . (!empty($request['purpose_other']) ? ' — ' . $request['purpose_other'] : '')],
+        ...(!empty($request['tor_specific_purpose']) ? [['Specific Purpose', (string) $request['tor_specific_purpose']]] : []),
         ['Amount Due', formatMoney((float) $data['amount'])],
     ]);
 }
@@ -1580,6 +1582,10 @@ function summarizeOnsiteBatchSlips(array $slips): array {
     $purpose = purposeLabel((string) ($request['purpose'] ?? ''));
     if (!empty($request['purpose_other'])) {
         $purpose .= ' — ' . $request['purpose_other'];
+    }
+    $torSpecificPurpose = trim((string) ($request['tor_specific_purpose'] ?? ''));
+    if ($torSpecificPurpose !== '') {
+        $purpose .= ' · TOR: ' . $torSpecificPurpose;
     }
 
     $batchTotal = 0.0;

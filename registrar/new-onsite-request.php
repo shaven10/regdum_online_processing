@@ -169,6 +169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         'document_type_ids' => array_values(array_unique(array_filter(array_map('intval', $_POST['document_type_ids'] ?? [])))),
         'purpose' => $_POST['purpose'] ?? '',
         'purpose_other' => trim($_POST['purpose_other'] ?? ''),
+        'tor_specific_purpose' => normalizeTorSpecificPurpose((string) ($_POST['tor_specific_purpose'] ?? '')),
         'copy_request_type' => $_POST['copy_request_type'] ?? '',
         'notes' => trim($_POST['notes'] ?? ''),
         'require_online_clearance' => !empty($_POST['require_online_clearance']),
@@ -334,6 +335,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         $errors['purpose'] = 'Please select a purpose.';
     } elseif (!isValidActiveRequestPurposeCode($data['purpose'], $enrollmentStatus)) {
         $errors['purpose'] = 'Please select a valid purpose for this enrollment status.';
+    }
+
+    $includesTor = selectedDocumentTypesIncludeTor($docTypesById, $validDocTypeIds);
+    if ($includesTor && $data['tor_specific_purpose'] === '') {
+        $errors['tor_specific_purpose'] = 'Enter the specific purpose for the Transcript of Records.';
+    }
+    if (!$includesTor) {
+        $data['tor_specific_purpose'] = '';
     }
 
     if (!isValidCopyRequestType($data['copy_request_type'])) {
@@ -550,6 +559,13 @@ if ($errors !== []) {
 }
 
 $selectedDocIds = array_map('intval', $_POST['document_type_ids'] ?? []);
+$docTypesById = [];
+foreach ($docTypes as $docTypeRow) {
+    $docTypesById[(int) $docTypeRow['id']] = $docTypeRow;
+}
+$torSpecificPurposeValue = isset($data['tor_specific_purpose'])
+    ? (string) $data['tor_specific_purpose']
+    : (string) ($_POST['tor_specific_purpose'] ?? '');
 $postedCopies = array_map('intval', $_POST['document_copies'] ?? []);
 $postedTermLinesByDoc = $_POST['document_term_lines'] ?? [];
 $postedAuthItems = $_POST['document_auth_items'] ?? [];
@@ -1137,6 +1153,15 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="form-group" id="purposeOtherGroup" style="display:none">
                     <label for="purpose_other">Specify purpose</label>
                     <input type="text" id="purpose_other" name="purpose_other" value="<?= e($_POST['purpose_other'] ?? '') ?>" placeholder="Describe the purpose">
+                </div>
+                <?php $torPurposeVisible = selectedDocumentTypesIncludeTor($docTypesById, $selectedDocIds); ?>
+                <div class="form-group" id="torSpecificPurposeGroup" <?= $torPurposeVisible ? '' : 'hidden' ?>>
+                    <label for="tor_specific_purpose">Specific purpose for Transcript of Records *</label>
+                    <input type="text" id="tor_specific_purpose" name="tor_specific_purpose" maxlength="255"
+                           value="<?= e($torSpecificPurposeValue) ?>"
+                           placeholder="Example: board examination, employment, transfer evaluation">
+                    <small class="text-muted">Required when Transcript of Records is included in this request.</small>
+                    <?php if (!empty($errors['tor_specific_purpose'])): ?><span class="field-error"><?= e($errors['tor_specific_purpose']) ?></span><?php endif; ?>
                 </div>
                 <?php if ($frequentDocuments !== []): ?>
                 <div class="frequent-documents-panel" id="frequentDocumentsPanel">
@@ -2269,6 +2294,7 @@ function handleDocumentCheckboxChange(checkbox) {
     updateFee();
     toggleDocumentExtraFields();
     syncFrequentDocumentChips();
+    toggleTorSpecificPurposeField();
 }
 
 function initDocumentChecklistToggles() {
@@ -2479,6 +2505,38 @@ function applyPurposeDocumentSelection() {
     toggleDocumentExtraFields();
     updateFee();
     syncFrequentDocumentChips();
+    toggleTorSpecificPurposeField();
+}
+
+function requestIncludesTor() {
+    return Array.from(document.querySelectorAll('.document-checklist-checkbox:checked')).some(function (checkbox) {
+        return (checkbox.getAttribute('data-doc-code') || '').toUpperCase() === 'TOR';
+    });
+}
+
+function toggleTorSpecificPurposeField() {
+    const group = document.getElementById('torSpecificPurposeGroup');
+    const input = document.getElementById('tor_specific_purpose');
+    if (!group || !input) {
+        return;
+    }
+    const show = requestIncludesTor();
+    group.hidden = !show;
+    input.required = show;
+    if (!show) {
+        return;
+    }
+    const purposeBody = document.getElementById('onsiteSectionPurpose');
+    const purposeSection = purposeBody ? purposeBody.closest('[data-form-section-collapsible]') : null;
+    if (!purposeSection) {
+        return;
+    }
+    purposeSection.classList.add('is-expanded');
+    purposeSection.classList.remove('is-collapsed');
+    const toggle = purposeSection.querySelector('.form-section-toggle');
+    if (toggle) {
+        toggle.setAttribute('aria-expanded', 'true');
+    }
 }
 
 function togglePurposeOtherField() {
@@ -2821,6 +2879,14 @@ function validateOnsiteRequestBeforeSubmit() {
         details.push('Select a purpose in step 2.');
     }
 
+    if (requestIncludesTor() && !(document.getElementById('tor_specific_purpose')?.value || '').trim()) {
+        details.push('Enter the specific purpose for the Transcript of Records.');
+        const torInput = document.getElementById('tor_specific_purpose');
+        if (torInput) {
+            focusTargets.unshift(torInput.id);
+        }
+    }
+
     return {
         ok: details.length === 0,
         title: 'Cannot Create Request',
@@ -2833,7 +2899,26 @@ function validateOnsiteRequestBeforeSubmit() {
 
 function showOnsiteValidationDialog(validation) {
     expandOnsiteDocumentsSection(true);
-    if (validation.focusDocId) {
+    if (validation.focusDocId === 'tor_specific_purpose') {
+        const purposeBody = document.getElementById('onsiteSectionPurpose');
+        const purposeSection = purposeBody ? purposeBody.closest('[data-form-section-collapsible]') : null;
+        if (purposeSection) {
+            purposeSection.classList.add('is-expanded');
+            purposeSection.classList.remove('is-collapsed');
+            const toggle = purposeSection.querySelector('.form-section-toggle');
+            if (toggle) {
+                toggle.setAttribute('aria-expanded', 'true');
+            }
+        }
+        const torField = document.getElementById('tor_specific_purpose');
+        if (torField) {
+            toggleTorSpecificPurposeField();
+            setTimeout(function () {
+                torField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                torField.focus();
+            }, 50);
+        }
+    } else if (validation.focusDocId) {
         const checkbox = document.getElementById('doc_type_' + validation.focusDocId)
             || document.querySelector('.document-checklist-checkbox[value="' + validation.focusDocId + '"]');
         const item = checkbox ? checkbox.closest('.document-checklist-item') : null;
@@ -2876,6 +2961,7 @@ document.querySelectorAll('[data-term-lines]').forEach(function (container) {
 updateFee();
 toggleDocumentExtraFields();
 togglePurposeOtherField();
+toggleTorSpecificPurposeField();
 updatePurposeSuggestions(false);
 syncFrequentDocumentChips();
 initDocumentChecklistToggles();

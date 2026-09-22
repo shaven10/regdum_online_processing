@@ -390,6 +390,7 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
 
                 <div class="detail-item"><label>Purpose</label><span><?= purposeLabel($request['purpose']) ?></span></div>
+                <?= renderRequestTorSpecificPurposeHtml($request) ?>
                 <div class="detail-item"><label>Request Type</label><span><?= e(copyRequestTypeLabel($request['copy_request_type'] ?? null)) ?><?= ($request['copy_request_type'] ?? '') === 'second_copy' ? ' <span class="badge badge-processing">Affidavit may be required</span>' : '' ?></span></div>
 
                 <div class="detail-item"><label>Amount</label><span id="requestTotalAmountDisplay"><?= formatMoney((float)$request['total_amount']) ?></span></div>

@@ -290,6 +290,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <span><?= e($documentsSummary) ?></span>
                 </div>
                 <div class="detail-item"><label>Purpose</label><span><?= purposeLabel($request['purpose']) ?><?= $request['purpose_other'] ? ' — ' . e($request['purpose_other']) : '' ?></span></div>
+                <?= renderRequestTorSpecificPurposeHtml($request) ?>
                 <div class="detail-item"><label>Request Type</label><span><?= e(copyRequestTypeLabel($request['copy_request_type'] ?? null)) ?></span></div>
                 <div class="detail-item"><label>Total Amount</label><span><?= formatMoney((float) $request['total_amount']) ?></span></div>
                 <?php if ($request['release_date']): ?>

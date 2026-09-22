@@ -625,11 +625,12 @@ function buildPaymentVerificationDetailsMap(array $requestIds): array {
 
     require_once __DIR__ . '/request-items.php';
     require_once __DIR__ . '/student.php';
+    ensureRequestItemsSchema();
 
     $db = getDB();
     $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
     $requestStmt = $db->prepare(
-        "SELECT r.id, r.purpose, r.purpose_other, r.copy_request_type, r.delivery_method, r.total_amount, r.request_channel,
+        "SELECT r.id, r.purpose, r.purpose_other, r.tor_specific_purpose, r.copy_request_type, r.delivery_method, r.total_amount, r.request_channel,
                 dt.name AS document_name
          FROM requests r
          LEFT JOIN document_types dt ON r.document_type_id = dt.id
@@ -747,6 +748,10 @@ function renderPaymentVerificationSections(array $request, array $items, float $
     $purposeText = purposeLabel((string) ($request['purpose'] ?? ''));
     if (!empty($request['purpose_other'])) {
         $purposeText .= ' — ' . $request['purpose_other'];
+    }
+    $torSpecificPurpose = trim((string) ($request['tor_specific_purpose'] ?? ''));
+    if ($torSpecificPurpose !== '') {
+        $purposeText .= ' · TOR: ' . $torSpecificPurpose;
     }
 
     $requestTotal = (float) ($request['total_amount'] ?? 0);

@@ -109,6 +109,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <label>Purpose</label>
                 <span><?= e(purposeLabel($firstRequest['purpose'] ?? '')) ?></span>
             </div>
+            <?= renderRequestTorSpecificPurposeHtml($firstRequest) ?>
             <div class="detail-item">
                 <label>Batch Total</label>
                 <span class="amount-large"><?= formatMoney($batchTotal) ?></span>

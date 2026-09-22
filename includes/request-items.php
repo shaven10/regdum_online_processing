@@ -50,6 +50,11 @@ function ensureRequestItemsSchema(): void {
         $db->exec('ALTER TABLE requests MODIFY document_type_id TINYINT UNSIGNED NULL');
     }
 
+    $torPurposeCol = $db->query("SHOW COLUMNS FROM requests LIKE 'tor_specific_purpose'")->fetch();
+    if (!$torPurposeCol) {
+        $db->exec('ALTER TABLE requests ADD COLUMN tor_specific_purpose VARCHAR(255) NULL AFTER purpose_other');
+    }
+
     backfillRequestItemsFromRequests();
 }
 
@@ -227,6 +232,35 @@ function refreshRequestTotalAmount(int $requestId): void {
 
 function isTorDocumentCode(?string $code): bool {
     return strtoupper(trim((string) $code)) === 'TOR';
+}
+
+function selectedDocumentTypesIncludeTor(array $docTypesById, array $documentTypeIds): bool {
+    foreach ($documentTypeIds as $documentTypeId) {
+        $docType = $docTypesById[(int) $documentTypeId] ?? null;
+        if (is_array($docType) && isTorDocumentCode($docType['code'] ?? null)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function normalizeTorSpecificPurpose(string $value): string {
+    $value = trim(preg_replace('/\s+/', ' ', $value) ?? '');
+    if (strlen($value) > 255) {
+        $value = substr($value, 0, 255);
+    }
+
+    return $value;
+}
+
+function renderRequestTorSpecificPurposeHtml(array $request): string {
+    $value = trim((string) ($request['tor_specific_purpose'] ?? ''));
+    if ($value === '') {
+        return '';
+    }
+
+    return '<div class="detail-item"><label>Specific Purpose</label><span>' . e($value) . '</span></div>';
 }
 
 function isTorDocumentTypeId(int $documentTypeId): bool {
@@ -1695,6 +1729,10 @@ function renderAssignmentRequestDetailsHtml(array $context, ?array $activeItem =
     $purposeText = purposeLabel((string) ($request['purpose'] ?? ''));
     if (!empty($request['purpose_other'])) {
         $purposeText .= ' — ' . $request['purpose_other'];
+    }
+    $torSpecificPurpose = trim((string) ($request['tor_specific_purpose'] ?? ''));
+    if ($torSpecificPurpose !== '') {
+        $purposeText .= ' · TOR: ' . $torSpecificPurpose;
     }
 
     $courseYear = trim((string) ($request['course'] ?? ''));

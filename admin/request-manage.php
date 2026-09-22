@@ -2,7 +2,9 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/compliance.php';
 require_once __DIR__ . '/../includes/payments.php';
+require_once __DIR__ . '/../includes/request-items.php';
 requireRole('admin');
+ensureRequestItemsSchema();
 
 ensureRequestStatuses();
 
@@ -103,6 +105,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="detail-item"><label>Email</label><span><?= e($request['email']) ?></span></div>
                 <div class="detail-item"><label>Document</label><span><?= e($request['document_name']) ?></span></div>
                 <div class="detail-item"><label>Purpose</label><span><?= purposeLabel($request['purpose'] ?? '') ?></span></div>
+                <?= renderRequestTorSpecificPurposeHtml($request) ?>
                 <?= renderRequestTermInfoHtml($request) ?>
                 <?= renderRequestSoaInfoHtml($request) ?>
                 <div class="detail-item"><label>Request Type</label><span><?= e(copyRequestTypeLabel($request['copy_request_type'] ?? null)) ?></span></div>

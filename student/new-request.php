@@ -69,6 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         'document_type_ids'  => array_values(array_unique(array_filter(array_map('intval', $_POST['document_type_ids'] ?? [])))),
         'purpose'            => $_POST['purpose'] ?? '',
         'purpose_other'      => trim($_POST['purpose_other'] ?? ''),
+        'tor_specific_purpose' => normalizeTorSpecificPurpose((string) ($_POST['tor_specific_purpose'] ?? '')),
         'copy_request_type'  => $_POST['copy_request_type'] ?? '',
         'notes'              => trim($_POST['notes'] ?? ''),
     ];
@@ -166,6 +167,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         $errors['purpose'] = 'Please select a valid purpose for your enrollment status.';
     }
 
+    $includesTor = selectedDocumentTypesIncludeTor($docTypesById, $validDocTypeIds);
+    if ($includesTor && $data['tor_specific_purpose'] === '') {
+        $errors['tor_specific_purpose'] = 'Enter the specific purpose for the Transcript of Records.';
+    }
+    if (!$includesTor) {
+        $data['tor_specific_purpose'] = '';
+    }
+
     if (!isValidCopyRequestType($data['copy_request_type'])) {
         $errors['copy_request_type'] = 'Please select whether this is a first request or a second copy.';
     }
@@ -238,10 +247,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
         $primaryDocumentTypeId = $itemDrafts[0]['document_type_id'];
         $stmt = $db->prepare('INSERT INTO requests (
-            request_number, user_id, document_type_id, purpose, purpose_other, copy_request_type, copies, delivery_method,
+            request_number, user_id, document_type_id, purpose, purpose_other, tor_specific_purpose, copy_request_type, copies, delivery_method,
             pickup_date, pickup_time, representative_name, representative_relationship, representative_phone,
             representative_id_number, total_amount, verification_code, notes, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?)');
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?)');
         $createdAt = appNow();
         $stmt->execute([
             $requestNumber,
@@ -249,6 +258,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             $primaryDocumentTypeId,
             $data['purpose'],
             $data['purpose_other'] ?: null,
+            $data['tor_specific_purpose'] !== '' ? $data['tor_specific_purpose'] : null,
             $data['copy_request_type'],
             $batchTotal,
             generateVerificationCode(),
@@ -327,6 +337,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 $pageTitle = 'New Request';
 $activeNav = 'new-request';
 $selectedDocIds = array_map('intval', $_POST['document_type_ids'] ?? []);
+$docTypesById = [];
+foreach ($docTypes as $docTypeRow) {
+    $docTypesById[(int) $docTypeRow['id']] = $docTypeRow;
+}
+$torSpecificPurposeValue = isset($data['tor_specific_purpose'])
+    ? (string) $data['tor_specific_purpose']
+    : (string) ($_POST['tor_specific_purpose'] ?? '');
 $postedCopies = array_map('intval', $_POST['document_copies'] ?? []);
 $postedTermLinesByDoc = $_POST['document_term_lines'] ?? [];
 $postedAuthItems = $_POST['document_auth_items'] ?? [];
@@ -449,6 +466,15 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="form-group" id="purposeOtherGroup" style="display:none">
                     <label for="purpose_other">Specify purpose</label>
                     <input type="text" id="purpose_other" name="purpose_other" value="<?= e($_POST['purpose_other'] ?? '') ?>" placeholder="Describe your purpose">
+                </div>
+                <?php $torPurposeVisible = selectedDocumentTypesIncludeTor($docTypesById, $selectedDocIds); ?>
+                <div class="form-group" id="torSpecificPurposeGroup" <?= $torPurposeVisible ? '' : 'hidden' ?>>
+                    <label for="tor_specific_purpose">Specific purpose for Transcript of Records *</label>
+                    <input type="text" id="tor_specific_purpose" name="tor_specific_purpose" maxlength="255"
+                           value="<?= e($torSpecificPurposeValue) ?>"
+                           placeholder="Example: board examination, employment, transfer evaluation">
+                    <small class="text-muted">Required when Transcript of Records is included in this request.</small>
+                    <?php if (!empty($errors['tor_specific_purpose'])): ?><span class="field-error"><?= e($errors['tor_specific_purpose']) ?></span><?php endif; ?>
                 </div>
                 <div class="purpose-suggestion-panel" id="purposeSuggestionPanel" hidden>
                     <div class="purpose-suggestion-header">
@@ -940,6 +966,7 @@ function handleDocumentCheckboxChange(checkbox) {
     setDocumentChecklistItemExpanded(item, checkbox.checked);
     updateFee();
     toggleDocumentExtraFields();
+    toggleTorSpecificPurposeField();
 }
 
 function initDocumentChecklistToggles() {
@@ -1113,6 +1140,24 @@ function applyPurposeDocumentSelection() {
     toggleDocumentExtraFields();
     updateFee();
     syncDocumentChecklistCollapse();
+    toggleTorSpecificPurposeField();
+}
+
+function requestIncludesTor() {
+    return Array.from(document.querySelectorAll('.document-checklist-checkbox:checked')).some(function (checkbox) {
+        return (checkbox.getAttribute('data-doc-code') || '').toUpperCase() === 'TOR';
+    });
+}
+
+function toggleTorSpecificPurposeField() {
+    const group = document.getElementById('torSpecificPurposeGroup');
+    const input = document.getElementById('tor_specific_purpose');
+    if (!group || !input) {
+        return;
+    }
+    const show = requestIncludesTor();
+    group.hidden = !show;
+    input.required = show;
 }
 
 function togglePurposeOtherField() {
@@ -1362,6 +1407,14 @@ function validateStudentRequestBeforeSubmit() {
         details.push('Select a purpose in step 1.');
     }
 
+    if (requestIncludesTor() && !(document.getElementById('tor_specific_purpose')?.value || '').trim()) {
+        details.push('Enter the specific purpose for the Transcript of Records.');
+        const torInput = document.getElementById('tor_specific_purpose');
+        if (torInput) {
+            focusTargets.push(torInput.id);
+        }
+    }
+
     const copyType = (document.getElementById('copy_request_type')?.value || '').trim();
     if (!copyType) {
         details.push('Select whether this is a first request or a second copy.');
@@ -1438,7 +1491,16 @@ function validateStudentRequestBeforeSubmit() {
 }
 
 function showStudentRequestValidationDialog(validation) {
-    if (validation.focusDocId) {
+    if (validation.focusDocId === 'tor_specific_purpose') {
+        const torField = document.getElementById('tor_specific_purpose');
+        if (torField) {
+            toggleTorSpecificPurposeField();
+            setTimeout(function () {
+                torField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                torField.focus();
+            }, 50);
+        }
+    } else if (validation.focusDocId) {
         const checkbox = document.getElementById('doc_type_' + validation.focusDocId)
             || document.querySelector('.document-checklist-checkbox[value="' + validation.focusDocId + '"]');
         const item = checkbox ? checkbox.closest('.document-checklist-item') : null;
@@ -1482,6 +1544,7 @@ document.querySelectorAll('[data-term-lines]').forEach(function (container) {
 updateFee();
 toggleDocumentExtraFields();
 togglePurposeOtherField();
+toggleTorSpecificPurposeField();
 updatePurposeSuggestions(false);
 initDocumentChecklistToggles();
 if (requestValidationDialog && typeof window.openStatusModal === 'function') {

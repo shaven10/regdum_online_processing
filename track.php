@@ -138,6 +138,7 @@ if ($searched) {
                         <div class="detail-item"><label>Course / Program</label><span><?= e($request['course'] ?? '—') ?></span></div>
                         <div class="detail-item"><label>Enrollment</label><span><?= e(enrollmentStatusLabel($request['enrollment_status'] ?? null)) ?></span></div>
                         <div class="detail-item"><label>Purpose</label><span><?= e(purposeLabel((string) ($request['purpose'] ?? ''))) ?></span></div>
+                        <?= renderRequestTorSpecificPurposeHtml($request) ?>
                         <div class="detail-item"><label>Total Amount</label><span><strong><?= e(formatMoney((float) ($request['total_amount'] ?? 0))) ?></strong></span></div>
                     </div>
                 </div>
