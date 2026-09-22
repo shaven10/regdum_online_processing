@@ -65,6 +65,9 @@ require_once __DIR__ . '/../includes/header.php';
             <a href="<?= e(queueDisplayUrl()) ?>" class="btn btn-outline btn-sm" target="_blank" rel="noopener">
                 <i class="fas fa-tv"></i> Display Board
             </a>
+            <a href="<?= APP_URL ?>/admin/queue-display-ads.php" class="btn btn-outline btn-sm">
+                <i class="fas fa-images"></i> Advertisements
+            </a>
             <a href="<?= e(queueMonitorUrl()) ?>" class="btn btn-outline btn-sm">
                 <i class="fas fa-desktop"></i> Live Monitor
             </a>

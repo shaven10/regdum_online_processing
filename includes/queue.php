@@ -57,6 +57,16 @@ function ensureQueueSchema(): void {
         KEY idx_queue_tickets_code (ticket_code)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 
+    $db->exec("CREATE TABLE IF NOT EXISTS queue_display_ads (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        file_path VARCHAR(255) NOT NULL,
+        original_name VARCHAR(255) NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_queue_display_ads_sort (is_active, sort_order, id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
     $defaults = queueDefaultSettings();
     foreach ($defaults as $key => $value) {
         if (getAppSetting($key, '') === '') {
@@ -78,6 +88,8 @@ function queueDefaultSettings(): array {
         'queue_pad' => '3',
         'queue_require_name' => '0',
         'queue_sound_enabled' => '1',
+        'queue_ads_enabled' => '1',
+        'queue_ads_interval' => '8',
     ];
 }
 
@@ -88,13 +100,19 @@ function queueDefaultSettings(): array {
  *   prefix:string,
  *   pad:int,
  *   require_name:bool,
- *   sound_enabled:bool
+ *   sound_enabled:bool,
+ *   ads_enabled:bool,
+ *   ads_interval:int
  * }
  */
 function getQueueSettings(): array {
     ensureQueueSchema();
     $pad = max(2, min(4, (int) getAppSetting('queue_pad', '3')));
     $count = max(1, min(12, (int) getAppSetting('queue_window_count', '3')));
+    $interval = (int) getAppSetting('queue_ads_interval', '8');
+    if ($interval < 3 || $interval > 60) {
+        $interval = 8;
+    }
 
     return [
         'enabled' => getAppSetting('queue_enabled', '1') === '1',
@@ -103,6 +121,8 @@ function getQueueSettings(): array {
         'pad' => $pad,
         'require_name' => getAppSetting('queue_require_name', '0') === '1',
         'sound_enabled' => getAppSetting('queue_sound_enabled', '1') === '1',
+        'ads_enabled' => getAppSetting('queue_ads_enabled', '1') === '1',
+        'ads_interval' => $interval,
     ];
 }
 
@@ -573,6 +593,241 @@ function waitingQueueCount(): int {
     return (int) $stmt->fetchColumn();
 }
 
+function queueDisplayAdUrl(int $adId): string {
+    return rtrim(APP_URL, '/') . '/queue/ad-image.php?id=' . $adId;
+}
+
+/**
+ * @return list<array<string,mixed>>
+ */
+function getQueueDisplayAds(bool $activeOnly = true): array {
+    ensureQueueSchema();
+    $sql = 'SELECT id, file_path, original_name, sort_order, is_active, created_at
+        FROM queue_display_ads';
+    if ($activeOnly) {
+        $sql .= ' WHERE is_active = 1';
+    }
+    $sql .= ' ORDER BY sort_order ASC, id ASC';
+
+    $rows = getDB()->query($sql)->fetchAll() ?: [];
+    foreach ($rows as &$row) {
+        $row['id'] = (int) $row['id'];
+        $row['sort_order'] = (int) $row['sort_order'];
+        $row['is_active'] = (int) ($row['is_active'] ?? 0) === 1;
+        $row['url'] = queueDisplayAdUrl($row['id']);
+    }
+    unset($row);
+
+    return $rows;
+}
+
+/**
+ * @return array{enabled:bool,interval_seconds:int,images:list<array{id:int,url:string,name:string}>}
+ */
+function getQueueDisplayAdState(): array {
+    $settings = getQueueSettings();
+    $images = [];
+    foreach (getQueueDisplayAds(true) as $ad) {
+        $images[] = [
+            'id' => (int) $ad['id'],
+            'url' => (string) $ad['url'],
+            'name' => trim((string) ($ad['original_name'] ?? '')) !== ''
+                ? (string) $ad['original_name']
+                : 'Advertisement',
+        ];
+    }
+
+    return [
+        'enabled' => $settings['ads_enabled'] && $images !== [],
+        'interval_seconds' => (int) $settings['ads_interval'],
+        'images' => $images,
+    ];
+}
+
+/**
+ * @return list<string>
+ */
+function saveQueueDisplayAdSettings(array $input): array {
+    ensureQueueSchema();
+    $errors = [];
+    $enabled = !empty($input['queue_ads_enabled']) ? '1' : '0';
+    $interval = (int) ($input['queue_ads_interval'] ?? 8);
+    if ($interval < 3 || $interval > 60) {
+        $errors[] = 'Slideshow interval must be between 3 and 60 seconds.';
+        $interval = max(3, min(60, $interval));
+    }
+
+    setAppSetting('queue_ads_enabled', $enabled);
+    setAppSetting('queue_ads_interval', (string) $interval);
+
+    return $errors;
+}
+
+/**
+ * @param array<string,mixed> $files
+ * @return list<string>
+ */
+function storeQueueDisplayAdUploads(array $files): array {
+    ensureQueueSchema();
+    $errors = [];
+    $items = [];
+
+    if (!isset($files['name'])) {
+        return [];
+    }
+
+    if (is_array($files['name'])) {
+        foreach ($files['name'] as $index => $name) {
+            $error = (int) ($files['error'][$index] ?? UPLOAD_ERR_NO_FILE);
+            if ($error === UPLOAD_ERR_NO_FILE) {
+                continue;
+            }
+            $items[] = [
+                'name' => (string) $name,
+                'tmp_name' => (string) ($files['tmp_name'][$index] ?? ''),
+                'error' => $error,
+                'size' => (int) ($files['size'][$index] ?? 0),
+            ];
+        }
+    } elseif ((int) ($files['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+        $items[] = [
+            'name' => (string) $files['name'],
+            'tmp_name' => (string) ($files['tmp_name'] ?? ''),
+            'error' => (int) $files['error'],
+            'size' => (int) ($files['size'] ?? 0),
+        ];
+    }
+
+    if ($items === []) {
+        return [];
+    }
+
+    $existing = count(getQueueDisplayAds(false));
+    if ($existing + count($items) > 20) {
+        return ['A display board can have up to 20 advertisement images.'];
+    }
+
+    $dir = UPLOAD_PATH . '/queue-ads';
+    if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
+        return ['Could not create the advertisement folder.'];
+    }
+
+    $allowed = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp', 'gif' => 'image/gif'];
+    $db = getDB();
+    $nextOrder = (int) $db->query('SELECT COALESCE(MAX(sort_order), 0) FROM queue_display_ads')->fetchColumn();
+    $insert = $db->prepare('INSERT INTO queue_display_ads (file_path, original_name, sort_order, is_active) VALUES (?, ?, ?, 1)');
+
+    foreach ($items as $item) {
+        if ($item['error'] !== UPLOAD_ERR_OK) {
+            $errors[] = 'One advertisement image could not be uploaded.';
+            continue;
+        }
+        $ext = strtolower(pathinfo($item['name'], PATHINFO_EXTENSION));
+        if (!isset($allowed[$ext])) {
+            $errors[] = 'Use JPG, PNG, WEBP, or GIF images only.';
+            continue;
+        }
+        if ($item['size'] > 8 * 1024 * 1024) {
+            $errors[] = 'Each advertisement image must be 8 MB or smaller.';
+            continue;
+        }
+        $info = @getimagesize($item['tmp_name']);
+        if ($info === false || !in_array((string) ($info['mime'] ?? ''), $allowed, true)) {
+            $errors[] = 'One file is not a valid image.';
+            continue;
+        }
+
+        $filename = bin2hex(random_bytes(8)) . '_' . time() . '.' . ($ext === 'jpeg' ? 'jpg' : $ext);
+        $relative = 'queue-ads/' . $filename;
+        $target = $dir . '/' . $filename;
+        if (!move_uploaded_file($item['tmp_name'], $target)) {
+            $errors[] = 'Could not save an advertisement image.';
+            continue;
+        }
+
+        $nextOrder++;
+        $original = trim((string) $item['name']);
+        if (strlen($original) > 255) {
+            $original = substr($original, 0, 255);
+        }
+        $insert->execute([$relative, $original !== '' ? $original : null, $nextOrder]);
+    }
+
+    return $errors;
+}
+
+function deleteQueueDisplayAd(int $adId): bool {
+    ensureQueueSchema();
+    if ($adId <= 0) {
+        return false;
+    }
+
+    $stmt = getDB()->prepare('SELECT file_path FROM queue_display_ads WHERE id = ?');
+    $stmt->execute([$adId]);
+    $path = $stmt->fetchColumn();
+    if ($path === false) {
+        return false;
+    }
+
+    $fullPath = queueDisplayAdAbsolutePath((string) $path);
+    getDB()->prepare('DELETE FROM queue_display_ads WHERE id = ?')->execute([$adId]);
+    if ($fullPath !== null && is_file($fullPath)) {
+        @unlink($fullPath);
+    }
+
+    return true;
+}
+
+function moveQueueDisplayAd(int $adId, string $direction): void {
+    ensureQueueSchema();
+    $ads = getQueueDisplayAds(false);
+    $index = null;
+    foreach ($ads as $i => $ad) {
+        if ((int) $ad['id'] === $adId) {
+            $index = $i;
+            break;
+        }
+    }
+    if ($index === null) {
+        return;
+    }
+
+    $swapWith = $direction === 'up' ? $index - 1 : $index + 1;
+    if (!isset($ads[$swapWith])) {
+        return;
+    }
+
+    $db = getDB();
+    $update = $db->prepare('UPDATE queue_display_ads SET sort_order = ? WHERE id = ?');
+    $update->execute([(int) $ads[$swapWith]['sort_order'], (int) $ads[$index]['id']]);
+    $update->execute([(int) $ads[$index]['sort_order'], (int) $ads[$swapWith]['id']]);
+    if ((int) $ads[$index]['sort_order'] === (int) $ads[$swapWith]['sort_order']) {
+        $update->execute([$swapWith + 1, (int) $ads[$swapWith]['id']]);
+        $update->execute([$index + 1, (int) $ads[$index]['id']]);
+    }
+}
+
+function queueDisplayAdAbsolutePath(string $relativePath): ?string {
+    $relativePath = str_replace('\\', '/', ltrim($relativePath, '/'));
+    if (!str_starts_with($relativePath, 'queue-ads/')) {
+        return null;
+    }
+
+    $base = realpath(UPLOAD_PATH . '/queue-ads');
+    $file = realpath(UPLOAD_PATH . '/' . $relativePath);
+    if ($base === false || $file === false || !is_file($file)) {
+        return null;
+    }
+
+    $basePrefix = rtrim(str_replace('\\', '/', $base), '/') . '/';
+    $filePath = str_replace('\\', '/', $file);
+    if (!str_starts_with($filePath, $basePrefix)) {
+        return null;
+    }
+
+    return $file;
+}
+
 /**
  * @return array<string,mixed>
  */
@@ -624,6 +879,7 @@ function getQueueDisplayState(): array {
         ] : null,
         'office' => APP_NAME,
         'tagline' => APP_TAGLINE,
+        'ads' => getQueueDisplayAdState(),
     ];
 }
 

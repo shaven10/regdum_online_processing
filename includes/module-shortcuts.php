@@ -33,6 +33,7 @@ function moduleShortcutCatalog(string $role): array {
             ['key' => 'grade-entry', 'label' => 'Enter Grades', 'url' => $base . '/registrar/grade-entry.php', 'icon' => 'fa-paste'],
             ['key' => 'prospectus', 'label' => 'Course Prospectus', 'url' => $base . '/registrar/prospectuses.php', 'icon' => 'fa-book'],
             ['key' => 'reports', 'label' => 'All Requests', 'url' => $base . '/registrar/reports.php', 'icon' => 'fa-list-alt'],
+            ['key' => 'document-statistics', 'label' => 'Documents & Assignments', 'url' => $base . '/registrar/document-statistics-report.php', 'icon' => 'fa-chart-pie'],
             ['key' => 'enrollment-report', 'label' => 'Enrollment by Course', 'url' => $base . '/registrar/enrollment-report.php', 'icon' => 'fa-table'],
             ['key' => 'enrollment-list', 'label' => 'Enrollment List', 'url' => $base . '/registrar/enrollment-list-report.php', 'icon' => 'fa-user-graduate'],
             ['key' => 'compliance', 'label' => 'Request Review', 'url' => $base . '/registrar/compliance.php', 'icon' => 'fa-clipboard-check'],

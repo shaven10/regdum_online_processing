@@ -10,8 +10,12 @@
     const waitingCountEl = root.querySelector('[data-queue-waiting-count]');
     const dateEl = root.querySelector('[data-queue-date]');
     const timeEl = root.querySelector('[data-queue-time]');
+    const adsEl = root.querySelector('[data-queue-ads]');
     let lastCalledId = null;
     let soundEnabled = true;
+    let adsSignature = '';
+    let adsIndex = 0;
+    let adsTimer = null;
 
     function escapeHtml(value) {
         return String(value ?? '')
@@ -75,12 +79,74 @@
             }
         }
 
+        renderAds(state.ads || {});
+
         const calledId = state.last_called && state.last_called.id ? Number(state.last_called.id) : null;
         if (calledId && lastCalledId !== null && calledId !== lastCalledId) {
             playChime();
         }
         if (calledId) {
             lastCalledId = calledId;
+        }
+    }
+
+    function showAd(index) {
+        if (!adsEl) return;
+        const slides = adsEl.querySelectorAll('.queue-display-ad');
+        if (!slides.length) return;
+        adsIndex = ((index % slides.length) + slides.length) % slides.length;
+        slides.forEach(function (slide, slideIndex) {
+            slide.classList.toggle('is-active', slideIndex === adsIndex);
+        });
+        const indexEl = adsEl.querySelector('[data-queue-ads-index]');
+        if (indexEl) indexEl.textContent = String(adsIndex + 1);
+    }
+
+    function renderAds(ads) {
+        if (!adsEl) return;
+        const images = Array.isArray(ads.images) ? ads.images : [];
+        const enabled = !!ads.enabled && images.length > 0;
+        const interval = Math.max(3, Number(ads.interval_seconds) || 8);
+        const signature = images.map(function (image) { return image.url || ''; }).join('|') + '|' + interval + '|' + (enabled ? '1' : '0');
+
+        root.classList.toggle('has-queue-ads', enabled);
+        adsEl.hidden = !enabled;
+        if (!enabled) {
+            if (adsTimer) {
+                clearInterval(adsTimer);
+                adsTimer = null;
+            }
+            adsSignature = signature;
+            return;
+        }
+
+        if (signature !== adsSignature) {
+            adsSignature = signature;
+            adsIndex = 0;
+            const count = adsEl.querySelector('[data-queue-ads-count]');
+            adsEl.querySelectorAll('.queue-display-ad').forEach(function (slide) { slide.remove(); });
+            images.forEach(function (image, index) {
+                const slide = document.createElement('div');
+                slide.className = 'queue-display-ad' + (index === 0 ? ' is-active' : '');
+                const img = document.createElement('img');
+                img.src = image.url || '';
+                img.alt = image.name || 'Advertisement';
+                slide.appendChild(img);
+                adsEl.insertBefore(slide, count);
+            });
+            const totalEl = adsEl.querySelector('[data-queue-ads-total]');
+            if (totalEl) totalEl.textContent = String(images.length);
+            if (count) count.hidden = images.length < 2;
+            showAd(0);
+            if (adsTimer) {
+                clearInterval(adsTimer);
+                adsTimer = null;
+            }
+            if (images.length > 1) {
+                adsTimer = setInterval(function () {
+                    showAd(adsIndex + 1);
+                }, interval * 1000);
+            }
         }
     }
 

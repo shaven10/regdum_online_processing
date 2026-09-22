@@ -6314,6 +6314,16 @@ a.feature-card-link:hover {
 .registrar-processed-users-table td[data-label="Share"] .status-bar {
     min-width: 80px;
 }
+.document-statistics-table td[data-label="Share"] .status-bar {
+    min-width: 72px;
+}
+.document-statistics-table .num {
+    text-align: right;
+    white-space: nowrap;
+}
+.document-statistics-page .card + .card {
+    margin-top: 1rem;
+}
 @media (max-width: 900px) {
     .registrar-monthly-bars {
         grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -9130,12 +9140,67 @@ body.grades-missing-paste-open {
     display: block;
     font-size: 1.6rem;
 }
+.queue-display-split {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+}
+.queue-display-page.has-queue-ads .queue-display-split {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.queue-display-board {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
 .queue-display-main {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 280px;
     gap: 1rem;
-    padding: 0 1.5rem 1.25rem;
+    padding: 0 1.5rem 1rem;
     flex: 1;
+    min-height: 0;
+}
+.queue-display-ads {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    margin: 0 1.25rem 1.25rem 0;
+    border-radius: 1.25rem;
+    overflow: hidden;
+    background: #031a14;
+    border: 1px solid rgba(167, 243, 208, 0.18);
+}
+.queue-display-ads[hidden] {
+    display: none;
+}
+.queue-display-ad {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity .7s ease;
+}
+.queue-display-ad.is-active {
+    opacity: 1;
+}
+.queue-display-ad img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #031a14;
+}
+.queue-display-ads-count {
+    position: absolute;
+    right: .85rem;
+    bottom: .75rem;
+    margin: 0;
+    padding: .2rem .55rem;
+    border-radius: 999px;
+    background: rgba(2, 44, 34, 0.72);
+    font-size: .8rem;
+    letter-spacing: .04em;
 }
 .queue-display-windows {
     display: grid;
@@ -9246,11 +9311,55 @@ body.grades-missing-paste-open {
     font-size: 2.4rem;
 }
 
+.queue-ad-manager {
+    display: grid;
+    gap: 1rem;
+}
+.queue-ad-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: .85rem;
+}
+.queue-ad-card {
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: #fff;
+}
+.queue-ad-card img {
+    display: block;
+    width: 100%;
+    height: 140px;
+    object-fit: cover;
+    background: var(--gray-100);
+}
+.queue-ad-card-body {
+    display: flex;
+    justify-content: space-between;
+    gap: .5rem;
+    align-items: center;
+    padding: .65rem .75rem;
+}
+.queue-ad-card-body p {
+    margin: 0;
+    min-width: 0;
+}
+.queue-ad-card-actions {
+    display: flex;
+    gap: .35rem;
+    flex-shrink: 0;
+}
+
 @media (max-width: 900px) {
     .queue-settings-summary,
     .queue-display-main,
-    .queue-window-layout {
+    .queue-window-layout,
+    .queue-display-page.has-queue-ads .queue-display-split {
         grid-template-columns: 1fr;
+    }
+    .queue-display-ads {
+        margin: 0 1rem 1rem;
+        min-height: 50vh;
     }
 }
 
