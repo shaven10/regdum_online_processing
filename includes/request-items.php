@@ -732,6 +732,7 @@ function getStaffAssignedItems(int $staffId, string $status = ''): array {
     }
 
     $sql = 'SELECT ri.*, dt.name as document_name, dt.code as document_code, r.request_number, r.status as request_status,
+            r.created_at AS request_created_at,
             r.request_channel, r.onsite_batch_key,
             r.release_date AS request_release_date, r.release_time AS request_release_time,
             r.request_school_year AS request_level_school_year, r.request_semester AS request_level_semester,
@@ -1127,6 +1128,28 @@ function assignedItemPaymentDateLabel(array $item): string {
     return formatDate((string) $date);
 }
 
+function assignedItemRequestDateLabel(array $item): string {
+    $date = trim((string) ($item['request_created_at'] ?? ''));
+    if ($date === '') {
+        return '—';
+    }
+
+    return formatDateTime($date);
+}
+
+function renderAssignedRequestNumberHtml(array $item): string {
+    $number = trim((string) ($item['request_number'] ?? ''));
+    $dateLabel = assignedItemRequestDateLabel($item);
+    $html = '<div class="assigned-request-number">';
+    $html .= '<div class="assigned-request-no">' . e($number !== '' ? $number : '—') . '</div>';
+    if ($dateLabel !== '—') {
+        $html .= '<small class="assigned-request-date text-muted">' . e($dateLabel) . '</small>';
+    }
+    $html .= '</div>';
+
+    return $html;
+}
+
 function assignedItemReleaseLabel(array $item): string {
     if (empty($item['release_date'])) {
         return '—';
@@ -1296,6 +1319,7 @@ function exportAssignedDocumentsCsv(array $items, string $filename = 'my_assignm
     foreach ($items as $item) {
         $rows[] = [
             (string) ($item['request_number'] ?? ''),
+            assignedItemRequestDateLabel($item),
             assignedItemDocumentSummary($item),
             assignedStudentNameIdLabel($item),
             assignedStudentCourseYearEnrollmentLabel($item),
@@ -1305,7 +1329,7 @@ function exportAssignedDocumentsCsv(array $items, string $filename = 'my_assignm
     }
 
     exportCSV(
-        ['Request #', 'Document/s Requested', 'Student', 'Course / Enrollment', 'Release Date', 'Status'],
+        ['Request #', 'Request Date', 'Document/s Requested', 'Student', 'Course / Enrollment', 'Release Date', 'Status'],
         $rows,
         $filename
     );

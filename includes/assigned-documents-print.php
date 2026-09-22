@@ -161,7 +161,10 @@ $printedAt = date('M d, Y h:i A');
         }
         .assignments-print-table tbody td { line-height: 1.3; }
         .assignments-print-table .col-no { width: 3.5%; text-align: center; }
-        .assignments-print-table .col-request { width: 9%; text-align: center; font-weight: 700; }
+        .assignments-print-table .col-request { width: 11%; text-align: center; }
+        .assignments-print-table .assigned-request-number { display: flex; flex-direction: column; align-items: center; }
+        .assignments-print-table .assigned-request-no { display: block; font-weight: 700; }
+        .assignments-print-table .assigned-request-date { display: block; font-size: 7pt; font-weight: 400; margin-top: .08rem; }
         .assignments-print-table .col-document { width: 20.5%; text-align: left; }
         .assignments-print-table .col-student { width: 13%; text-align: left; }
         .assignments-print-table .col-course { width: 16%; text-align: left; }
@@ -291,7 +294,7 @@ $printedAt = date('M d, Y h:i A');
                     <?php foreach ($items as $index => $item): ?>
                         <tr>
                             <td class="col-no"><?= $index + 1 ?></td>
-                            <td class="col-request"><?= e($item['request_number']) ?></td>
+                            <td class="col-request"><?= renderAssignedRequestNumberHtml($item) ?></td>
                             <td class="col-document"><?= renderAssignedDocumentLabelsHtml($item) ?></td>
                             <td class="col-student"><?= renderAssignedStudentNameIdHtml($item) ?></td>
                             <td class="col-course"><?= renderAssignedStudentCourseYearHtml($item) ?></td>

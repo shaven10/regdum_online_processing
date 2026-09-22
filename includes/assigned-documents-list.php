@@ -107,7 +107,9 @@ if ($search !== '') {
     $items = array_values(array_filter($items, static function (array $row) use ($search): bool {
         $haystack = strtolower(
             ($row['request_number'] ?? '') . ' '
-            .             ($row['document_name'] ?? '') . ' '
+            . ($row['request_created_at'] ?? '') . ' '
+            . assignedItemRequestDateLabel($row) . ' '
+            . ($row['document_name'] ?? '') . ' '
             . ($row['document_code'] ?? '') . ' '
             . assignedItemDocumentSummary($row) . ' '
             . assignedItemSchoolYear($row) . ' '
@@ -134,27 +136,13 @@ if ($search !== '') {
 
 $items = groupStaffAssignedItemsByRequest($items);
 
-$exportBaseQuery = array_filter([
-    'status' => $status !== '' ? $status : null,
-    'search' => $search !== '' ? $search : null,
-], static fn($value) => $value !== null && $value !== '');
-
-$printUrl = $listPageUrl . '?' . http_build_query($exportBaseQuery + ['print' => '1']);
-$pdfUrl = $listPageUrl . '?' . http_build_query($exportBaseQuery + ['print' => '1', 'pdf' => '1']);
-$csvUrl = $listPageUrl . '?' . http_build_query($exportBaseQuery + ['export' => 'csv']);
-
-if (($_GET['export'] ?? '') === 'csv') {
-    exportAssignedDocumentsCsv($items, 'my_assignments_' . date('Ymd_His') . '.csv');
-}
-
-if (($_GET['print'] ?? '') === '1') {
-    require_once __DIR__ . '/ui.php';
-    require_once __DIR__ . '/assigned-documents-print.php';
-    exit;
-}
-
 $sortColumns = [
     'request_number' => ['type' => 'string'],
+    'request_date' => [
+        'type' => 'date',
+        'default_dir' => 'desc',
+        'get' => static fn(array $r): string => (string) ($r['request_created_at'] ?? ''),
+    ],
     'method' => [
         'type' => 'string',
         'get' => static fn(array $r): string => (string) ($r['payment_scope_label'] ?? $r['payment_method_label'] ?? ''),
@@ -194,8 +182,28 @@ $sortColumns = [
     'item_status' => ['type' => 'string'],
     'request_status' => ['type' => 'string'],
 ];
-$sortState = resolveRecordsSort($sortColumns, 'request_number', 'asc');
+$sortState = resolveRecordsSort($sortColumns, 'request_date', 'desc');
 $items = sortRecordList($items, $sortState);
+
+$exportBaseQuery = array_filter([
+    'status' => $status !== '' ? $status : null,
+    'search' => $search !== '' ? $search : null,
+], static fn($value) => $value !== null && $value !== '');
+$exportBaseQuery = array_merge($exportBaseQuery, recordsSortFilterParams($sortState));
+
+$printUrl = $listPageUrl . '?' . http_build_query($exportBaseQuery + ['print' => '1']);
+$pdfUrl = $listPageUrl . '?' . http_build_query($exportBaseQuery + ['print' => '1', 'pdf' => '1']);
+$csvUrl = $listPageUrl . '?' . http_build_query($exportBaseQuery + ['export' => 'csv']);
+
+if (($_GET['export'] ?? '') === 'csv') {
+    exportAssignedDocumentsCsv($items, 'my_assignments_' . date('Ymd_His') . '.csv');
+}
+
+if (($_GET['print'] ?? '') === '1') {
+    require_once __DIR__ . '/ui.php';
+    require_once __DIR__ . '/assigned-documents-print.php';
+    exit;
+}
 
 $pagedAssignedDocuments = paginateRecordList($items, array_merge([
     'status' => $status,
@@ -231,7 +239,7 @@ require_once __DIR__ . '/header.php';
     <div class="card-body">
         <form method="GET" class="filter-bar" id="assignedDocumentsFilterForm">
             <?= recordsSortFormFields($sortState) ?>
-            <input type="text" name="search" placeholder="Search request #, method, document, school year, semester, student, release date..." value="<?= e($search) ?>">
+            <input type="text" name="search" placeholder="Search request #, request date, method, document, school year, semester, student, release date..." value="<?= e($search) ?>">
             <select name="status">
                 <option value="">Active Assignments</option>
                 <option value="processing" <?= $status === 'processing' ? 'selected' : '' ?>>Processing</option>
@@ -263,7 +271,7 @@ require_once __DIR__ . '/header.php';
                                     <input type="checkbox" id="assignedSelectAllRequests" aria-label="Select all assignments">
                                 </label>
                             </th>
-                            <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
+                            <?= renderRecordsSortHeader('Request #', 'request_date', $sortState, $sortQuery) ?>
                             <?= renderRecordsSortHeader('Method', 'method', $sortState, $sortQuery) ?>
                             <?= renderRecordsSortHeader('Document/s Requested', 'document_name', $sortState, $sortQuery) ?>
                             <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
@@ -292,7 +300,7 @@ require_once __DIR__ . '/header.php';
                                         </label>
                                     <?php endif; ?>
                                 </td>
-                                <td data-label="Request #"><strong><?= e($item['request_number']) ?></strong></td>
+                                <td data-label="Request #"><?= renderAssignedRequestNumberHtml($item) ?></td>
                                 <td data-label="Method"><?= renderAssignedItemMethodHtml($item) ?></td>
                                 <td data-label="Document/s Requested" class="assigned-documents-docs">
                                     <?= renderAssignedDocumentLabelsHtml($item) ?>

@@ -1329,6 +1329,33 @@ a.status-bar-item {
     font-size: .8rem;
 }
 
+.assigned-documents-table td[data-label="Request #"] {
+    white-space: normal;
+}
+
+.assigned-request-number {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: .1rem;
+    white-space: normal;
+}
+
+.assigned-request-no {
+    display: block;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.assigned-request-date {
+    display: block;
+    margin: 0;
+    font-size: .75rem;
+    font-weight: 400;
+    line-height: 1.2;
+    white-space: normal;
+}
+
 .assigned-student-id,
 .assigned-method-name {
     display: block;
