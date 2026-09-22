@@ -135,6 +135,49 @@ function clearanceDashboardStats(int $departmentId, ?int $programId = null): arr
 }
 
 /**
+ * Live request volume for dashboards, using Philippine app-calendar dates.
+ *
+ * @return array<string,int|float>
+ */
+function getRegistrarRequestVolumeStats(): array {
+    $db = getDB();
+    $today = appDayBounds();
+    $todayStart = appStartOfDay();
+    $weekStart = $todayStart->modify('-6 days')->format('Y-m-d H:i:s');
+    $monthStart = $todayStart->modify('first day of this month');
+    $monthEnd = $monthStart->modify('first day of next month')->format('Y-m-d H:i:s');
+    $yearStart = appStartOfDay($todayStart->format('Y') . '-01-01');
+    $yearEnd = $yearStart->modify('+1 year')->format('Y-m-d H:i:s');
+
+    $countCreated = $db->prepare('SELECT COUNT(*) FROM requests WHERE created_at >= ? AND created_at < ?');
+    $countCreated->execute([$today['start'], $today['end']]);
+    $todayCount = (int) $countCreated->fetchColumn();
+    $countCreated->execute([$weekStart, $today['end']]);
+    $weekCount = (int) $countCreated->fetchColumn();
+    $countCreated->execute([$monthStart->format('Y-m-d H:i:s'), $monthEnd]);
+    $monthCount = (int) $countCreated->fetchColumn();
+    $countCreated->execute([$yearStart->format('Y-m-d H:i:s'), $yearEnd]);
+    $yearCount = (int) $countCreated->fetchColumn();
+
+    $completedToday = $db->prepare("SELECT COUNT(*) FROM requests
+        WHERE status = 'completed' AND completed_at >= ? AND completed_at < ?");
+    $completedToday->execute([$today['start'], $today['end']]);
+
+    return [
+        'today' => $todayCount,
+        'week' => $weekCount,
+        'month' => $monthCount,
+        'year' => $yearCount,
+        'active' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status NOT IN ('completed','rejected')")->fetchColumn(),
+        'completed' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'completed'")->fetchColumn(),
+        'completed_today' => (int) $completedToday->fetchColumn(),
+        'rejected' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'rejected'")->fetchColumn(),
+        'avg_processing_days' => (float) $db->query("SELECT COALESCE(AVG(DATEDIFF(completed_at, created_at)), 0)
+            FROM requests WHERE completed_at IS NOT NULL AND status = 'completed'")->fetchColumn(),
+    ];
+}
+
+/**
  * Registrar dashboard analytics: document request frequency and volume metrics.
  *
  * @return array{
@@ -158,20 +201,7 @@ function getRegistrarDashboardAnalytics(): array {
     $months = [1 => 'Jan', 2 => 'Feb', 3 => 'Mar', 4 => 'Apr', 5 => 'May', 6 => 'Jun',
         7 => 'Jul', 8 => 'Aug', 9 => 'Sep', 10 => 'Oct', 11 => 'Nov', 12 => 'Dec'];
 
-    $volume = [
-        'today' => (int) $db->query('SELECT COUNT(*) FROM requests WHERE DATE(created_at) = CURDATE()')->fetchColumn(),
-        'week' => (int) $db->query('SELECT COUNT(*) FROM requests WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)')->fetchColumn(),
-        'month' => (int) $db->query('SELECT COUNT(*) FROM requests
-            WHERE MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())')->fetchColumn(),
-        'year' => (int) $db->query('SELECT COUNT(*) FROM requests WHERE YEAR(created_at) = YEAR(CURDATE())')->fetchColumn(),
-        'active' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status NOT IN ('completed','rejected')")->fetchColumn(),
-        'completed' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'completed'")->fetchColumn(),
-        'completed_today' => (int) $db->query("SELECT COUNT(*) FROM requests
-            WHERE status = 'completed' AND DATE(completed_at) = CURDATE()")->fetchColumn(),
-        'rejected' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'rejected'")->fetchColumn(),
-        'avg_processing_days' => (float) $db->query("SELECT COALESCE(AVG(DATEDIFF(completed_at, created_at)), 0)
-            FROM requests WHERE completed_at IS NOT NULL AND status = 'completed'")->fetchColumn(),
-    ];
+    $volume = getRegistrarRequestVolumeStats();
 
     $online = (int) $db->query("SELECT COUNT(*) FROM requests
         WHERE COALESCE(request_channel, 'online') <> 'onsite'")->fetchColumn();

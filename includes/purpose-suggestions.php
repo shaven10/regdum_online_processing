@@ -208,14 +208,14 @@ function defaultRequestPurposeDefinitions(): array {
             'label' => 'Scholarship',
             'hint' => 'Scholarship applications usually require your transcript, grades, enrollment proof, statement of account, or good moral certificate.',
             'sort_order' => 20,
-            'documents' => ['TOR', 'COGR', 'COE', 'GMC', 'SOA'],
+            'documents' => ['TOR', 'COGR', 'COE', 'COR', 'GMC', 'SOA'],
         ],
         [
             'code' => 'transfer',
             'label' => 'Transfer',
-            'hint' => 'School transfers typically need your transcript, grades, and enrollment certificate.',
+            'hint' => 'School transfers typically need your transcript, grades, enrollment certificate, or certificate of registration.',
             'sort_order' => 30,
-            'documents' => ['TOR', 'COGR', 'COE'],
+            'documents' => ['TOR', 'COGR', 'COE', 'COR'],
         ],
         [
             'code' => 'further_studies',
@@ -227,9 +227,9 @@ function defaultRequestPurposeDefinitions(): array {
         [
             'code' => 'personal',
             'label' => 'Personal',
-            'hint' => 'Common personal requests include transcript, grades, enrollment certificate, or statement of account.',
+            'hint' => 'Common personal requests include transcript, grades, enrollment certificate, certificate of registration, or statement of account.',
             'sort_order' => 50,
-            'documents' => ['TOR', 'COGR', 'COE', 'SOA'],
+            'documents' => ['TOR', 'COGR', 'COE', 'COR', 'SOA'],
         ],
         [
             'code' => 'legal',

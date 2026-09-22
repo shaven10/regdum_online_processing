@@ -140,7 +140,9 @@ function renderRequestSoaInfoHtml(?array $request): string {
 
 function seedTermInfoDocumentTypes(): void {
     $db = getDB();
-    $db->exec("UPDATE document_types SET requires_term_info = 1 WHERE code IN ('COE', 'COGR')");
+    $db->exec("UPDATE document_types SET requires_term_info = 1
+        WHERE code IN ('COE', 'COGR', 'COR')
+           OR LOWER(name) LIKE '%certificate of registration%'");
 
     $exists = $db->prepare('SELECT id FROM document_types WHERE code = ?');
     $exists->execute(['COGR']);
@@ -149,6 +151,58 @@ function seedTermInfoDocumentTypes(): void {
             VALUES ('Certificate of Grades', 'COGR', 'Official certificate of grades for a specific school year and semester', 75.00, 25.00, 3, 0, 1)");
         seedDocumentEnrollmentRulesForType((int) $db->lastInsertId(), 'COGR');
     }
+
+    seedCertificateOfRegistrationDocumentType();
+}
+
+function seedCertificateOfRegistrationDocumentType(): void {
+    $db = getDB();
+
+    $rows = $db->query("SELECT id, code FROM document_types
+        WHERE code = 'COR' OR LOWER(name) LIKE '%certificate of registration%'")->fetchAll();
+
+    if (!$rows) {
+        $db->exec("INSERT INTO document_types (name, code, description, base_fee, per_copy_fee, processing_days, requires_upload, requires_term_info)
+            VALUES ('Certificate of Registration', 'COR', 'Official certificate of registration for a specific school year and semester', 50.00, 25.00, 2, 0, 1)");
+        $newId = (int) $db->lastInsertId();
+        seedDocumentEnrollmentRulesForType($newId, 'COR');
+        if (function_exists('seedDocumentTypeRequirementDefaults')) {
+            seedDocumentTypeRequirementDefaults($newId, 'COR');
+        }
+        $rows = [['id' => $newId, 'code' => 'COR']];
+    }
+
+    $db->exec("UPDATE document_types SET requires_term_info = 1
+        WHERE code = 'COR' OR LOWER(name) LIKE '%certificate of registration%'");
+
+    ensureDocumentEnrollmentRulesSchema();
+
+    $preset = defaultRulePresetForDocumentCode('COR');
+    $selectRule = $db->prepare('SELECT id FROM document_type_enrollment_rules WHERE document_type_id = ? AND enrollment_status = ?');
+    $insertRule = $db->prepare('INSERT INTO document_type_enrollment_rules (document_type_id, enrollment_status, is_allowed, max_copies) VALUES (?, ?, ?, ?)');
+
+    foreach ($rows as $row) {
+        foreach (enrollmentStatusesForDocumentRules() as $status) {
+            $selectRule->execute([(int) $row['id'], $status]);
+            if ($selectRule->fetch()) {
+                continue;
+            }
+            $rule = $preset[$status] ?? ['is_allowed' => 1, 'max_copies' => 5];
+            $insertRule->execute([
+                (int) $row['id'],
+                $status,
+                (int) $rule['is_allowed'],
+                max(1, min(99, (int) $rule['max_copies'])),
+            ]);
+        }
+    }
+
+    $db->exec("UPDATE document_type_enrollment_rules r
+        INNER JOIN document_types dt ON dt.id = r.document_type_id
+        SET r.is_allowed = 1,
+            r.max_copies = GREATEST(r.max_copies, 5)
+        WHERE (dt.code = 'COR' OR LOWER(dt.name) LIKE '%certificate of registration%')
+          AND r.enrollment_status IN ('enrolled', 'graduated')");
 }
 
 function documentTypeRequiresTermInfo(array $documentType): bool {
@@ -768,7 +822,7 @@ function defaultRulePresetForDocumentCode(string $code): array {
         ];
     }
 
-    if ($code === 'COGR') {
+    if (in_array($code, ['COGR', 'COR'], true)) {
         return [
             'enrolled'  => ['is_allowed' => 1, 'max_copies' => 5],
             'graduated' => ['is_allowed' => 1, 'max_copies' => 5],

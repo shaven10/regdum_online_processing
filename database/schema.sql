@@ -177,6 +177,7 @@ INSERT INTO document_types (name, code, description, base_fee, per_copy_fee, pro
 ('Diploma', 'DIPLOMA', 'Official diploma copy', 200.00, 0.00, 7, 1, 0, 0, 0, 0, 'registrar'),
 ('Certificate of Enrollment', 'COE', 'Proof of current enrollment', 50.00, 25.00, 2, 0, 1, 0, 0, 0, 'registrar'),
 ('Certificate of Grades', 'COGR', 'Official certificate of grades for a specific school year and semester', 75.00, 25.00, 3, 0, 1, 0, 0, 0, 'registrar'),
+('Certificate of Registration', 'COR', 'Official certificate of registration for a specific school year and semester', 50.00, 25.00, 2, 0, 1, 0, 0, 0, 'registrar'),
 ('Statement of Account', 'SOA', 'Official statement of account for a specific school year and semester', 75.00, 25.00, 3, 0, 1, 1, 0, 0, 'cashier'),
 ('Certificate of Graduation', 'COG', 'Proof of graduation', 100.00, 25.00, 3, 0, 0, 0, 0, 0, 'registrar'),
 ('Good Moral Certificate', 'GMC', 'Certificate of good moral character', 75.00, 25.00, 3, 0, 0, 0, 0, 0, 'guidance'),

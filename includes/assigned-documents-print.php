@@ -167,7 +167,9 @@ $printedAt = date('M d, Y h:i A');
         .assignments-print-table .col-course { width: 16%; text-align: left; }
         .assignments-print-table .assigned-student-id { display: block; font-size: 7pt; }
         .assignments-print-table .assigned-course-year-year { display: block; font-size: 7pt; }
-        .assignments-print-table .col-or { width: 8%; text-align: center; }
+        .assignments-print-table .col-or { width: 9%; text-align: center; }
+        .assignments-print-table .assigned-or-number { font-weight: 700; }
+        .assignments-print-table .assigned-payment-date { display: block; font-size: 7pt; margin-top: .08rem; }
         .assignments-print-table .col-release { width: 10%; text-align: center; }
         .assignments-print-table .col-status { width: 15%; text-align: left; }
         .assignments-print-table .assigned-status-row { display: block; }
@@ -293,7 +295,10 @@ $printedAt = date('M d, Y h:i A');
                             <td class="col-document"><?= renderAssignedDocumentLabelsHtml($item) ?></td>
                             <td class="col-student"><?= renderAssignedStudentNameIdHtml($item) ?></td>
                             <td class="col-course"><?= renderAssignedStudentCourseYearHtml($item) ?></td>
-                            <td class="col-or"><?= e(assignedItemOrNumber($item)) ?></td>
+                            <td class="col-or">
+                                <div class="assigned-or-number"><?= e(assignedItemOrNumber($item)) ?></div>
+                                <small class="assigned-payment-date"><?= e(assignedItemPaymentDateLabel($item)) ?></small>
+                            </td>
                             <td class="col-release"><?= e(assignedItemReleaseLabel($item)) ?></td>
                             <td class="col-status">
                                 <div class="assigned-status-row"><span class="assigned-status-label">Docs -</span> <?= e(requestItemStatusLabel((string) ($item['item_status'] ?? ''))) ?><?php if (($item['item_status'] ?? '') === 'mixed' && !empty($item['item_status_detail'])): ?> <span class="assigned-status-detail">(<?= e((string) $item['item_status_detail']) ?>)</span><?php endif; ?></div>

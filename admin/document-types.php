@@ -7,6 +7,7 @@ requireRole('admin');
 
 ensureDocumentTypeFeeSchema();
 ensureDocumentAssignmentOfficeSchema();
+ensureRequestTermInfoSchema();
 
 
 
@@ -62,6 +63,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
             'requires_upload'            => !empty($_POST['requires_upload']) ? 1 : 0,
 
+            'requires_term_info'         => !empty($_POST['requires_term_info']) ? 1 : 0,
+
             'is_active'                  => !empty($_POST['is_active']) ? 1 : 0,
 
             'assignment_office'          => normalizeAssignmentOffice($_POST['assignment_office'] ?? 'registrar'),
@@ -98,7 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
                 if ($action === 'create') {
 
-                    $db->prepare('INSERT INTO document_types (name, code, description, base_fee, per_copy_fee, processing_days, requires_upload, requires_documentary_stamp, fee_per_set, is_active, assignment_office) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)')
+                    $db->prepare('INSERT INTO document_types (name, code, description, base_fee, per_copy_fee, processing_days, requires_upload, requires_term_info, requires_documentary_stamp, fee_per_set, is_active, assignment_office) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)')
 
                        ->execute([
 
@@ -106,7 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
                            $data['base_fee'], $data['processing_days'],
 
-                           $data['requires_upload'], $data['requires_documentary_stamp'], $data['fee_per_set'], $data['is_active'], $data['assignment_office'],
+                           $data['requires_upload'], $data['requires_term_info'], $data['requires_documentary_stamp'], $data['fee_per_set'], $data['is_active'], $data['assignment_office'],
 
                        ]);
 
@@ -126,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
                     $id = (int) ($_POST['document_type_id'] ?? 0);
 
-                    $db->prepare('UPDATE document_types SET name = ?, code = ?, description = ?, base_fee = ?, per_copy_fee = 0, processing_days = ?, requires_upload = ?, requires_documentary_stamp = ?, fee_per_set = ?, is_active = ?, assignment_office = ? WHERE id = ?')
+                    $db->prepare('UPDATE document_types SET name = ?, code = ?, description = ?, base_fee = ?, per_copy_fee = 0, processing_days = ?, requires_upload = ?, requires_term_info = ?, requires_documentary_stamp = ?, fee_per_set = ?, is_active = ?, assignment_office = ? WHERE id = ?')
 
                        ->execute([
 
@@ -134,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
                            $data['base_fee'], $data['processing_days'],
 
-                           $data['requires_upload'], $data['requires_documentary_stamp'], $data['fee_per_set'], $data['is_active'], $data['assignment_office'], $id,
+                           $data['requires_upload'], $data['requires_term_info'], $data['requires_documentary_stamp'], $data['fee_per_set'], $data['is_active'], $data['assignment_office'], $id,
 
                        ]);
 
@@ -295,6 +298,7 @@ require_once __DIR__ . '/../includes/header.php';
                                 <strong><?= e($doc['name']) ?></strong>
 
                                 <?php if ($doc['requires_upload']): ?><br><small class="text-muted">Upload required</small><?php endif; ?>
+                                <?php if (!empty($doc['requires_term_info'])): ?><br><small class="text-muted">School year / semester required</small><?php endif; ?>
 
                             </td>
 
@@ -341,6 +345,8 @@ require_once __DIR__ . '/../includes/header.php';
                                     'processing_days' => (int) $doc['processing_days'],
 
                                     'requires_upload' => (int) $doc['requires_upload'],
+
+                                    'requires_term_info' => (int) ($doc['requires_term_info'] ?? 0),
 
                                     'is_active' => (int) $doc['is_active'],
 
@@ -522,6 +528,20 @@ require_once __DIR__ . '/../includes/header.php';
 
 
     <div class="form-group">
+
+        <label class="checkbox-label">
+
+            <input type="checkbox" name="requires_term_info" value="1">
+
+            Requires school year and semester (students can request multiple terms and copies)
+
+        </label>
+
+    </div>
+
+
+
+    <div class="form-group">
         <label for="doc_assignment_office">Default Assignment Office</label>
         <select id="doc_assignment_office" name="assignment_office">
             <?php foreach (assignmentOfficeOptions() as $office => $label): ?>
@@ -574,6 +594,8 @@ require_once __DIR__ . '/../includes/header.php';
     'processing_days' => (int) $editDoc['processing_days'],
 
     'requires_upload' => (int) $editDoc['requires_upload'],
+
+    'requires_term_info' => (int) ($editDoc['requires_term_info'] ?? 0),
 
     'is_active' => (int) $editDoc['is_active'],
 

@@ -12,6 +12,21 @@ ensureRequestItemsSchema();
 require_once __DIR__ . '/../includes/onsite-request.php';
 ensureOnsiteRequestSchema();
 
+if (isset($_GET['volume'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    $volume = getRegistrarRequestVolumeStats();
+    echo json_encode([
+        'today' => (int) $volume['today'],
+        'week' => (int) $volume['week'],
+        'month' => (int) $volume['month'],
+        'active' => (int) $volume['active'],
+        'completed_today' => (int) $volume['completed_today'],
+        'date' => appToday(),
+    ]);
+    exit;
+}
+
 $stats = getComplianceStats();
 $assignmentStats = staffDashboardStats((int) $user['id']);
 $analytics = getRegistrarDashboardAnalytics();
@@ -71,10 +86,10 @@ renderDashboardActions([
 ?>
 
 <div class="stats-grid">
-    <?= statCardLink('reports.php?period=daily&date=' . urlencode(date('Y-m-d')), 'blue', 'fa-calendar-day', (string) $volume['today'], 'Requests Today') ?>
-    <?= statCardLink('reports.php?period=weekly&date=' . urlencode(date('Y-m-d')), 'teal', 'fa-calendar-week', (string) $volume['week'], 'Last 7 Days') ?>
-    <?= statCardLink('reports.php?period=monthly&date=' . urlencode(date('Y-m-d')), 'purple', 'fa-calendar', (string) $volume['month'], 'This Month') ?>
-    <?= statCardLink('compliance.php?filter=', 'orange', 'fa-spinner', (string) $volume['active'], 'Active Requests') ?>
+    <?= statCardLink('reports.php?period=daily&date=' . urlencode(appToday()), 'blue', 'fa-calendar-day', (string) $volume['today'], 'Requests Today', 'data-dashboard-volume="today"') ?>
+    <?= statCardLink('reports.php?period=weekly&date=' . urlencode(appToday()), 'teal', 'fa-calendar-week', (string) $volume['week'], 'Last 7 Days', 'data-dashboard-volume="week"') ?>
+    <?= statCardLink('reports.php?period=monthly&date=' . urlencode(appToday()), 'purple', 'fa-calendar', (string) $volume['month'], 'This Month', 'data-dashboard-volume="month"') ?>
+    <?= statCardLink('compliance.php?filter=', 'orange', 'fa-spinner', (string) $volume['active'], 'Active Requests', 'data-dashboard-volume="active"') ?>
     <?= statCardLink('reports.php?channel=online', 'blue', 'fa-globe', (string) $channels['online'], 'Online Requests') ?>
     <?= statCardLink('reports.php?channel=onsite', 'purple', 'fa-store', (string) $channels['onsite'], 'Onsite Requests') ?>
 </div>
@@ -154,7 +169,7 @@ renderDashboardActions([
                 </div>
                 <div class="detail-item">
                     <label>Completed today</label>
-                    <span><?= (int) $volume['completed_today'] ?></span>
+                    <span data-dashboard-volume="completed_today"><?= (int) $volume['completed_today'] ?></span>
                 </div>
                 <div class="detail-item">
                     <label>Rejected</label>
@@ -528,5 +543,49 @@ renderDashboardActions([
         <?php endif; ?>
     </div>
 </div>
+
+<script>
+(function () {
+    const targets = document.querySelectorAll('[data-dashboard-volume]');
+    if (!targets.length) {
+        return;
+    }
+
+    function applyVolume(data) {
+        targets.forEach(function (el) {
+            const key = el.getAttribute('data-dashboard-volume');
+            if (!key || data[key] == null) {
+                return;
+            }
+            const valueEl = el.matches('.stat-card') ? el.querySelector('.stat-info h3') : el;
+            if (valueEl) {
+                valueEl.textContent = String(data[key]);
+            }
+        });
+    }
+
+    function refreshVolume() {
+        fetch('dashboard.php?volume=1', {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' }
+        })
+            .then(function (response) {
+                if (!response.ok) {
+                    throw new Error('Unable to refresh dashboard volume');
+                }
+                return response.json();
+            })
+            .then(applyVolume)
+            .catch(function () {});
+    }
+
+    setInterval(refreshVolume, 15000);
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) {
+            refreshVolume();
+        }
+    });
+})();
+</script>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

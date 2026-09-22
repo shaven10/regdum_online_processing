@@ -46,6 +46,26 @@ function appToday(): string {
     return (new DateTimeImmutable('now', new DateTimeZone(appTimezone())))->format('Y-m-d');
 }
 
+function appStartOfDay(?string $date = null): DateTimeImmutable {
+    $tz = new DateTimeZone(appTimezone());
+    $date = $date ?: appToday();
+    return new DateTimeImmutable($date . ' 00:00:00', $tz);
+}
+
+/**
+ * Half-open [start, end) datetime bounds in app timezone for SQL comparisons.
+ *
+ * @return array{start:string,end:string,date:string}
+ */
+function appDayBounds(?string $date = null): array {
+    $start = appStartOfDay($date);
+    return [
+        'start' => $start->format('Y-m-d H:i:s'),
+        'end' => $start->modify('+1 day')->format('Y-m-d H:i:s'),
+        'date' => $start->format('Y-m-d'),
+    ];
+}
+
 /**
  * Parse a date/datetime string in the app timezone.
  */
@@ -1362,8 +1382,17 @@ function getDashboardStats(): array {
     $stats['total_requests'] = (int) $db->query('SELECT COUNT(*) FROM requests')->fetchColumn();
     $stats['pending'] = (int) $db->query("SELECT COUNT(*) FROM requests WHERE status NOT IN ('completed','rejected','cancelled')")->fetchColumn();
     $stats['completed'] = (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'completed'")->fetchColumn();
-    $stats['today'] = (int) $db->query('SELECT COUNT(*) FROM requests WHERE DATE(created_at) = CURDATE()')->fetchColumn();
-    $stats['month'] = (int) $db->query('SELECT COUNT(*) FROM requests WHERE MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())')->fetchColumn();
+    $today = appDayBounds();
+    $monthStart = appStartOfDay()->modify('first day of this month');
+    $todayStmt = $db->prepare('SELECT COUNT(*) FROM requests WHERE created_at >= ? AND created_at < ?');
+    $todayStmt->execute([$today['start'], $today['end']]);
+    $stats['today'] = (int) $todayStmt->fetchColumn();
+    $monthStmt = $db->prepare('SELECT COUNT(*) FROM requests WHERE created_at >= ? AND created_at < ?');
+    $monthStmt->execute([
+        $monthStart->format('Y-m-d H:i:s'),
+        $monthStart->modify('first day of next month')->format('Y-m-d H:i:s'),
+    ]);
+    $stats['month'] = (int) $monthStmt->fetchColumn();
     $stats['revenue'] = (float) $db->query("SELECT COALESCE(SUM(amount),0) FROM payments WHERE status = 'verified'")->fetchColumn();
     $stats['month_revenue'] = (float) $db->query("SELECT COALESCE(SUM(amount),0) FROM payments WHERE status = 'verified' AND MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())")->fetchColumn();
     $stats['students'] = (int) $db->query("SELECT COUNT(*) FROM users WHERE role_id = 1")->fetchColumn();
@@ -1420,8 +1449,9 @@ function normalizePersonName(?string $name): string {
     return strtoupper($name);
 }
 
-function statCardLink(string $url, string $iconClass, string $icon, string $value, string $label): string {
-    return '<a href="' . e($url) . '" class="stat-card stat-card-link">'
+function statCardLink(string $url, string $iconClass, string $icon, string $value, string $label, string $attrs = ''): string {
+    $extra = $attrs !== '' ? ' ' . $attrs : '';
+    return '<a href="' . e($url) . '" class="stat-card stat-card-link"' . $extra . '>'
         . '<div class="stat-icon ' . e($iconClass) . '"><i class="fas ' . e($icon) . '"></i></div>'
         . '<div class="stat-info"><h3>' . $value . '</h3><p>' . e($label) . '</p></div>'
         . '</a>';

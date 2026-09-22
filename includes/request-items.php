@@ -1111,6 +1111,15 @@ function assignedItemOrNumber(array $item): string {
     return $or !== '' ? $or : '—';
 }
 
+function assignedItemPaymentDateLabel(array $item): string {
+    $date = $item['payment_date'] ?? null;
+    if ($date === null || trim((string) $date) === '') {
+        return '—';
+    }
+
+    return formatDate((string) $date);
+}
+
 function assignedItemReleaseLabel(array $item): string {
     if (empty($item['release_date'])) {
         return '—';
@@ -1403,6 +1412,10 @@ function groupStaffAssignedItemsByRequest(array $items): array {
 
         if (trim((string) ($groups[$requestId]['or_number'] ?? '')) === '' && trim((string) ($item['or_number'] ?? '')) !== '') {
             $groups[$requestId]['or_number'] = $item['or_number'];
+        }
+
+        if (trim((string) ($groups[$requestId]['payment_date'] ?? '')) === '' && trim((string) ($item['payment_date'] ?? '')) !== '') {
+            $groups[$requestId]['payment_date'] = $item['payment_date'];
         }
 
         $incomingRelease = trim((string) ($item['release_date'] ?? ''));
