@@ -904,7 +904,14 @@ function assignedItemSemester(array $item): string {
     }
 
     $label = semesterLabel($value);
-    return $label !== '—' ? $label : $value;
+    if ($label === '—') {
+        $label = $value;
+    }
+
+    $short = trim((string) preg_replace('/\s*semester\s*/i', ' ', $label));
+    $short = trim((string) preg_replace('/\s+/', ' ', $short));
+
+    return $short !== '' ? $short : $label;
 }
 
 function assignedItemDocumentSummary(array $item): string {

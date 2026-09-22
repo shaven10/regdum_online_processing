@@ -1660,6 +1660,18 @@ function renderStudentProgressPanel(string $status, int $requestId, ?string $del
     return $html;
 }
 
+function sqlRequestHasRejectedPayment(string $requestAlias = 'r'): string {
+    return 'EXISTS (
+        SELECT 1 FROM payments p
+        WHERE p.request_id = ' . $requestAlias . '.id
+          AND p.status = \'rejected\'
+    )';
+}
+
+function sqlRequestApprovedForPayment(string $requestAlias = 'r'): string {
+    return $requestAlias . ".status = 'requirements_verified' AND NOT " . sqlRequestHasRejectedPayment($requestAlias);
+}
+
 function getComplianceStats(): array {
     $db = getDB();
     ensureComplianceSchema();
@@ -1671,8 +1683,7 @@ function getComplianceStats(): array {
             WHERE status IN ('awaiting_requirements','needs_revision')")->fetchColumn(),
         're_evaluation' => (int) $db->query("SELECT COUNT(*) FROM requests
             WHERE status = 'requirements_submitted'")->fetchColumn(),
-        'compliant' => (int) $db->query("SELECT COUNT(*) FROM requests
-            WHERE status = 'requirements_verified'")->fetchColumn(),
+        'compliant' => (int) $db->query('SELECT COUNT(*) FROM requests r WHERE ' . sqlRequestApprovedForPayment('r'))->fetchColumn(),
         'needs_revision' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'needs_revision'")->fetchColumn(),
         'review' => (int) $db->query("SELECT COUNT(*) FROM requests
             WHERE status IN ('submitted','under_review','needs_revision')")->fetchColumn(),
@@ -1761,7 +1772,7 @@ function getRequestsForCompliance(string $filter = ''): array {
         } elseif ($filter === 're_evaluation') {
             $where[] = "r.status = 'requirements_submitted'";
         } elseif ($filter === 'verified') {
-            $where[] = "r.status = 'requirements_verified'";
+            $where[] = sqlRequestApprovedForPayment('r');
         } elseif ($filter === 'needs_revision') {
             $where[] = "r.status = 'needs_revision'";
         } elseif ($filter === 'payment_ready') {

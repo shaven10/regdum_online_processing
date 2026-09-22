@@ -97,11 +97,15 @@ function staffDashboardStats(int $userId): array {
 }
 
 function adminWorkflowStats(): array {
+    if (!function_exists('sqlRequestApprovedForPayment')) {
+        require_once __DIR__ . '/compliance.php';
+    }
+
     $db = getDB();
     return [
         'awaiting_requirements' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status IN ('awaiting_requirements','needs_revision')")->fetchColumn(),
         're_evaluation' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'requirements_submitted'")->fetchColumn(),
-        'awaiting_payment' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status = 'requirements_verified'")->fetchColumn(),
+        'awaiting_payment' => (int) $db->query('SELECT COUNT(*) FROM requests r WHERE ' . sqlRequestApprovedForPayment('r'))->fetchColumn(),
         'processing' => (int) $db->query("SELECT COUNT(*) FROM requests WHERE status IN ('payment_verified','processing')")->fetchColumn(),
     ];
 }
