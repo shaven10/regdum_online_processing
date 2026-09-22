@@ -1154,15 +1154,6 @@ require_once __DIR__ . '/../includes/header.php';
                     <label for="purpose_other">Specify purpose</label>
                     <input type="text" id="purpose_other" name="purpose_other" value="<?= e($_POST['purpose_other'] ?? '') ?>" placeholder="Describe the purpose">
                 </div>
-                <?php $torPurposeVisible = selectedDocumentTypesIncludeTor($docTypesById, $selectedDocIds); ?>
-                <div class="form-group" id="torSpecificPurposeGroup" <?= $torPurposeVisible ? '' : 'hidden' ?>>
-                    <label for="tor_specific_purpose">Specific purpose for Transcript of Records *</label>
-                    <input type="text" id="tor_specific_purpose" name="tor_specific_purpose" maxlength="255"
-                           value="<?= e($torSpecificPurposeValue) ?>"
-                           placeholder="Example: board examination, employment, transfer evaluation">
-                    <small class="text-muted">Required when Transcript of Records is included in this request.</small>
-                    <?php if (!empty($errors['tor_specific_purpose'])): ?><span class="field-error"><?= e($errors['tor_specific_purpose']) ?></span><?php endif; ?>
-                </div>
                 <?php if ($frequentDocuments !== []): ?>
                 <div class="frequent-documents-panel" id="frequentDocumentsPanel">
                     <div class="frequent-documents-header">
@@ -1340,20 +1331,31 @@ require_once __DIR__ . '/../includes/header.php';
                                 <input type="hidden" name="document_copies[<?= (int) $dt['id'] ?>]" value="1">
                                 <?php endif; ?>
                                 <?php if (isTorDocumentCode($dt['code'] ?? '')): ?>
-                                <div class="document-checklist-amount-override" data-extra-fields <?= $isSelected ? '' : 'hidden' ?>>
-                                    <label for="tor_amount_override_<?= (int) $dt['id'] ?>">Custom TOR amount (optional)</label>
-                                    <input type="number"
-                                        id="tor_amount_override_<?= (int) $dt['id'] ?>"
-                                        name="document_amount_override[<?= (int) $dt['id'] ?>]"
-                                        data-tor-amount-override
-                                        step="0.01"
-                                        min="0"
-                                        placeholder="Leave blank for standard fee"
-                                        value="<?= e($_POST['document_amount_override'][$dt['id']] ?? '') ?>"
-                                        onchange="updateFee()"
-                                        oninput="updateFee()"
-                                        onclick="event.stopPropagation()">
-                                    <small class="text-muted">Use only when the standard TOR fee needs adjustment.</small>
+                                <div class="document-checklist-tor-fields" data-extra-fields <?= $isSelected ? '' : 'hidden' ?>>
+                                    <div class="form-group document-checklist-amount-override">
+                                        <label for="tor_amount_override_<?= (int) $dt['id'] ?>">Custom TOR amount (optional)</label>
+                                        <input type="number"
+                                            id="tor_amount_override_<?= (int) $dt['id'] ?>"
+                                            name="document_amount_override[<?= (int) $dt['id'] ?>]"
+                                            data-tor-amount-override
+                                            step="0.01"
+                                            min="0"
+                                            placeholder="Leave blank for standard fee"
+                                            value="<?= e($_POST['document_amount_override'][$dt['id']] ?? '') ?>"
+                                            onchange="updateFee()"
+                                            oninput="updateFee()"
+                                            onclick="event.stopPropagation()">
+                                        <small class="text-muted">Use only when the standard TOR fee needs adjustment.</small>
+                                    </div>
+                                    <div class="form-group" id="torSpecificPurposeGroup">
+                                        <label for="tor_specific_purpose">Specific purpose for Transcript of Records *</label>
+                                        <input type="text" id="tor_specific_purpose" name="tor_specific_purpose" maxlength="255"
+                                               value="<?= e($torSpecificPurposeValue) ?>"
+                                               placeholder="Example: board examination, employment, transfer evaluation"
+                                               onclick="event.stopPropagation()">
+                                        <small class="text-muted">Required when Transcript of Records is included in this request.</small>
+                                        <?php if (!empty($errors['tor_specific_purpose'])): ?><span class="field-error"><?= e($errors['tor_specific_purpose']) ?></span><?php endif; ?>
+                                    </div>
                                 </div>
                                 <?php endif; ?>
                                 <?php if ($requiresTermInfo): ?>
@@ -2526,16 +2528,11 @@ function toggleTorSpecificPurposeField() {
     if (!show) {
         return;
     }
-    const purposeBody = document.getElementById('onsiteSectionPurpose');
-    const purposeSection = purposeBody ? purposeBody.closest('[data-form-section-collapsible]') : null;
-    if (!purposeSection) {
-        return;
-    }
-    purposeSection.classList.add('is-expanded');
-    purposeSection.classList.remove('is-collapsed');
-    const toggle = purposeSection.querySelector('.form-section-toggle');
-    if (toggle) {
-        toggle.setAttribute('aria-expanded', 'true');
+    const item = input.closest('.document-checklist-item');
+    setDocumentChecklistItemExpanded(item, true);
+    const extra = input.closest('[data-extra-fields]');
+    if (extra) {
+        extra.hidden = false;
     }
 }
 
@@ -2900,16 +2897,6 @@ function validateOnsiteRequestBeforeSubmit() {
 function showOnsiteValidationDialog(validation) {
     expandOnsiteDocumentsSection(true);
     if (validation.focusDocId === 'tor_specific_purpose') {
-        const purposeBody = document.getElementById('onsiteSectionPurpose');
-        const purposeSection = purposeBody ? purposeBody.closest('[data-form-section-collapsible]') : null;
-        if (purposeSection) {
-            purposeSection.classList.add('is-expanded');
-            purposeSection.classList.remove('is-collapsed');
-            const toggle = purposeSection.querySelector('.form-section-toggle');
-            if (toggle) {
-                toggle.setAttribute('aria-expanded', 'true');
-            }
-        }
         const torField = document.getElementById('tor_specific_purpose');
         if (torField) {
             toggleTorSpecificPurposeField();

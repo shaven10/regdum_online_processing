@@ -3087,18 +3087,43 @@ a.feature-card-link:hover {
     margin: 0 0 1rem;
 }
 
-.document-checklist-amount-override {
-    margin-top: .75rem;
-    padding: .75rem;
-    border: 1px dashed #bbf7d0;
-    border-radius: var(--radius-sm);
-    background: #f0fdf4;
+.document-checklist-tor-fields {
+    display: flex;
+    flex-direction: column;
+    gap: .75rem;
+    width: 100%;
 }
 
-.document-checklist-amount-override label {
-    display: block;
-    margin-bottom: .35rem;
+.document-checklist-tor-fields .form-group {
+    margin: 0;
+}
+
+.document-checklist-tor-fields .form-group label {
+    font-size: .78rem;
     font-weight: 600;
+    color: var(--text-muted, #64748b);
+}
+
+.document-checklist-tor-fields .form-group small {
+    display: block;
+    margin-top: .35rem;
+}
+
+.document-checklist-tor-fields .form-group input {
+    background: #fff;
+}
+
+.document-checklist-tor-fields .field-error {
+    display: block;
+    margin-top: .35rem;
+}
+
+.document-checklist-amount-override {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
 }
 
 .tor-amount-adjust-panel {
