@@ -305,15 +305,40 @@ function torLineTotalFromBaseAmount(int $documentTypeId, float $baseAmount): flo
     return max(0, round($baseAmount + torDocumentStampAmountForType($documentTypeId), 2));
 }
 
-function canModifyRequestItemAmounts(?string $requestStatus): bool {
-    return in_array((string) $requestStatus, [
+/**
+ * Request statuses where documents can still change because the cashier has not verified payment.
+ *
+ * @return list<string>
+ */
+function requestDocumentsEditableStatuses(): array {
+    return [
         'submitted',
         'under_review',
         'awaiting_requirements',
         'needs_revision',
         'requirements_submitted',
         'requirements_verified',
-    ], true);
+    ];
+}
+
+function canModifyRequestItemAmounts(?string $requestStatus): bool {
+    return in_array((string) $requestStatus, requestDocumentsEditableStatuses(), true);
+}
+
+function canEditRequestDocumentsBeforePayment(array $request): bool {
+    $requestId = (int) ($request['id'] ?? 0);
+    if ($requestId <= 0) {
+        return false;
+    }
+
+    if (!in_array((string) ($request['status'] ?? ''), requestDocumentsEditableStatuses(), true)) {
+        return false;
+    }
+
+    $stmt = getDB()->prepare("SELECT 1 FROM payments WHERE request_id = ? AND status = 'verified' LIMIT 1");
+    $stmt->execute([$requestId]);
+
+    return !$stmt->fetchColumn();
 }
 
 function resolveTorItemAmountOverride(int $documentTypeId, float $calculatedAmount, array $overrides): float {
@@ -1881,4 +1906,385 @@ function renderAssignmentRequestDetailsHtml(array $context, ?array $activeItem =
     </div>
     <?php
     return (string) ob_get_clean();
+}
+
+/**
+ * Keep document types already on a request visible while it can still be edited.
+ *
+ * @param list<array<string,mixed>> $docTypes
+ * @return list<array<string,mixed>>
+ */
+function appendExistingRequestDocumentTypes(array $docTypes, int $requestId, string $enrollmentStatus): array {
+    if (!function_exists('getMaxCopiesForDocument')) {
+        require_once __DIR__ . '/document-rules.php';
+    }
+
+    $known = [];
+    foreach ($docTypes as $docType) {
+        $known[(int) ($docType['id'] ?? 0)] = true;
+    }
+
+    $missing = [];
+    foreach (getRequestItems($requestId) as $item) {
+        $typeId = (int) ($item['document_type_id'] ?? 0);
+        if ($typeId > 0 && !isset($known[$typeId])) {
+            $missing[$typeId] = $typeId;
+        }
+    }
+
+    if ($missing === []) {
+        return $docTypes;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($missing), '?'));
+    $stmt = getDB()->prepare('SELECT * FROM document_types WHERE id IN (' . $placeholders . ')');
+    $stmt->execute(array_values($missing));
+    foreach ($stmt->fetchAll() as $row) {
+        $maxCopies = getMaxCopiesForDocument((int) $row['id'], $enrollmentStatus);
+        $row['max_copies'] = $maxCopies > 0 ? $maxCopies : 10;
+        $docTypes[] = $row;
+    }
+
+    return $docTypes;
+}
+
+/**
+ * @return array{
+ *     document_type_ids:list<int>,
+ *     document_copies:array<int,int>,
+ *     document_term_lines:array<int,list<array{school_year:string,semester:string,copies:int}>>,
+ *     document_auth_items:array<int,array<string,int>>,
+ *     purpose:string,
+ *     purpose_other:string,
+ *     tor_specific_purpose:string,
+ *     copy_request_type:string,
+ *     notes:string
+ * }
+ */
+function loadRequestDocumentFormDefaults(int $requestId): array {
+    if (!function_exists('documentTypeRequiresTermInfo')) {
+        require_once __DIR__ . '/document-rules.php';
+    }
+
+    $db = getDB();
+    $requestStmt = $db->prepare('SELECT purpose, purpose_other, tor_specific_purpose, copy_request_type, notes FROM requests WHERE id = ?');
+    $requestStmt->execute([$requestId]);
+    $request = $requestStmt->fetch() ?: [];
+    $items = getRequestItems($requestId);
+
+    $typeIds = [];
+    foreach ($items as $item) {
+        $typeIds[] = (int) ($item['document_type_id'] ?? 0);
+    }
+    $typeIds = array_values(array_unique(array_filter($typeIds)));
+    $types = [];
+    if ($typeIds !== []) {
+        $placeholders = implode(',', array_fill(0, count($typeIds), '?'));
+        $typeStmt = $db->prepare('SELECT * FROM document_types WHERE id IN (' . $placeholders . ')');
+        $typeStmt->execute($typeIds);
+        foreach ($typeStmt->fetchAll() as $typeRow) {
+            $types[(int) $typeRow['id']] = $typeRow;
+        }
+    }
+
+    $documentTypeIds = [];
+    $copies = [];
+    $termLines = [];
+    $authItems = [];
+
+    foreach ($items as $item) {
+        $typeId = (int) ($item['document_type_id'] ?? 0);
+        if ($typeId <= 0) {
+            continue;
+        }
+        $documentTypeIds[] = $typeId;
+        $docType = $types[$typeId] ?? [];
+
+        if (documentTypeRequiresTermInfo($docType)) {
+            $termLines[$typeId][] = [
+                'school_year' => (string) ($item['request_school_year'] ?? ''),
+                'semester' => (string) ($item['request_semester'] ?? ''),
+                'copies' => max(1, (int) ($item['copies'] ?? 1)),
+            ];
+            continue;
+        }
+
+        if (documentTypeRequiresAuthDocumentType($docType)) {
+            foreach (getRequestAuthenticationItems($requestId, (int) $item['id']) as $authRow) {
+                $code = trim((string) ($authRow['auth_document_type'] ?? ''));
+                if ($code === '') {
+                    continue;
+                }
+                $authItems[$typeId][$code] = max(1, (int) ($authRow['sets'] ?? 1));
+            }
+        }
+
+        $copies[$typeId] = max(1, (int) ($item['copies'] ?? 1));
+    }
+
+    return [
+        'document_type_ids' => array_values(array_unique($documentTypeIds)),
+        'document_copies' => $copies,
+        'document_term_lines' => $termLines,
+        'document_auth_items' => $authItems,
+        'purpose' => (string) ($request['purpose'] ?? ''),
+        'purpose_other' => (string) ($request['purpose_other'] ?? ''),
+        'tor_specific_purpose' => (string) ($request['tor_specific_purpose'] ?? ''),
+        'copy_request_type' => (string) ($request['copy_request_type'] ?? 'first_request'),
+        'notes' => (string) ($request['notes'] ?? ''),
+    ];
+}
+
+/**
+ * Replace the documents on a request that the cashier has not verified yet.
+ *
+ * @param list<array<string,mixed>> $itemDrafts
+ * @param array{purpose?:string,purpose_other?:?string,tor_specific_purpose?:?string,copy_request_type?:string,notes?:?string} $fields
+ * @return array{ok:bool,error?:string,document_count?:int,request_number?:string,types_changed?:bool,workflow_reset?:bool,had_open_requirements?:bool,auto_apply?:string}
+ */
+function syncRequestDocumentsFromDrafts(int $requestId, array $itemDrafts, array $fields, int $actorId, string $actorRole): array {
+    if (!function_exists('rejectPendingPaymentsForRequest')) {
+        require_once __DIR__ . '/student-requests.php';
+    }
+    if (!function_exists('documentTypeRequiresTermInfo')) {
+        require_once __DIR__ . '/document-rules.php';
+    }
+    if (!function_exists('ensureClearanceSchema')) {
+        require_once __DIR__ . '/clearance.php';
+    }
+    if (!function_exists('maybeAutoApplyOnRequestSubmission')) {
+        require_once __DIR__ . '/compliance.php';
+    }
+
+    ensureRequestItemsSchema();
+    ensureClearanceSchema();
+
+    if ($itemDrafts === []) {
+        return ['ok' => false, 'error' => 'Select at least one document to request.'];
+    }
+
+    $db = getDB();
+
+    try {
+        $db->beginTransaction();
+
+        $lock = $db->prepare('SELECT * FROM requests WHERE id = ? FOR UPDATE');
+        $lock->execute([$requestId]);
+        $request = $lock->fetch();
+        if (!$request) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'Request not found.'];
+        }
+
+        if (!canEditRequestDocumentsBeforePayment($request)) {
+            $db->rollBack();
+            return ['ok' => false, 'error' => 'Documents can only be changed before the cashier verifies payment.'];
+        }
+
+        $existingItems = getRequestItems($requestId);
+        $beforeTypeIds = array_values(array_unique(array_map(
+            static fn(array $item): int => (int) ($item['document_type_id'] ?? 0),
+            $existingItems
+        )));
+        sort($beforeTypeIds);
+
+        $afterTypeIds = array_values(array_unique(array_map(
+            static fn(array $draft): int => (int) ($draft['document_type_id'] ?? 0),
+            $itemDrafts
+        )));
+        sort($afterTypeIds);
+        $typesChanged = $beforeTypeIds !== $afterTypeIds;
+
+        $typeLookupIds = array_values(array_unique(array_merge($beforeTypeIds, $afterTypeIds)));
+        $docTypesById = [];
+        if ($typeLookupIds !== []) {
+            $placeholders = implode(',', array_fill(0, count($typeLookupIds), '?'));
+            $typeStmt = $db->prepare('SELECT * FROM document_types WHERE id IN (' . $placeholders . ')');
+            $typeStmt->execute($typeLookupIds);
+            foreach ($typeStmt->fetchAll() as $typeRow) {
+                $docTypesById[(int) $typeRow['id']] = $typeRow;
+            }
+        }
+
+        $assignedStmt = $db->prepare('SELECT COUNT(*) FROM request_assigned_requirements WHERE request_id = ?');
+        $assignedStmt->execute([$requestId]);
+        $hadOpenRequirements = (int) $assignedStmt->fetchColumn() > 0;
+
+        $usedExisting = [];
+        foreach ($itemDrafts as $index => $draft) {
+            $typeId = (int) ($draft['document_type_id'] ?? 0);
+            if ($typeId <= 0 || !isset($docTypesById[$typeId])) {
+                $db->rollBack();
+                return ['ok' => false, 'error' => 'One of the selected documents is no longer available.'];
+            }
+
+            $requiresTerm = documentTypeRequiresTermInfo($docTypesById[$typeId]);
+            $match = null;
+            foreach ($existingItems as $existingItem) {
+                $existingId = (int) ($existingItem['id'] ?? 0);
+                if ($existingId <= 0 || isset($usedExisting[$existingId])) {
+                    continue;
+                }
+                if ((int) ($existingItem['document_type_id'] ?? 0) !== $typeId) {
+                    continue;
+                }
+                if ($requiresTerm) {
+                    $sameYear = trim((string) ($existingItem['request_school_year'] ?? '')) === trim((string) ($draft['request_school_year'] ?? ''));
+                    $sameSemester = trim((string) ($existingItem['request_semester'] ?? '')) === trim((string) ($draft['request_semester'] ?? ''));
+                    if (!$sameYear || !$sameSemester) {
+                        continue;
+                    }
+                }
+                $match = $existingItem;
+                break;
+            }
+
+            $amount = round((float) ($draft['item_amount'] ?? 0), 2);
+            if ($match && isTorRequestItem($match)) {
+                $sameCopies = (int) ($match['copies'] ?? 0) === (int) ($draft['copies'] ?? 0);
+                $sameYear = trim((string) ($match['request_school_year'] ?? '')) === trim((string) ($draft['request_school_year'] ?? ''));
+                $sameSemester = trim((string) ($match['request_semester'] ?? '')) === trim((string) ($draft['request_semester'] ?? ''));
+                if ($sameCopies && $sameYear && $sameSemester) {
+                    $amount = round((float) ($match['item_amount'] ?? 0), 2);
+                }
+            }
+
+            $schoolYear = $draft['request_school_year'] ?? null;
+            $semester = $draft['request_semester'] ?? null;
+            $soaScope = $draft['request_soa_assessment_scope'] ?? null;
+            $soaRemarks = $draft['request_soa_remarks'] ?? null;
+            if ($match && $soaScope === null) {
+                $soaScope = $match['request_soa_assessment_scope'] ?? null;
+            }
+            if ($match && $soaRemarks === null) {
+                $soaRemarks = $match['request_soa_remarks'] ?? null;
+            }
+
+            if ($match) {
+                $itemId = (int) $match['id'];
+                $db->prepare('UPDATE request_items SET
+                    copies = ?, request_school_year = ?, request_semester = ?,
+                    request_soa_assessment_scope = ?, request_soa_remarks = ?,
+                    item_amount = ?, sort_order = ?
+                    WHERE id = ?')->execute([
+                    max(1, (int) ($draft['copies'] ?? 1)),
+                    $schoolYear !== '' ? $schoolYear : null,
+                    $semester !== '' ? $semester : null,
+                    $soaScope !== '' ? $soaScope : null,
+                    $soaRemarks !== '' ? $soaRemarks : null,
+                    $amount,
+                    $index + 1,
+                    $itemId,
+                ]);
+                $usedExisting[$itemId] = true;
+            } else {
+                $itemId = createRequestItem(
+                    $requestId,
+                    $typeId,
+                    max(1, (int) ($draft['copies'] ?? 1)),
+                    $amount,
+                    $index + 1,
+                    $schoolYear !== '' ? $schoolYear : null,
+                    $semester !== '' ? $semester : null,
+                    $soaScope !== '' ? $soaScope : null,
+                    $soaRemarks !== '' ? $soaRemarks : null
+                );
+            }
+
+            saveRequestAuthenticationItems($requestId, (array) ($draft['auth_items'] ?? []), $itemId);
+            initRequestCompliance($requestId, $typeId);
+        }
+
+        foreach ($existingItems as $existingItem) {
+            $existingId = (int) ($existingItem['id'] ?? 0);
+            if ($existingId <= 0 || isset($usedExisting[$existingId])) {
+                continue;
+            }
+            $db->prepare('DELETE FROM request_authentication_items WHERE request_item_id = ?')->execute([$existingId]);
+            $db->prepare('DELETE FROM request_assigned_requirements WHERE request_item_id = ?')->execute([$existingId]);
+            $db->prepare('DELETE FROM request_items WHERE id = ?')->execute([$existingId]);
+        }
+
+        $primaryDocumentTypeId = (int) $itemDrafts[0]['document_type_id'];
+        $db->prepare('UPDATE requests SET
+            document_type_id = ?, purpose = ?, purpose_other = ?, tor_specific_purpose = ?,
+            copy_request_type = ?, notes = ?, copies = 1, updated_at = ?
+            WHERE id = ?')->execute([
+            $primaryDocumentTypeId,
+            (string) ($fields['purpose'] ?? $request['purpose']),
+            ($fields['purpose_other'] ?? null) !== '' ? ($fields['purpose_other'] ?? null) : null,
+            ($fields['tor_specific_purpose'] ?? null) !== '' ? ($fields['tor_specific_purpose'] ?? null) : null,
+            (string) ($fields['copy_request_type'] ?? $request['copy_request_type']),
+            ($fields['notes'] ?? null) !== '' ? ($fields['notes'] ?? null) : null,
+            appNow(),
+            $requestId,
+        ]);
+
+        refreshRequestTotalAmount($requestId);
+
+        $oldStatus = (string) ($request['status'] ?? '');
+        $isOnsite = function_exists('isOnsiteRequestChannel')
+            ? isOnsiteRequestChannel($request['request_channel'] ?? null)
+            : (($request['request_channel'] ?? '') === 'onsite');
+        $needsReset = $actorRole === 'student'
+            && !$isOnsite
+            && $typesChanged
+            && !in_array($oldStatus, ['submitted', 'under_review'], true);
+
+        $autoApply = 'manual';
+        if ($needsReset) {
+            $db->prepare('DELETE FROM request_assigned_requirements WHERE request_id = ?')->execute([$requestId]);
+            $db->prepare('DELETE FROM request_clearances WHERE request_id = ?')->execute([$requestId]);
+            $db->prepare("UPDATE request_compliance_summary
+                SET compliance_status = 'pending', remarks = ?, verified_by = NULL, verified_at = NULL, updated_at = NOW()
+                WHERE request_id = ?")->execute([
+                'Documents were changed before payment verification. Requirements must be reviewed again.',
+                $requestId,
+            ]);
+            rejectPendingPaymentsForRequest(
+                $requestId,
+                'Pending payment was cancelled because the requested documents changed before cashier verification.'
+            );
+            updateRequestStatus(
+                $requestId,
+                'submitted',
+                'Requested documents were updated before payment verification. The registrar will review this request again.'
+            );
+            $autoApply = maybeAutoApplyOnRequestSubmission(
+                $requestId,
+                $afterTypeIds,
+                (string) ($fields['copy_request_type'] ?? 'first_request')
+            );
+        }
+
+        auditLog('edit_request_documents', 'requests', $requestId, [
+            'document_type_ids' => $beforeTypeIds,
+            'status' => $oldStatus,
+        ], [
+            'document_type_ids' => $afterTypeIds,
+            'document_count' => count($itemDrafts),
+            'types_changed' => $typesChanged,
+            'workflow_reset' => $needsReset,
+            'actor_id' => $actorId,
+            'actor_role' => $actorRole,
+        ]);
+
+        $db->commit();
+
+        return [
+            'ok' => true,
+            'document_count' => count($itemDrafts),
+            'request_number' => (string) ($request['request_number'] ?? ''),
+            'types_changed' => $typesChanged,
+            'workflow_reset' => $needsReset,
+            'had_open_requirements' => $hadOpenRequirements,
+            'auto_apply' => $autoApply,
+        ];
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        error_log('syncRequestDocumentsFromDrafts failed: ' . $e->getMessage());
+        return ['ok' => false, 'error' => 'Unable to update the requested documents.'];
+    }
 }

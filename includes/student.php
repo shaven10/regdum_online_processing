@@ -1049,8 +1049,15 @@ function renderStudentRegistrationStatus(array $completion, string $variant = 'c
         }
         $html .= '<a href="' . e($profileUrl) . '" class="btn btn-primary btn-sm"><i class="fas fa-user-edit"></i> Complete Registration</a>';
     } else {
-        $html .= '<p class="text-muted registration-status-hint"><i class="fas fa-check-circle"></i> Registration complete. You can submit document requests.</p>';
-        $html .= '<a href="' . APP_URL . '/student/new-request.php" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Request</a>';
+        $html .= '<p class="text-muted registration-status-hint"><i class="fas fa-check-circle"></i> Registration complete. You can request more than one document type, and start another request after payment is verified.</p>';
+        $openRequest = function_exists('getStudentBlockingOnlineRequest') && function_exists('currentUser')
+            ? getStudentBlockingOnlineRequest((int) (currentUser()['id'] ?? 0))
+            : null;
+        if ($openRequest) {
+            $html .= '<a href="' . e(requestDocumentEditorUrl((int) $openRequest['id'])) . '" class="btn btn-primary btn-sm"><i class="fas fa-pen"></i> Edit Open Request</a>';
+        } else {
+            $html .= '<a href="' . APP_URL . '/student/new-request.php" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Request</a>';
+        }
     }
 
     $html .= '</div></div></div>';

@@ -38,7 +38,7 @@ renderDashboardActions([
     $profileCompletion['complete'] && !$blockingRequest
         ? ['url' => 'new-request.php', 'label' => 'New Request', 'icon' => 'fa-plus', 'class' => 'btn-primary']
         : ($blockingRequest
-            ? ['url' => 'request-view.php?id=' . (int) $blockingRequest['id'], 'label' => 'Active Request', 'icon' => 'fa-file-alt', 'class' => 'btn-primary']
+            ? ['url' => 'new-request.php?request_id=' . (int) $blockingRequest['id'], 'label' => 'Edit Request', 'icon' => 'fa-pen', 'class' => 'btn-primary']
             : ['url' => 'profile.php', 'label' => 'Complete Profile', 'icon' => 'fa-user-edit', 'class' => 'btn-primary']),
     ['url' => 'requests.php', 'label' => 'My Requests', 'icon' => 'fa-list'],
     ['url' => APP_URL . '/notifications.php', 'label' => 'Notifications', 'icon' => 'fa-bell'],
@@ -96,7 +96,13 @@ renderDashboardActions([
 <div class="card">
     <div class="card-header">
         <h2>Recent Requests</h2>
-        <a href="<?= $profileCompletion['complete'] ? 'new-request.php' : 'profile.php' ?>" class="btn btn-primary btn-sm"><i class="fas fa-<?= $profileCompletion['complete'] ? 'plus' : 'user-edit' ?>"></i> <?= $profileCompletion['complete'] ? 'New Request' : 'Complete Profile' ?></a>
+        <?php if ($profileCompletion['complete'] && $blockingRequest): ?>
+            <a href="new-request.php?request_id=<?= (int) $blockingRequest['id'] ?>" class="btn btn-primary btn-sm"><i class="fas fa-pen"></i> Edit Request</a>
+        <?php elseif ($profileCompletion['complete']): ?>
+            <a href="new-request.php" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Request</a>
+        <?php else: ?>
+            <a href="profile.php" class="btn btn-primary btn-sm"><i class="fas fa-user-edit"></i> Complete Profile</a>
+        <?php endif; ?>
     </div>
     <div class="card-body">
         <?php if (empty($recentRequests)): ?>
@@ -127,6 +133,9 @@ renderDashboardActions([
                             <td data-label="Status"><?= statusBadge($req['status']) ?></td>
                             <td data-label="Date"><?= formatDate($req['created_at']) ?></td>
                             <td data-label="Action">
+                                <?php if (studentCanEditRequestDocuments($req, (int) $userId)): ?>
+                                    <a href="new-request.php?request_id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-outline">Edit</a>
+                                <?php endif; ?>
                                 <a href="request-view.php?id=<?= $req['id'] ?>" class="btn btn-sm btn-outline">View Progress</a>
                             </td>
                         </tr>

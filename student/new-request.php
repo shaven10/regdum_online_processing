@@ -2,7 +2,14 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/compliance.php';
 require_once __DIR__ . '/../includes/student.php';
-requireRole('student');
+
+$editRequestId = (int) ($_POST['request_id'] ?? $_GET['request_id'] ?? 0);
+$isRegistrarEditor = hasRole('registrar') && $editRequestId > 0;
+if ($isRegistrarEditor) {
+    requireRole('registrar');
+} else {
+    requireRole('student');
+}
 $user = currentUser();
 
 ensureDeliveryMethods();
@@ -27,27 +34,66 @@ ensureClearanceSchema();
 ensureRequestItemsSchema();
 
 $db = getDB();
-$profileCompletion = getStudentProfileCompletion($user['id']);
-$studentProfile = getStudentProfile($user['id']);
-$enrollmentStatus = getStudentEnrollmentStatus($user['id']);
+$editingRequest = null;
+if ($editRequestId > 0) {
+    $editStmt = $db->prepare('SELECT * FROM requests WHERE id = ?');
+    $editStmt->execute([$editRequestId]);
+    $editingRequest = $editStmt->fetch() ?: null;
+    if (!$editingRequest) {
+        setFlash('error', 'Request not found.');
+        redirect($isRegistrarEditor ? APP_URL . '/registrar/compliance.php' : APP_URL . '/student/requests.php');
+    }
+    $canEditDocuments = $isRegistrarEditor
+        ? canEditRequestDocumentsBeforePayment($editingRequest)
+        : studentCanEditRequestDocuments($editingRequest, (int) $user['id']);
+    if (!$canEditDocuments) {
+        setFlash('error', 'Documents can only be changed before the cashier verifies payment.', [
+            'title' => 'Request Locked',
+        ]);
+        redirect($isRegistrarEditor
+            ? APP_URL . '/registrar/verify-request.php?id=' . $editRequestId
+            : APP_URL . '/student/request-view.php?id=' . $editRequestId);
+    }
+}
+$isEditMode = $editingRequest !== null;
+$subjectUserId = $isEditMode ? (int) $editingRequest['user_id'] : (int) $user['id'];
+$editReturnUrl = $isEditMode
+    ? ($isRegistrarEditor
+        ? APP_URL . '/registrar/verify-request.php?id=' . $editRequestId
+        : APP_URL . '/student/request-view.php?id=' . $editRequestId)
+    : APP_URL . '/student/new-request.php';
+$editSelfUrl = $isEditMode
+    ? ($isRegistrarEditor
+        ? APP_URL . '/registrar/edit-request-documents.php?id=' . $editRequestId
+        : APP_URL . '/student/new-request.php?request_id=' . $editRequestId)
+    : APP_URL . '/student/new-request.php';
+
+$profileCompletion = getStudentProfileCompletion($subjectUserId);
+$studentProfile = getStudentProfile($subjectUserId);
+$enrollmentStatus = getStudentEnrollmentStatus($subjectUserId);
 $docTypes = getAvailableDocumentTypesForEnrollment($enrollmentStatus);
+if ($isEditMode) {
+    $docTypes = appendExistingRequestDocumentTypes($docTypes, $editRequestId, $enrollmentStatus);
+}
 $errors = [];
-$blockingRequest = getStudentBlockingOnlineRequest((int) $user['id']);
+$blockingRequest = (!$isEditMode && hasRole('student'))
+    ? getStudentBlockingOnlineRequest((int) $user['id'])
+    : null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
-    if ($blockingRequest) {
-        setFlash('error', 'You already have an active online request. Cancel it before submitting a new one.', [
-            'title' => 'One Active Request',
+    if (!$isEditMode && $blockingRequest) {
+        setFlash('error', 'You already have an online request that the cashier has not verified. Edit that request, or wait until payment is verified before starting another.', [
+            'title' => 'Request Still Open',
             'context' => [
                 'Request' => $blockingRequest['request_number'] ?? '',
                 'Status' => ucwords(str_replace('_', ' ', (string) ($blockingRequest['status'] ?? ''))),
             ],
-            'action_url' => APP_URL . '/student/request-view.php?id=' . (int) $blockingRequest['id'],
-            'action_label' => 'View Active Request',
+            'action_url' => requestDocumentEditorUrl((int) $blockingRequest['id']),
+            'action_label' => 'Edit Documents',
         ]);
         redirect(APP_URL . '/student/new-request.php');
     }
-    if (!$profileCompletion['complete']) {
+    if (!$isEditMode && !$profileCompletion['complete']) {
         setFlash('error', 'Complete your profile before submitting a document request.', [
             'title' => 'Profile Incomplete',
             'details' => array_values($profileCompletion['missing']),
@@ -95,7 +141,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         return array_values($lines);
     };
 
+    $existingTypeIds = [];
+    if ($isEditMode) {
+        foreach (getRequestItems($editRequestId) as $existingItem) {
+            $existingTypeIds[] = (int) ($existingItem['document_type_id'] ?? 0);
+        }
+        $existingTypeIds = array_values(array_unique(array_filter($existingTypeIds)));
+    }
     $validDocTypeIds = validateActiveDocumentTypeIdsForEnrollment($data['document_type_ids'], $enrollmentStatus);
+    if ($isEditMode && $existingTypeIds !== []) {
+        $keptExisting = array_values(array_intersect($data['document_type_ids'], $existingTypeIds));
+        $validDocTypeIds = array_values(array_unique(array_merge($validDocTypeIds, $keptExisting)));
+    }
     if (empty($validDocTypeIds)) {
         $errors['document_type_ids'] = empty($data['document_type_ids'])
             ? 'Please select at least one document to request.'
@@ -137,6 +194,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                 }
 
                 $copyError = validateStudentDocumentRequest($documentTypeId, $enrollmentStatus, (int) $termLine['copies']);
+                if ($copyError && in_array($documentTypeId, $existingTypeIds, true) && !isDocumentAllowedForEnrollment($documentTypeId, $enrollmentStatus)) {
+                    $copyError = ((int) $termLine['copies'] < 1 || (int) $termLine['copies'] > 99)
+                        ? 'Copy count must be between 1 and 99.'
+                        : null;
+                }
                 if ($copyError) {
                     $errors['document_type_ids'] = $copyError;
                     break 2;
@@ -155,6 +217,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
         $copies = (int) ($postedCopies[$documentTypeId] ?? 1);
         $copyError = validateStudentDocumentRequest($documentTypeId, $enrollmentStatus, $copies);
+        if ($copyError && in_array($documentTypeId, $existingTypeIds, true) && !isDocumentAllowedForEnrollment($documentTypeId, $enrollmentStatus)) {
+            $copyError = ($copies < 1 || $copies > 99)
+                ? 'Copy count must be between 1 and 99.'
+                : null;
+        }
         if ($copyError) {
             $errors['document_type_ids'] = $copyError;
             break;
@@ -189,6 +256,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             $docType = $docTypesById[$documentTypeId] ?? null;
             $authItems = [];
             $maxCopies = getMaxCopiesForDocument($documentTypeId, $enrollmentStatus);
+            if ($maxCopies < 1) {
+                $maxCopies = max(1, (int) ($docType['max_copies'] ?? 1));
+            }
 
             if ($docType && documentTypeRequiresAuthDocumentType($docType)) {
                 $authItems = materializeAuthenticationItems(collectPostedAuthenticationBundle(
@@ -243,6 +313,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                 'auth_items' => [],
             ];
             $batchTotal += $itemAmount;
+        }
+
+        if ($isEditMode) {
+            $result = syncRequestDocumentsFromDrafts(
+                $editRequestId,
+                $itemDrafts,
+                [
+                    'purpose' => $data['purpose'],
+                    'purpose_other' => $data['purpose_other'] !== '' ? $data['purpose_other'] : null,
+                    'tor_specific_purpose' => $data['tor_specific_purpose'] !== '' ? $data['tor_specific_purpose'] : null,
+                    'copy_request_type' => $data['copy_request_type'],
+                    'notes' => $data['notes'] !== '' ? $data['notes'] : null,
+                ],
+                (int) $user['id'],
+                $isRegistrarEditor ? 'registrar' : 'student'
+            );
+            if (empty($result['ok'])) {
+                setFlash('error', $result['error'] ?? 'Unable to update the requested documents.', [
+                    'title' => 'Documents Not Updated',
+                ]);
+                redirect($editSelfUrl);
+            }
+
+            $documentCount = (int) ($result['document_count'] ?? count($itemDrafts));
+            $requestNumber = (string) ($result['request_number'] ?? ($editingRequest['request_number'] ?? ''));
+            $docLabel = $documentCount . ' document' . ($documentCount === 1 ? '' : 's');
+            if ($isRegistrarEditor) {
+                if (empty($result['workflow_reset'])) {
+                    sendNotification(
+                        $subjectUserId,
+                        'Requested Documents Updated',
+                        'The registrar updated the documents on request ' . $requestNumber . ' (' . $docLabel . ').',
+                        'info',
+                        APP_URL . '/student/request-view.php?id=' . $editRequestId
+                    );
+                }
+            } else {
+                $studentName = trim(($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? ''));
+                notifyUsersByRole(
+                    'registrar',
+                    'Request Documents Updated',
+                    ($studentName !== '' ? $studentName : 'A student') . ' updated the documents on request ' . $requestNumber . ' before payment verification.',
+                    'info',
+                    APP_URL . '/registrar/verify-request.php?id=' . $editRequestId
+                );
+            }
+
+            $successMessage = 'Requested documents were updated (' . $docLabel . ').';
+            if (!empty($result['workflow_reset'])) {
+                $successMessage .= ' The document types changed, so this request was returned for registrar review and any pending payment was cancelled.';
+                if (($result['auto_apply'] ?? '') === 'payment') {
+                    $successMessage .= ' No additional requirements are needed — you may submit payment again.';
+                }
+            } elseif (!empty($result['types_changed']) && $isRegistrarEditor && !empty($result['had_open_requirements'])) {
+                $successMessage .= ' Review assigned requirements if the added documents need anything else before payment.';
+            }
+            setFlash('success', $successMessage, [
+                'title' => 'Documents Updated',
+                'context' => [
+                    'Request' => $requestNumber,
+                ],
+            ]);
+            redirect($editReturnUrl);
         }
 
         $primaryDocumentTypeId = $itemDrafts[0]['document_type_id'];
@@ -329,30 +462,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                 'title' => 'Submission Failed',
                 'next_step' => 'If this keeps happening, ask an administrator to run install.php?step=upgrade.',
             ]);
-            redirect(APP_URL . '/student/new-request.php');
+            redirect($isEditMode ? $editSelfUrl : APP_URL . '/student/new-request.php');
         }
     }
 }
 
-$pageTitle = 'New Request';
-$activeNav = 'new-request';
-$selectedDocIds = array_map('intval', $_POST['document_type_ids'] ?? []);
+$pageTitle = $isEditMode ? ('Edit ' . ($editingRequest['request_number'] ?? 'Request')) : 'New Request';
+$activeNav = $isRegistrarEditor ? 'compliance' : ($isEditMode ? 'requests' : 'new-request');
 $docTypesById = [];
 foreach ($docTypes as $docTypeRow) {
     $docTypesById[(int) $docTypeRow['id']] = $docTypeRow;
 }
-$torSpecificPurposeValue = isset($data['tor_specific_purpose'])
-    ? (string) $data['tor_specific_purpose']
-    : (string) ($_POST['tor_specific_purpose'] ?? '');
-$postedCopies = array_map('intval', $_POST['document_copies'] ?? []);
-$postedTermLinesByDoc = $_POST['document_term_lines'] ?? [];
-$postedAuthItems = $_POST['document_auth_items'] ?? [];
-$postedAuthCustom = $_POST['document_auth_custom'] ?? [];
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $selectedDocIds = array_map('intval', $_POST['document_type_ids'] ?? []);
+    $postedCopies = array_map('intval', $_POST['document_copies'] ?? []);
+    $postedTermLinesByDoc = $_POST['document_term_lines'] ?? [];
+    $postedAuthItems = $_POST['document_auth_items'] ?? [];
+    $postedAuthCustom = $_POST['document_auth_custom'] ?? [];
+    $selectedPurpose = (string) ($_POST['purpose'] ?? '');
+    $selectedCopyType = (string) ($_POST['copy_request_type'] ?? 'first_request');
+    $purposeOtherValue = (string) ($_POST['purpose_other'] ?? '');
+    $notesValue = (string) ($_POST['notes'] ?? '');
+    $torSpecificPurposeValue = isset($data['tor_specific_purpose'])
+        ? (string) $data['tor_specific_purpose']
+        : (string) ($_POST['tor_specific_purpose'] ?? '');
+} else {
+    $formDefaults = $isEditMode ? loadRequestDocumentFormDefaults($editRequestId) : [];
+    $selectedDocIds = array_map('intval', $formDefaults['document_type_ids'] ?? []);
+    $postedCopies = array_map('intval', $formDefaults['document_copies'] ?? []);
+    $postedTermLinesByDoc = $formDefaults['document_term_lines'] ?? [];
+    $postedAuthItems = $formDefaults['document_auth_items'] ?? [];
+    $postedAuthCustom = [];
+    $selectedPurpose = (string) ($formDefaults['purpose'] ?? '');
+    $selectedCopyType = (string) ($formDefaults['copy_request_type'] ?? 'first_request');
+    $purposeOtherValue = (string) ($formDefaults['purpose_other'] ?? '');
+    $notesValue = (string) ($formDefaults['notes'] ?? '');
+    $torSpecificPurposeValue = (string) ($formDefaults['tor_specific_purpose'] ?? '');
+}
 $defaultSchoolYear = trim((string) ($studentProfile['current_academic_year'] ?? ''));
 $defaultSemester = trim((string) ($studentProfile['current_semester'] ?? ''));
 $schoolYearChoices = schoolYearOptions();
 $semesterChoices = semesterOptions();
 $authDocumentTypeChoices = authenticationDocumentTypeOptions();
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    foreach ($postedAuthItems as $authDocId => $authMap) {
+        if (!is_array($authMap)) {
+            continue;
+        }
+        foreach ($authMap as $authCode => $authSets) {
+            if (array_key_exists((string) $authCode, $authDocumentTypeChoices)) {
+                continue;
+            }
+            $postedAuthCustom[$authDocId][] = [
+                'label' => authenticationDocumentTypeLabel((string) $authCode),
+                'sets' => max(1, (int) $authSets),
+            ];
+            unset($postedAuthItems[$authDocId][$authCode]);
+        }
+    }
+}
 $purposeOptions = purposeOptions($enrollmentStatus);
 $purposeSuggestions = [];
 $purposeHints = [];
@@ -360,8 +528,6 @@ foreach ($purposeOptions as $purposeKey) {
     $purposeSuggestions[$purposeKey] = getSuggestedDocumentIdsForPurpose($purposeKey, $docTypes, $enrollmentStatus);
     $purposeHints[$purposeKey] = purposeSuggestionHint($purposeKey, $enrollmentStatus);
 }
-$selectedPurpose = (string) ($_POST['purpose'] ?? '');
-$selectedCopyType = (string) ($_POST['copy_request_type'] ?? 'first_request');
 if (!isValidCopyRequestType($selectedCopyType)) {
     $selectedCopyType = 'first_request';
 }
@@ -395,7 +561,7 @@ if ($errors !== []) {
         'type' => 'error',
         'tone' => 'error',
         'icon' => 'fa-exclamation-circle',
-        'title' => 'Cannot Submit Request',
+        'title' => $isEditMode ? 'Cannot Save Documents' : 'Cannot Submit Request',
         'message' => 'Please fix the following before submitting your request.',
         'details' => $errorDetails,
         'next_step' => 'Complete the missing school year/semester or authentication details, then try again.',
@@ -408,14 +574,26 @@ require_once __DIR__ . '/../includes/header.php';
 <div class="card request-form-card">
     <div class="card-header">
         <div>
-            <h2>New Credential Request</h2>
-            <p class="text-muted request-form-subtitle">Available for <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> students</p>
+            <?php if ($isEditMode): ?>
+                <h2>Edit <?= e($editingRequest['request_number'] ?? 'Request') ?></h2>
+                <p class="text-muted request-form-subtitle">
+                    Add or remove documents until the cashier verifies payment.
+                    <?php if ($isRegistrarEditor): ?>
+                        Student: <?= e(trim(($studentProfile['first_name'] ?? '') . ' ' . ($studentProfile['last_name'] ?? ''))) ?>
+                    <?php endif; ?>
+                </p>
+            <?php else: ?>
+                <h2>New Credential Request</h2>
+                <p class="text-muted request-form-subtitle">Available for <?= e(enrollmentStatusLabel($enrollmentStatus)) ?> students. You can request more than one document type.</p>
+            <?php endif; ?>
         </div>
     </div>
     <div class="card-body">
-        <?= renderStudentProfileIncompleteAlert($profileCompletion) ?>
+        <?php if (!$isRegistrarEditor): ?>
+            <?= renderStudentProfileIncompleteAlert($profileCompletion) ?>
+        <?php endif; ?>
 
-        <?php if (!$profileCompletion['complete']): ?>
+        <?php if (!$isEditMode && !$profileCompletion['complete']): ?>
             <div class="empty-state">
                 <i class="fas fa-user-check"></i>
                 <p>Complete your profile before submitting a document request.</p>
@@ -424,19 +602,30 @@ require_once __DIR__ . '/../includes/header.php';
         <?php elseif (empty($docTypes)): ?>
             <div class="empty-state">
                 <i class="fas fa-file-circle-xmark"></i>
-                <p>No credentials are available for your enrollment status.</p>
-                <a href="profile.php" class="btn btn-outline">Review Profile</a>
+                <p>No credentials are available for this enrollment status.</p>
+                <?php if ($isEditMode): ?>
+                    <a href="<?= e($editReturnUrl) ?>" class="btn btn-outline">Back to Request</a>
+                <?php else: ?>
+                    <a href="profile.php" class="btn btn-outline">Review Profile</a>
+                <?php endif; ?>
             </div>
-        <?php elseif ($blockingRequest): ?>
+        <?php elseif (!$isEditMode && $blockingRequest): ?>
             <?= renderStudentBlockingOnlineRequestAlert($blockingRequest) ?>
             <div class="empty-state">
                 <i class="fas fa-file-circle-xmark"></i>
-                <p>Cancel your current online request to start a new one.</p>
-                <a href="<?= APP_URL ?>/student/request-view.php?id=<?= (int) $blockingRequest['id'] ?>" class="btn btn-primary">View Active Request</a>
+                <p>Edit the open request, or wait until the cashier verifies payment, before starting another one.</p>
+                <a href="<?= e(requestDocumentEditorUrl((int) $blockingRequest['id'])) ?>" class="btn btn-primary">Edit Documents</a>
             </div>
         <?php else: ?>
         <form method="POST" class="form-grid request-form-simple" id="requestForm" novalidate>
             <?= csrfField() ?>
+            <?php if ($isEditMode): ?>
+                <input type="hidden" name="request_id" value="<?= (int) $editRequestId ?>">
+                <div class="alert alert-info">
+                    <i class="fas fa-pen"></i>
+                    Check the documents to keep, add other document types, or clear a document to remove it. This stays available until the cashier verifies payment.
+                </div>
+            <?php endif; ?>
 
             <section class="form-section request-form-step">
                 <h3><span class="request-step-num">1</span> Purpose &amp; type</h3>
@@ -465,7 +654,7 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
                 <div class="form-group" id="purposeOtherGroup" style="display:none">
                     <label for="purpose_other">Specify purpose</label>
-                    <input type="text" id="purpose_other" name="purpose_other" value="<?= e($_POST['purpose_other'] ?? '') ?>" placeholder="Describe your purpose">
+                    <input type="text" id="purpose_other" name="purpose_other" value="<?= e($purposeOtherValue) ?>" placeholder="Describe your purpose">
                 </div>
                 <?php $torPurposeVisible = selectedDocumentTypesIncludeTor($docTypesById, $selectedDocIds); ?>
                 <div class="form-group" id="torSpecificPurposeGroup" <?= $torPurposeVisible ? '' : 'hidden' ?>>
@@ -489,6 +678,7 @@ require_once __DIR__ . '/../includes/header.php';
 
             <section class="form-section request-form-step">
                 <h3><span class="request-step-num">2</span> Select documents</h3>
+                <p class="text-muted">Select every document you need. Different document types can be included in the same request.</p>
                 <?php
                 $documentValidationErrors = array_filter(
                     $errors,
@@ -760,7 +950,7 @@ require_once __DIR__ . '/../includes/header.php';
             <section class="form-section request-form-step">
                 <h3><span class="request-step-num">3</span> Notes <span class="request-optional-tag">optional</span></h3>
                 <div class="form-group">
-                    <textarea id="notes" name="notes" rows="2" placeholder="Any special instructions for the Registrar..."><?= e($_POST['notes'] ?? '') ?></textarea>
+                    <textarea id="notes" name="notes" rows="2" placeholder="Any special instructions for the Registrar..."><?= e($notesValue) ?></textarea>
                 </div>
             </section>
 
@@ -776,9 +966,18 @@ require_once __DIR__ . '/../includes/header.php';
                         <strong id="totalFee">₱ 0.00</strong>
                     </div>
                 </div>
-                <button type="submit" class="btn btn-primary btn-lg request-submit-btn">
-                    <i class="fas fa-paper-plane"></i> Submit Request
-                </button>
+                <div class="request-form-actions" style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;">
+                    <?php if ($isEditMode): ?>
+                        <a href="<?= e($editReturnUrl) ?>" class="btn btn-outline btn-lg">Back</a>
+                        <button type="submit" class="btn btn-primary btn-lg request-submit-btn">
+                            <i class="fas fa-save"></i> Save Documents
+                        </button>
+                    <?php else: ?>
+                        <button type="submit" class="btn btn-primary btn-lg request-submit-btn">
+                            <i class="fas fa-paper-plane"></i> Submit Request
+                        </button>
+                    <?php endif; ?>
+                </div>
             </section>
         </form>
         <?php endif; ?>
@@ -1385,7 +1584,7 @@ document.querySelectorAll('.auth-doc-custom-label').forEach(function (input) {
 });
 document.getElementById('purpose')?.addEventListener('change', function () {
     togglePurposeOtherField();
-    updatePurposeSuggestions(true);
+    updatePurposeSuggestions(<?= $isEditMode ? 'false' : 'true' ?>);
 });
 document.getElementById('applyPurposeSuggestions')?.addEventListener('click', function () {
     applyPurposeSuggestions(true);

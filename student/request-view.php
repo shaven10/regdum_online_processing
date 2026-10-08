@@ -189,6 +189,8 @@ $request = $stmt->fetch();
 $assignedRequirements = getAssignedRequirements($requestId);
 $complianceSummary = getComplianceSummary($requestId);
 $canCancelRequest = studentCanCancelOnlineRequest($request, (int) $user['id']);
+$canEditDocuments = studentCanEditRequestDocuments($request, (int) $user['id']);
+$canStartAnotherRequest = studentCanCreateOnlineRequest((int) $user['id']);
 
 $estimatedRelease = null;
 if (isOnSitePickupMethod($request['delivery_method'])) {
@@ -221,6 +223,15 @@ require_once __DIR__ . '/../includes/header.php';
             <h2><?= e($request['request_number']) ?></h2>
             <div class="request-header-actions" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
                 <?= statusBadge($request['status']) ?>
+                <?php if ($canEditDocuments): ?>
+                    <a href="<?= APP_URL ?>/student/new-request.php?request_id=<?= (int) $requestId ?>" class="btn btn-outline btn-sm">
+                        <i class="fas fa-pen"></i> Edit Documents
+                    </a>
+                <?php elseif ($canStartAnotherRequest): ?>
+                    <a href="<?= APP_URL ?>/student/new-request.php" class="btn btn-primary btn-sm">
+                        <i class="fas fa-plus"></i> New Request
+                    </a>
+                <?php endif; ?>
                 <?php if ($canCancelRequest): ?>
                     <form method="POST" class="inline-form" onsubmit="return confirm('Cancel this request? You can submit a new online request afterward.');">
                         <?= csrfField() ?>
@@ -341,7 +352,7 @@ require_once __DIR__ . '/../includes/header.php';
 
             <?php elseif ($request['status'] === 'payment_verified'): ?>
 
-                <div class="alert alert-info"><i class="fas fa-hourglass-half"></i> Payment verified. Your request is awaiting assignment by the Registrar's Office.</div>
+                <div class="alert alert-info"><i class="fas fa-hourglass-half"></i> Payment verified. You can submit another document request while this one continues.</div>
 
             <?php elseif ($request['status'] === 'processing'): ?>
 

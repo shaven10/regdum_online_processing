@@ -387,6 +387,14 @@ require_once __DIR__ . '/../includes/header.php';
                             </div>
                         <?php endforeach; ?>
                     </div>
+                    <?php if (canEditRequestDocumentsBeforePayment($request)): ?>
+                        <p style="margin:.75rem 0 0">
+                            <a href="<?= APP_URL ?>/registrar/edit-request-documents.php?id=<?= (int) $requestId ?>" class="btn btn-outline btn-sm">
+                                <i class="fas fa-pen"></i> Edit Documents
+                            </a>
+                        </p>
+                        <p class="text-muted" style="margin:.4rem 0 0">Add or remove document types until the cashier verifies payment.</p>
+                    <?php endif; ?>
                 </div>
 
                 <div class="detail-item"><label>Purpose</label><span><?= purposeLabel($request['purpose']) ?></span></div>

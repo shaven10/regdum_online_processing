@@ -83,7 +83,7 @@ require_once __DIR__ . '/../includes/header.php';
         <?php if ($profileCompletion['complete'] && !$blockingRequest): ?>
             <a href="new-request.php" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Request</a>
         <?php elseif ($blockingRequest): ?>
-            <a href="request-view.php?id=<?= (int) $blockingRequest['id'] ?>" class="btn btn-primary btn-sm"><i class="fas fa-file-alt"></i> Active Request</a>
+            <a href="new-request.php?request_id=<?= (int) $blockingRequest['id'] ?>" class="btn btn-primary btn-sm"><i class="fas fa-pen"></i> Edit Documents</a>
         <?php else: ?>
             <a href="profile.php" class="btn btn-primary btn-sm"><i class="fas fa-user-edit"></i> Complete Profile</a>
         <?php endif; ?>
@@ -137,6 +137,9 @@ require_once __DIR__ . '/../includes/header.php';
                             <td data-label="Status"><?= statusBadge($req['status']) ?></td>
                             <td data-label="Date"><?= formatDate($req['created_at']) ?></td>
                             <td data-label="Actions" class="action-cell-buttons">
+                                <?php if (studentCanEditRequestDocuments($req, (int) $user['id'])): ?>
+                                    <a href="new-request.php?request_id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-outline">Edit</a>
+                                <?php endif; ?>
                                 <a href="request-view.php?id=<?= $req['id'] ?>" class="btn btn-sm btn-outline">View</a>
                                 <?php if ($req['status'] === 'requirements_verified'): ?>
                                     <a href="payment.php?request_id=<?= $req['id'] ?>" class="btn btn-sm btn-primary">Pay</a>

@@ -4,7 +4,8 @@ require_once __DIR__ . '/compliance.php';
 require_once __DIR__ . '/onsite-request.php';
 
 /**
- * Terminal online request statuses — student may submit a new online request.
+ * Closed online request statuses. A student may also start another request
+ * once cashier payment is verified, even if processing is still underway.
  *
  * @return list<string>
  */
@@ -31,16 +32,20 @@ function getStudentBlockingOnlineRequest(int $userId): ?array {
     }
 
     ensureRequestStatuses();
-    $terminal = studentOnlineTerminalRequestStatuses();
-    $placeholders = implode(',', array_fill(0, count($terminal), '?'));
-    $params = array_merge([$userId], $terminal);
+    $statuses = requestDocumentsEditableStatuses();
+    $placeholders = implode(',', array_fill(0, count($statuses), '?'));
+    $params = array_merge([$userId], $statuses);
 
     $stmt = getDB()->prepare(
         "SELECT id, request_number, status, created_at
          FROM requests
          WHERE user_id = ?
            AND COALESCE(request_channel, 'online') <> 'onsite'
-           AND status NOT IN ($placeholders)
+           AND status IN ($placeholders)
+           AND NOT EXISTS (
+               SELECT 1 FROM payments p
+               WHERE p.request_id = requests.id AND p.status = 'verified'
+           )
          ORDER BY created_at DESC
          LIMIT 1"
     );
@@ -52,6 +57,22 @@ function getStudentBlockingOnlineRequest(int $userId): ?array {
 
 function studentCanCreateOnlineRequest(int $userId): bool {
     return getStudentBlockingOnlineRequest($userId) === null;
+}
+
+function studentCanEditRequestDocuments(array $request, int $userId): bool {
+    if ($userId <= 0 || (int) ($request['user_id'] ?? 0) !== $userId) {
+        return false;
+    }
+
+    return canEditRequestDocumentsBeforePayment($request);
+}
+
+function requestDocumentEditorUrl(int $requestId, string $role = 'student'): string {
+    if ($role === 'registrar') {
+        return APP_URL . '/registrar/edit-request-documents.php?id=' . $requestId;
+    }
+
+    return APP_URL . '/student/new-request.php?request_id=' . $requestId;
 }
 
 function studentCanCancelOnlineRequest(array $request, ?int $userId = null): bool {
@@ -194,11 +215,15 @@ function renderStudentBlockingOnlineRequestAlert(?array $blockingRequest): strin
     $number = e($blockingRequest['request_number'] ?? '');
     $status = statusBadge((string) ($blockingRequest['status'] ?? ''));
 
+    $editUrl = requestDocumentEditorUrl((int) $blockingRequest['id']);
+
     return '<div class="alert alert-warning">'
         . '<i class="fas fa-exclamation-triangle"></i> '
-        . '<strong>One active request at a time.</strong> '
-        . 'You already have request <strong>' . $number . '</strong> (' . $status . '). '
-        . 'Cancel it before submitting a new online request. '
-        . '<a href="' . e($viewUrl) . '" class="btn btn-outline btn-sm" style="margin-left:.5rem;">View Request</a>'
+        . '<strong>Payment is not verified yet.</strong> '
+        . 'Request <strong>' . $number . '</strong> (' . $status . ') is still open. '
+        . 'You can add or remove documents until the cashier verifies payment. '
+        . 'After payment is verified, you can submit another request. '
+        . '<a href="' . e($editUrl) . '" class="btn btn-primary btn-sm" style="margin-left:.5rem;">Edit Documents</a> '
+        . '<a href="' . e($viewUrl) . '" class="btn btn-outline btn-sm">View Request</a>'
         . '</div>';
 }
