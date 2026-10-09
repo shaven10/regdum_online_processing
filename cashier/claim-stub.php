@@ -20,7 +20,7 @@ if ($batchIds === []) {
 
 $slips = fetchClaimStubsForRequests($batchIds, $user);
 if ($slips === []) {
-    setFlash('error', 'No printable claim slip was found. Verify the payment first.');
+    setFlash('error', 'No printable claim slip was found. Assign the request and set a release date first.');
     redirect($backUrl);
 }
 

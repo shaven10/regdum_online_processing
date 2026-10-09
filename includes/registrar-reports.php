@@ -35,7 +35,7 @@ function registrarRequestDocumentUrl(array $row): ?string {
         return null;
     }
 
-    if (isClaimStubPrintableStatus((string) ($row['status'] ?? ''))) {
+    if (claimStubHasReleaseDateAfterAssignment($row, $row['items'] ?? [])) {
         return registrarClaimStubUrl([$id]);
     }
 
@@ -47,7 +47,7 @@ function registrarRequestDocumentUrl(array $row): ?string {
 }
 
 function registrarRequestDocumentLabel(array $row): string {
-    if (isClaimStubPrintableStatus((string) ($row['status'] ?? ''))) {
+    if (claimStubHasReleaseDateAfterAssignment($row, $row['items'] ?? [])) {
         return 'Claim';
     }
 

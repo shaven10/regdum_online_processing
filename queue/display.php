@@ -7,8 +7,10 @@ require_once __DIR__ . '/../includes/theme.php';
 
 ensureQueueSchema();
 $state = getQueueDisplayState();
-$ads = $state['ads'] ?? ['enabled' => false, 'interval_seconds' => 8, 'images' => []];
+$ads = $state['ads'] ?? ['enabled' => false, 'interval_seconds' => 8, 'layout' => 'side', 'fit' => 'cover', 'images' => []];
 $adsVisible = !empty($ads['enabled']) && ($ads['images'] ?? []) !== [];
+$adsLayout = normalizeQueueAdLayout($ads['layout'] ?? 'side');
+$adsFit = normalizeQueueAdFit($ads['fit'] ?? 'cover');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -24,7 +26,7 @@ $adsVisible = !empty($ads['enabled']) && ($ads['images'] ?? []) !== [];
     <?php renderThemeStyleTag(); ?>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
-<body class="queue-display-page<?= $adsVisible ? ' has-queue-ads' : '' ?>" data-queue-status-url="<?= e(queueStatusUrl()) ?>">
+<body class="queue-display-page queue-ads-layout-<?= e($adsLayout) ?> queue-ads-fit-<?= e($adsFit) ?><?= $adsVisible ? ' has-queue-ads' : '' ?>" data-queue-status-url="<?= e(queueStatusUrl()) ?>">
     <header class="queue-display-top">
         <div class="queue-display-brand">
             <?= renderAppLogo('nav') ?>

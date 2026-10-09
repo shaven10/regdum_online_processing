@@ -29,7 +29,7 @@ if ($batchIds === []) {
 
 $slips = fetchClaimStubsForRequests($batchIds, $user);
 if ($slips === []) {
-    setFlash('warning', 'Claim slip is available after the payment is verified.');
+    setFlash('warning', 'Claim slip is available after the request is assigned and a release date is set.');
     redirect($backUrl);
 }
 

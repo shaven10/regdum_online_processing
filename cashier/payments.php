@@ -57,9 +57,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
             $requestIds = normalizeClaimStubRequestIds($result['request_ids'] ?? []);
             $orPaymentIds = normalizeOfficialReceiptPaymentIds($result['ids'] ?? $postedPaymentIds);
             $printClaimSlip = isClaimSlipAfterVerifyEnabled((int) $user['id']);
-            $claimLayout = $count > 1 ? 'combined' : 'separate';
-            $claimUrl = ($printClaimSlip && $requestIds !== [])
-                ? cashierClaimStubUrl($requestIds, $claimLayout, true)
+            $printableRequestIds = filterClaimStubPrintableRequestIds($requestIds);
+            $claimLayout = count($printableRequestIds) > 1 ? 'combined' : 'separate';
+            $claimUrl = ($printClaimSlip && $printableRequestIds !== [])
+                ? cashierClaimStubUrl($printableRequestIds, $claimLayout, true)
                 : '';
             $orUrl = $orPaymentIds !== []
                 ? cashierOfficialReceiptUrl($orPaymentIds, true)

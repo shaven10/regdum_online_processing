@@ -102,8 +102,19 @@
         if (indexEl) indexEl.textContent = String(adsIndex + 1);
     }
 
+    function applyAdPresentation(ads) {
+        const layouts = ['side', 'side-left', 'top', 'bottom'];
+        const fits = ['cover', 'contain', 'fill'];
+        const layout = layouts.indexOf(ads.layout) >= 0 ? ads.layout : 'side';
+        const fit = fits.indexOf(ads.fit) >= 0 ? ads.fit : 'cover';
+        layouts.forEach(function (name) { root.classList.remove('queue-ads-layout-' + name); });
+        fits.forEach(function (name) { root.classList.remove('queue-ads-fit-' + name); });
+        root.classList.add('queue-ads-layout-' + layout, 'queue-ads-fit-' + fit);
+    }
+
     function renderAds(ads) {
         if (!adsEl) return;
+        applyAdPresentation(ads);
         const images = Array.isArray(ads.images) ? ads.images : [];
         const enabled = !!ads.enabled && images.length > 0;
         const interval = Math.max(3, Number(ads.interval_seconds) || 8);

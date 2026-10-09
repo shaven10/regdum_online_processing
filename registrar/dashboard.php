@@ -410,6 +410,7 @@ renderDashboardActions([
 <div class="card">
     <div class="card-header">
         <h2>Staff Assignment Queue</h2>
+        <a href="assignments.php?view=reassign" class="btn btn-outline btn-sm">Reassign</a>
         <a href="assignments.php" class="btn btn-primary btn-sm">View All</a>
     </div>
     <div class="card-body">

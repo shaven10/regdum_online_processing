@@ -17,6 +17,7 @@ ensureDocumentAssignmentOfficeSchema();
 $db = getDB();
 $search = trim($_GET['search'] ?? '');
 $requestId = (int) ($_GET['id'] ?? 0);
+$assignmentView = ($_GET['view'] ?? '') === 'reassign' ? 'reassign' : 'queue';
 $releaseTimeOptions = [
     '09:00:00' => '9:00 AM',
     '10:00:00' => '10:00 AM',
@@ -46,12 +47,9 @@ if ($requestId > 0) {
         redirect(APP_URL . '/registrar/assignments.php');
     }
 
-    $awaitingAssignment = $request['status'] === 'payment_verified'
-        || ($request['status'] === 'processing' && requestHasPendingAssignmentItems($requestId));
-
-    if (!$awaitingAssignment) {
-        setFlash('error', 'This request is not awaiting staff assignment.');
-        redirect(APP_URL . '/registrar/assignments.php');
+    if (!requestDocumentAssignmentIsOpen($request['status'] ?? null)) {
+        setFlash('error', 'Documents can be reassigned only while the request is still being processed. Ready for pickup and completed requests stay with their current staff.');
+        redirect(APP_URL . '/registrar/assignments.php' . ($assignmentView === 'reassign' ? '?view=reassign' : ''));
     }
 
     $requestItems = getRequestItems($requestId);
@@ -110,10 +108,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     }
 
     if ($action === 'assign_processing' && $postRequestId > 0) {
-        $itemAssignments = $_POST['item_assignments'] ?? [];
-        $extra = ['item_assignments' => $itemAssignments];
-
-        if (empty(array_filter($itemAssignments, static fn($row) => !empty($row['assigned_to'])))) {
+        $itemAssignments = is_array($_POST['item_assignments'] ?? null) ? $_POST['item_assignments'] : [];
+        $hasItemAssignees = !empty(array_filter(
+            $itemAssignments,
+            static fn($row): bool => is_array($row) && !empty($row['assigned_to'])
+        ));
+        if ($hasItemAssignees) {
+            $extra = [
+                'item_assignments' => $itemAssignments,
+                'release_date' => $_POST['release_date'] ?? null,
+                'release_time' => $_POST['release_time'] ?? null,
+            ];
+        } else {
             $extra = [
                 'assigned_to' => (int) ($_POST['assigned_to'] ?? 0),
                 'release_date' => $_POST['release_date'] ?? null,
@@ -124,24 +130,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         $ok = processComplianceAction($postRequestId, [], 'assign_processing', $user['id'], '', $extra);
         if ($ok) {
             $reqNumber = $request['request_number'] ?? ('#' . $postRequestId);
-            setFlash('success', 'Documents assigned to staff. Processing has started.', [
-                'title' => 'Staff Assignment Complete',
+            $isReassignment = ($request['status'] ?? '') === 'processing';
+            setFlash('success', $isReassignment
+                ? 'Documents were reassigned. Staff still processing this request will see the updated assignment.'
+                : 'Documents assigned to staff. Processing has started.', [
+                'title' => $isReassignment ? 'Documents Reassigned' : 'Staff Assignment Complete',
                 'context' => ['Request' => $reqNumber],
-                'next_step' => 'Staff can now process the assigned documents. Print the claim stub for the student.',
+                'next_step' => $isReassignment
+                    ? 'The new assignee can continue processing. Ready for pickup and completed requests are not changed.'
+                    : 'Staff can now process the assigned documents. Print the claim stub for the student.',
                 'action_url' => APP_URL . '/registrar/claim-stub.php?id=' . $postRequestId . '&print=1',
                 'action_label' => 'Print Claim Stub',
             ]);
-            redirect(APP_URL . '/registrar/assignments.php');
+            redirect(APP_URL . '/registrar/assignments.php' . ($isReassignment ? '?view=reassign' : ''));
         }
 
-        setFlash('error', 'Select staff and release schedule for each pending document.');
+        setFlash('error', count($requestItems) > 1
+            ? 'Select staff for each pending document and one release date for this request.'
+            : 'Select staff and a release schedule.');
         redirect(APP_URL . '/registrar/assignments.php?id=' . $postRequestId);
     }
 }
 
-$assignmentRequests = getRequestsAwaitingStaffAssignment($search);
+$assignmentRequests = $assignmentView === 'reassign'
+    ? getRequestsEligibleForDocumentReassignment($search)
+    : getRequestsAwaitingStaffAssignment($search);
 $processors = getAssignableProcessors();
-$pendingCount = count($assignmentRequests);
+$pendingCount = $assignmentView === 'reassign'
+    ? countRequestsAwaitingStaffAssignment()
+    : count($assignmentRequests);
 $sortColumns = [
     'request_number' => ['type' => 'string'],
     'name' => [
@@ -160,6 +177,9 @@ $sortColumns = [
 $sortState = resolveRecordsSort($sortColumns, 'updated_at', 'desc');
 $assignmentRequests = sortRecordList($assignmentRequests, $sortState);
 $listFilters = array_merge(['search' => $search], recordsSortFilterParams($sortState));
+if ($assignmentView === 'reassign') {
+    $listFilters['view'] = 'reassign';
+}
 $pagedAssignments = paginateRecordList(
     $assignmentRequests,
     $listFilters,
@@ -173,7 +193,10 @@ if ($pagedAssignments['per_page'] !== ITEMS_PER_PAGE) {
     $sortQuery['per_page'] = $pagedAssignments['per_page'];
 }
 
-$pageTitle = $request ? ('Assign Staff — ' . $request['request_number']) : 'Staff Assignment';
+$isReassignment = $request && ($request['status'] ?? '') === 'processing';
+$pageTitle = $request
+    ? (($isReassignment ? 'Reassign Staff — ' : 'Assign Staff — ') . $request['request_number'])
+    : ($assignmentView === 'reassign' ? 'Reassign Documents' : 'Staff Assignment');
 $activeNav = 'assignments';
 require_once __DIR__ . '/../includes/header.php';
 ?>
@@ -182,10 +205,10 @@ require_once __DIR__ . '/../includes/header.php';
 <div class="card">
     <div class="card-header">
         <div>
-            <a href="assignments.php<?= $search !== '' ? '?search=' . urlencode($search) : '' ?>" class="btn btn-outline btn-sm">
-                <i class="fas fa-arrow-left"></i> Back to Assignment Queue
+            <a href="assignments.php?<?= http_build_query(array_filter(['view' => $isReassignment ? 'reassign' : null, 'search' => $search !== '' ? $search : null])) ?>" class="btn btn-outline btn-sm">
+                <i class="fas fa-arrow-left"></i> <?= $isReassignment ? 'Back to Reassignment' : 'Back to Assignment Queue' ?>
             </a>
-            <h2 style="margin-top:.75rem">Assign Staff — <?= e($request['request_number']) ?></h2>
+            <h2 style="margin-top:.75rem"><?= $isReassignment ? 'Reassign Staff' : 'Assign Staff' ?> — <?= e($request['request_number']) ?></h2>
         </div>
         <div class="card-header-actions">
             <?= renderRegistrarClaimSlipButtonsHtml($request, true) ?>
@@ -211,8 +234,15 @@ require_once __DIR__ . '/../includes/header.php';
         <?php else: ?>
             <div class="alert alert-info">
                 <i class="fas fa-user-tag"></i>
-                Assign each document to a Registrar, Registrar Staff, Cashier, or Guidance Office account. Suggested offices:
-                SOA → Cashier, Good Moral → Guidance.
+                <?php if ($isReassignment): ?>
+                    Change the staff on documents that are still being processed. Documents already ready for pickup or completed stay with their current staff.
+                <?php else: ?>
+                    Assign each document to a Registrar, Registrar Staff, Cashier, or Guidance Office account. Suggested offices:
+                    SOA → Cashier, Good Moral → Guidance.
+                <?php endif; ?>
+                <?php if (count($requestItems) > 1): ?>
+                    Documents in this request share one release date.
+                <?php endif; ?>
             </div>
 
             <form method="POST" class="form-grid">
@@ -230,7 +260,7 @@ require_once __DIR__ . '/../includes/header.php';
                 }
                 ?>
 
-                <?php if (count($pendingItems) === 1): ?>
+                <?php if (count($requestItems) <= 1): ?>
                     <?php
                     $singleItem = $pendingItems[0];
                     $singleSchedule = $itemSchedules[(int) $singleItem['id']] ?? $releaseSchedule;
@@ -241,18 +271,30 @@ require_once __DIR__ . '/../includes/header.php';
                     ?>
                     <div class="form-group">
                         <label for="assigned_to">
-                            <?= e($singleItem['document_name']) ?> — Assign to *
+                            <?= e($singleItem['document_name']) ?> — <?= $isReassignment ? 'Reassign to' : 'Assign to' ?> *
                             <span class="badge badge-review">Suggested: <?= e(assignmentOfficeLabel($preferredOffice)) ?></span>
                         </label>
-                        <?= renderAssigneeSelectHtml('assigned_to', $processors, $preferredOffice, true, 'assigned_to') ?>
-                        <small class="text-muted">You can assign outside the Registrar when needed (Cashier or Guidance).</small>
+                        <?php if (!requestItemCanBeReassigned($singleItem)): ?>
+                            <p><?= e(trim(($singleItem['staff_first'] ?? '') . ' ' . ($singleItem['staff_last'] ?? ''))) ?> <?= requestItemStatusBadge($singleItem['item_status'] ?? '') ?></p>
+                        <?php else: ?>
+                            <?= renderAssigneeSelectHtml(
+                                'assigned_to',
+                                $processors,
+                                $preferredOffice,
+                                true,
+                                'assigned_to',
+                                (int) ($singleItem['assigned_to'] ?? 0) ?: null
+                            ) ?>
+                            <small class="text-muted">You can assign outside the Registrar when needed (Cashier or Guidance).</small>
+                        <?php endif; ?>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label for="release_date">On-Site Release Date *</label>
+                            <?php $singleReleaseDate = (string) ($singleSchedule['release_date'] ?? $singleSchedule['suggested_date'] ?? date('Y-m-d')); ?>
                             <input type="date" id="release_date" name="release_date"
-                                value="<?= e($singleSchedule['release_date'] ?? $singleSchedule['suggested_date'] ?? date('Y-m-d')) ?>"
-                                min="<?= date('Y-m-d') ?>" required>
+                                value="<?= e($singleReleaseDate) ?>"
+                                min="<?= e($singleReleaseDate !== '' && $singleReleaseDate < date('Y-m-d') ? $singleReleaseDate : date('Y-m-d')) ?>" required>
                         </div>
                         <div class="form-group">
                             <label for="release_time">Release Time *</label>
@@ -266,22 +308,27 @@ require_once __DIR__ . '/../includes/header.php';
                         </div>
                     </div>
                 <?php else: ?>
+                    <?php
+                    $groupSchedule = buildSharedReleaseScheduleForRequest(
+                        (int) $request['id'],
+                        $requestItems,
+                        $request['release_date'] ?? null,
+                        $request['release_time'] ?? null
+                    );
+                    ?>
                     <div class="request-item-assignment-table-wrap">
                         <table class="data-table request-item-assignment-table data-table-responsive">
                             <thead>
                                 <tr>
                                     <th>Document</th>
                                     <th>Assign To *</th>
-                                    <th>Release Date *</th>
-                                    <th>Release Time *</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <?php foreach ($requestItems as $requestItem): ?>
                                     <?php
                                     $itemId = (int) $requestItem['id'];
-                                    $schedule = $itemSchedules[$itemId] ?? $releaseSchedule;
-                                    $isAssigned = ($requestItem['item_status'] ?? '') !== 'pending_assignment';
+                                    $itemLocked = !requestItemCanBeReassigned($requestItem);
                                     $preferredOffice = getDocumentAssignmentOffice(
                                         (int) ($requestItem['document_type_id'] ?? 0),
                                         $requestItem['document_code'] ?? null
@@ -292,41 +339,23 @@ require_once __DIR__ . '/../includes/header.php';
                                             <strong><?= e($requestItem['document_name']) ?></strong>
                                             <br><small class="text-muted"><?= (int) $requestItem['copies'] ?> cop<?= (int) $requestItem['copies'] === 1 ? 'y' : 'ies' ?> · <?= formatMoney((float) $requestItem['item_amount']) ?></small>
                                             <br><span class="badge badge-review">Suggested: <?= e(assignmentOfficeLabel($preferredOffice)) ?></span>
-                                            <?php if ($isAssigned): ?>
+                                            <?php if ($itemLocked || !empty($requestItem['assigned_to'])): ?>
                                                 <br><?= requestItemStatusBadge($requestItem['item_status']) ?>
                                             <?php endif; ?>
                                         </td>
                                         <td data-label="Assign To">
-                                            <?php if ($isAssigned && !empty($requestItem['staff_first'])): ?>
-                                                <span><?= e($requestItem['staff_first'] . ' ' . $requestItem['staff_last']) ?></span>
+                                            <?php if ($itemLocked): ?>
+                                                <span><?= e(trim(($requestItem['staff_first'] ?? '') . ' ' . ($requestItem['staff_last'] ?? '')) ?: '—') ?></span>
+                                                <br><small class="text-muted">Cannot reassign</small>
                                             <?php else: ?>
                                                 <?= renderAssigneeSelectHtml(
                                                     'item_assignments[' . $itemId . '][assigned_to]',
                                                     $processors,
-                                                    $preferredOffice
+                                                    $preferredOffice,
+                                                    true,
+                                                    '',
+                                                    (int) ($requestItem['assigned_to'] ?? 0) ?: null
                                                 ) ?>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td data-label="Release Date">
-                                            <?php if ($isAssigned): ?>
-                                                <?= !empty($requestItem['release_date']) ? e(formatDate($requestItem['release_date'])) : '—' ?>
-                                            <?php else: ?>
-                                                <input type="date" name="item_assignments[<?= $itemId ?>][release_date]"
-                                                    value="<?= e($schedule['release_date'] ?? $schedule['suggested_date'] ?? date('Y-m-d')) ?>"
-                                                    min="<?= date('Y-m-d') ?>" required>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td data-label="Release Time">
-                                            <?php if ($isAssigned): ?>
-                                                <?= !empty($requestItem['release_time']) ? e(date('g:i A', strtotime((string) $requestItem['release_time']))) : '—' ?>
-                                            <?php else: ?>
-                                                <select name="item_assignments[<?= $itemId ?>][release_time]" required>
-                                                    <?php foreach ($releaseTimeOptions as $value => $label): ?>
-                                                        <option value="<?= $value ?>" <?= (($schedule['release_time'] ?? $schedule['suggested_time'] ?? '') === $value) ? 'selected' : '' ?>>
-                                                            <?= e($label) ?>
-                                                        </option>
-                                                    <?php endforeach; ?>
-                                                </select>
                                             <?php endif; ?>
                                         </td>
                                     </tr>
@@ -334,11 +363,31 @@ require_once __DIR__ . '/../includes/header.php';
                             </tbody>
                         </table>
                     </div>
+                    <p class="text-muted">One release date for this set of <?= count($requestItems) ?> documents. Saving it updates every document still open in this request. Suggested from <?= (int) $groupSchedule['processing_days'] ?> working day(s), excluding weekends.</p>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="release_date">On-Site Release Date *</label>
+                            <?php $groupReleaseDate = (string) ($groupSchedule['release_date'] ?? $groupSchedule['suggested_date'] ?? date('Y-m-d')); ?>
+                            <input type="date" id="release_date" name="release_date"
+                                value="<?= e($groupReleaseDate) ?>"
+                                min="<?= e($groupReleaseDate !== '' && $groupReleaseDate < date('Y-m-d') ? $groupReleaseDate : date('Y-m-d')) ?>" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="release_time">Release Time *</label>
+                            <select id="release_time" name="release_time" required>
+                                <?php foreach ($releaseTimeOptions as $value => $label): ?>
+                                    <option value="<?= $value ?>" <?= (($groupSchedule['release_time'] ?? $groupSchedule['suggested_time'] ?? '') === $value) ? 'selected' : '' ?>>
+                                        <?= e($label) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
                 <?php endif; ?>
 
                 <div class="action-buttons">
-                    <button type="submit" class="btn btn-primary" onclick="return confirm('Assign selected personnel and start document processing?')">
-                        <i class="fas fa-user-check"></i> Assign & Start Processing
+                    <button type="submit" class="btn btn-primary" onclick="return confirm(<?= $isReassignment ? "'Save the new staff assignment for documents still being processed?'" : "'Assign selected personnel and start document processing?'" ?>)">
+                        <i class="fas fa-user-check"></i> <?= $isReassignment ? 'Save Reassignment' : 'Assign & Start Processing' ?>
                     </button>
                 </div>
             </form>
@@ -358,17 +407,28 @@ require_once __DIR__ . '/../includes/header.php';
 <div class="card">
     <div class="card-header">
         <div>
-            <h2>Document Assignment to Staff</h2>
-            <p class="text-muted" style="margin:.35rem 0 0">Assign paid requests to registrar staff for document processing.</p>
+            <h2><?= $assignmentView === 'reassign' ? 'Reassign Documents' : 'Document Assignment to Staff' ?></h2>
+            <p class="text-muted" style="margin:.35rem 0 0">
+                <?= $assignmentView === 'reassign'
+                    ? 'Change staff on requests that are still being processed. Ready for pickup and completed requests are not listed.'
+                    : 'Assign paid requests to registrar staff for document processing.' ?>
+            </p>
+        </div>
+        <div class="card-header-actions">
+            <a href="assignments.php" class="btn btn-sm <?= $assignmentView === 'queue' ? 'btn-primary' : 'btn-outline' ?>">Awaiting Assignment</a>
+            <a href="assignments.php?view=reassign" class="btn btn-sm <?= $assignmentView === 'reassign' ? 'btn-primary' : 'btn-outline' ?>">Reassign</a>
         </div>
     </div>
     <div class="card-body">
         <form method="GET" class="filter-bar" id="assignmentFilterForm">
+            <?php if ($assignmentView === 'reassign'): ?>
+                <input type="hidden" name="view" value="reassign">
+            <?php endif; ?>
             <?= recordsSortFormFields($sortState) ?>
             <input type="text" name="search" placeholder="Search request #, student..." value="<?= e($search) ?>">
             <button type="submit" class="btn btn-outline btn-sm">Search</button>
             <?php if ($search !== ''): ?>
-                <a href="assignments.php" class="btn btn-outline btn-sm">Clear</a>
+                <a href="assignments.php<?= $assignmentView === 'reassign' ? '?view=reassign' : '' ?>" class="btn btn-outline btn-sm">Clear</a>
             <?php endif; ?>
         </form>
         <?= $pagedAssignments['meta_html'] ?>
@@ -376,13 +436,16 @@ require_once __DIR__ . '/../includes/header.php';
         <?php if (empty($assignmentRequests)): ?>
             <div class="empty-state">
                 <i class="fas fa-user-check"></i>
-                <p>No requests are waiting for staff assignment.</p>
+                <p><?= $assignmentView === 'reassign'
+                    ? 'No processing requests can be reassigned right now.'
+                    : 'No requests are waiting for staff assignment.' ?></p>
             </div>
         <?php else: ?>
             <form method="POST" id="assignmentBatchForm">
                 <?= csrfField() ?>
                 <input type="hidden" name="action" value="batch_assign">
 
+                <?php if ($assignmentView !== 'reassign'): ?>
                 <div class="batch-action-bar" id="assignmentBatchActionBar" hidden>
                     <span class="batch-action-count"><strong id="assignmentBatchSelectedCount">0</strong> selected</span>
                     <div class="batch-action-buttons">
@@ -391,20 +454,23 @@ require_once __DIR__ . '/../includes/header.php';
                         </button>
                     </div>
                 </div>
+                <?php endif; ?>
 
                 <div class="table-wrap">
                     <table class="data-table data-table-responsive">
                         <thead>
                             <tr>
+                                <?php if ($assignmentView !== 'reassign'): ?>
                                 <th class="batch-select-col">
                                     <label class="checkbox-label batch-select-all-label">
                                         <input type="checkbox" id="assignmentSelectAllRequests" aria-label="Select all requests">
                                     </label>
                                 </th>
+                                <?php endif; ?>
                                 <?= renderRecordsSortHeader('Request #', 'request_number', $sortState, $sortQuery) ?>
                                 <?= renderRecordsSortHeader('Student', 'name', $sortState, $sortQuery) ?>
                                 <?= renderRecordsSortHeader('Documents', 'document_name', $sortState, $sortQuery) ?>
-                                <?= renderRecordsSortHeader('Pending Items', 'pending_assignment_count', $sortState, $sortQuery) ?>
+                                <?= renderRecordsSortHeader($assignmentView === 'reassign' ? 'Open Documents' : 'Pending Items', 'pending_assignment_count', $sortState, $sortQuery) ?>
                                 <?= renderRecordsSortHeader('Amount', 'total_amount', $sortState, $sortQuery) ?>
                                 <?= renderRecordsSortHeader('Paid / Updated', 'updated_at', $sortState, $sortQuery) ?>
                                 <th>Action</th>
@@ -413,11 +479,13 @@ require_once __DIR__ . '/../includes/header.php';
                         <tbody>
                             <?php foreach ($assignmentRequests as $req): ?>
                                 <tr>
+                                    <?php if ($assignmentView !== 'reassign'): ?>
                                     <td class="batch-select-col" data-label="Select">
                                         <label class="checkbox-label">
                                             <input type="checkbox" class="assignment-request-select" name="request_ids[]" value="<?= (int) $req['id'] ?>">
                                         </label>
                                     </td>
+                                    <?php endif; ?>
                                     <td data-label="Request #"><strong><?= e($req['request_number']) ?></strong></td>
                                     <td data-label="Student">
                                         <?= e($req['first_name'] . ' ' . $req['last_name']) ?>
@@ -429,16 +497,20 @@ require_once __DIR__ . '/../includes/header.php';
                                             <br><small class="text-muted"><?= (int) $req['document_count'] ?> documents</small>
                                         <?php endif; ?>
                                     </td>
-                                    <td data-label="Pending Items">
+                                    <td data-label="<?= $assignmentView === 'reassign' ? 'Open Documents' : 'Pending Items' ?>">
                                         <span class="badge badge-review">
-                                            <?= max(1, (int) ($req['pending_assignment_count'] ?? 0)) ?> to assign
+                                            <?= max(1, (int) ($req['pending_assignment_count'] ?? 0)) ?>
+                                            <?= $assignmentView === 'reassign' ? 'open' : 'to assign' ?>
                                         </span>
+                                        <?php if ($assignmentView === 'reassign' && !empty($req['assignee_names'])): ?>
+                                            <br><small class="text-muted"><?= e($req['assignee_names']) ?></small>
+                                        <?php endif; ?>
                                     </td>
                                     <td data-label="Amount"><?= formatMoney((float) ($req['total_amount'] ?? 0)) ?></td>
                                     <td data-label="Paid / Updated"><?= formatDateTime($req['updated_at'] ?? $req['created_at']) ?></td>
                                     <td data-label="Action" class="action-cell-buttons">
-                                        <a href="assignments.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-primary">
-                                            <i class="fas fa-user-tag"></i> Assign Staff
+                                        <a href="assignments.php?id=<?= (int) $req['id'] ?><?= $assignmentView === 'reassign' ? '&view=reassign' : '' ?>" class="btn btn-sm btn-primary">
+                                            <i class="fas fa-user-tag"></i> <?= $assignmentView === 'reassign' ? 'Reassign' : 'Assign Staff' ?>
                                         </a>
                                         <a href="verify-request.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-outline">Review</a>
                                         <?= renderRegistrarClaimSlipButtonsHtml($req, true) ?>
@@ -451,6 +523,7 @@ require_once __DIR__ . '/../includes/header.php';
             </form>
             <?= $pagedAssignments['html'] ?>
 
+            <?php if ($assignmentView !== 'reassign'): ?>
             <?php renderAdminFormModalOpen('Staff Assignment', 'Batch Assign Staff', 'assignmentBatchAssignModal'); ?>
             <form method="POST" id="assignmentBatchAssignForm" class="form-grid">
                 <?= csrfField() ?>
@@ -552,6 +625,7 @@ require_once __DIR__ . '/../includes/header.php';
                 syncBatchBar();
             })();
             </script>
+            <?php endif; ?>
         <?php endif; ?>
     </div>
 </div>

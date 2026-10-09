@@ -8,6 +8,7 @@ require_once __DIR__ . '/../includes/request-items.php';
 require_once __DIR__ . '/../includes/attachments.php';
 require_once __DIR__ . '/../includes/ui.php';
 require_once __DIR__ . '/../includes/student-requests.php';
+require_once __DIR__ . '/../includes/claim-stub.php';
 requireRole('student');
 ensureRequestItemsSchema();
 ensureRequestCopyTypeSchema();
@@ -332,13 +333,13 @@ require_once __DIR__ . '/../includes/header.php';
 
             <?php if ($request['status'] === 'submitted' || $request['status'] === 'under_review'): ?>
 
-                <div class="alert alert-info"><i class="fas fa-hourglass-half"></i> Your request is awaiting registrar review. Requirements will be assigned once confirmed.</div>
+                <div class="alert alert-info"><i class="fas fa-credit-card"></i> Your request is submitted. Continue to payment so the cashier can verify it.</div>
 
             <?php endif; ?>
 
 
 
-            <?php if ($request['status'] === 'requirements_verified'): ?>
+            <?php if (studentRequestShowsPayAction($request['status'] ?? null)): ?>
 
                 <a href="payment.php?request_id=<?= $requestId ?>" class="btn btn-primary"><i class="fas fa-credit-card"></i> Proceed to Payment</a>
 
@@ -366,7 +367,7 @@ require_once __DIR__ . '/../includes/header.php';
 
 
 
-            <?php if (in_array($request['status'], ['processing', 'ready_for_pickup', 'shipped', 'completed'], true)): ?>
+            <?php if (claimStubHasReleaseDateAfterAssignment($request, $requestItems)): ?>
 
                 <a href="claim-stub.php?id=<?= $requestId ?>" target="_blank" class="btn btn-primary"><i class="fas fa-receipt"></i> Claim Stub</a>
                 <a href="claim-stub.php?id=<?= $requestId ?>&download=pdf" target="_blank" class="btn btn-outline"><i class="fas fa-file-pdf"></i> PDF</a>
@@ -465,9 +466,11 @@ require_once __DIR__ . '/../includes/header.php';
                     <?php endif; ?>
                 </label>
                 <div class="pickup-complete-actions">
+                    <?php if (claimStubHasReleaseDateAfterAssignment($request, $requestItems)): ?>
                     <a href="claim-stub.php?id=<?= $requestId ?>&print=1" target="_blank" class="btn btn-outline">
                         <i class="fas fa-print"></i> Print Claim Stub
                     </a>
+                    <?php endif; ?>
                     <button type="submit" class="btn btn-primary btn-lg">
                         <i class="fas fa-check-double"></i> Complete Transaction
                     </button>
@@ -712,7 +715,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <i class="fas fa-comment-dots"></i>
                     <strong>Cashier Feedback:</strong> <?= e($paymentData['notes']) ?>
                 </div>
-                <?php if ($request['status'] === 'requirements_verified'): ?>
+                <?php if (studentRequestShowsPayAction($request['status'] ?? null)): ?>
                     <a href="payment.php?request_id=<?= $requestId ?>" class="btn btn-primary" style="margin-top:.75rem">
                         <i class="fas fa-redo"></i> Resubmit Payment
                     </a>

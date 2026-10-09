@@ -90,7 +90,38 @@ function queueDefaultSettings(): array {
         'queue_sound_enabled' => '1',
         'queue_ads_enabled' => '1',
         'queue_ads_interval' => '8',
+        'queue_ads_layout' => 'side',
+        'queue_ads_fit' => 'cover',
     ];
+}
+
+/** @return array<string,string> */
+function queueAdLayoutOptions(): array {
+    return [
+        'side' => 'Beside the queue, on the right',
+        'side-left' => 'Beside the queue, on the left',
+        'top' => 'Banner above the queue',
+        'bottom' => 'Banner below the queue',
+    ];
+}
+
+/** @return array<string,string> */
+function queueAdFitOptions(): array {
+    return [
+        'cover' => 'Fill the area and crop edges',
+        'contain' => 'Show the whole image',
+        'fill' => 'Stretch to fill the area',
+    ];
+}
+
+function normalizeQueueAdLayout(?string $layout): string {
+    $layout = (string) $layout;
+    return array_key_exists($layout, queueAdLayoutOptions()) ? $layout : 'side';
+}
+
+function normalizeQueueAdFit(?string $fit): string {
+    $fit = (string) $fit;
+    return array_key_exists($fit, queueAdFitOptions()) ? $fit : 'cover';
 }
 
 /**
@@ -102,7 +133,9 @@ function queueDefaultSettings(): array {
  *   require_name:bool,
  *   sound_enabled:bool,
  *   ads_enabled:bool,
- *   ads_interval:int
+ *   ads_interval:int,
+ *   ads_layout:string,
+ *   ads_fit:string
  * }
  */
 function getQueueSettings(): array {
@@ -123,6 +156,8 @@ function getQueueSettings(): array {
         'sound_enabled' => getAppSetting('queue_sound_enabled', '1') === '1',
         'ads_enabled' => getAppSetting('queue_ads_enabled', '1') === '1',
         'ads_interval' => $interval,
+        'ads_layout' => normalizeQueueAdLayout(getAppSetting('queue_ads_layout', 'side')),
+        'ads_fit' => normalizeQueueAdFit(getAppSetting('queue_ads_fit', 'cover')),
     ];
 }
 
@@ -622,7 +657,7 @@ function getQueueDisplayAds(bool $activeOnly = true): array {
 }
 
 /**
- * @return array{enabled:bool,interval_seconds:int,images:list<array{id:int,url:string,name:string}>}
+ * @return array{enabled:bool,interval_seconds:int,layout:string,fit:string,images:list<array{id:int,url:string,name:string}>}
  */
 function getQueueDisplayAdState(): array {
     $settings = getQueueSettings();
@@ -640,6 +675,8 @@ function getQueueDisplayAdState(): array {
     return [
         'enabled' => $settings['ads_enabled'] && $images !== [],
         'interval_seconds' => (int) $settings['ads_interval'],
+        'layout' => (string) $settings['ads_layout'],
+        'fit' => (string) $settings['ads_fit'],
         'images' => $images,
     ];
 }
@@ -657,8 +694,19 @@ function saveQueueDisplayAdSettings(array $input): array {
         $interval = max(3, min(60, $interval));
     }
 
+    $layout = normalizeQueueAdLayout((string) ($input['queue_ads_layout'] ?? 'side'));
+    $fit = normalizeQueueAdFit((string) ($input['queue_ads_fit'] ?? 'cover'));
+    if (!array_key_exists((string) ($input['queue_ads_layout'] ?? 'side'), queueAdLayoutOptions())) {
+        $errors[] = 'Choose a valid advertisement showing option.';
+    }
+    if (!array_key_exists((string) ($input['queue_ads_fit'] ?? 'cover'), queueAdFitOptions())) {
+        $errors[] = 'Choose a valid display fit option.';
+    }
+
     setAppSetting('queue_ads_enabled', $enabled);
     setAppSetting('queue_ads_interval', (string) $interval);
+    setAppSetting('queue_ads_layout', $layout);
+    setAppSetting('queue_ads_fit', $fit);
 
     return $errors;
 }

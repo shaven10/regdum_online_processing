@@ -9170,11 +9170,28 @@ body.grades-missing-paste-open {
     min-height: 0;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "board";
 }
-.queue-display-page.has-queue-ads .queue-display-split {
+.queue-display-page.has-queue-ads.queue-ads-layout-side .queue-display-split {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: "board ads";
+}
+.queue-display-page.has-queue-ads.queue-ads-layout-side-left .queue-display-split {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: "ads board";
+}
+.queue-display-page.has-queue-ads.queue-ads-layout-top .queue-display-split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(180px, 34vh) minmax(0, 1fr);
+    grid-template-areas: "ads" "board";
+}
+.queue-display-page.has-queue-ads.queue-ads-layout-bottom .queue-display-split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(180px, 34vh);
+    grid-template-areas: "board" "ads";
 }
 .queue-display-board {
+    grid-area: board;
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -9189,6 +9206,7 @@ body.grades-missing-paste-open {
     min-height: 0;
 }
 .queue-display-ads {
+    grid-area: ads;
     position: relative;
     min-width: 0;
     min-height: 0;
@@ -9197,6 +9215,14 @@ body.grades-missing-paste-open {
     overflow: hidden;
     background: #031a14;
     border: 1px solid rgba(167, 243, 208, 0.18);
+}
+.queue-ads-layout-side-left .queue-display-ads,
+.queue-ads-layout-top .queue-display-ads,
+.queue-ads-layout-bottom .queue-display-ads {
+    margin: 0 1.25rem 1.25rem;
+}
+.queue-ads-layout-side-left .queue-display-ads {
+    margin-right: 0;
 }
 .queue-display-ads[hidden] {
     display: none;
@@ -9215,6 +9241,12 @@ body.grades-missing-paste-open {
     height: 100%;
     object-fit: cover;
     background: #031a14;
+}
+.queue-ads-fit-contain .queue-display-ad img {
+    object-fit: contain;
+}
+.queue-ads-fit-fill .queue-display-ad img {
+    object-fit: fill;
 }
 .queue-display-ads-count {
     position: absolute;
@@ -9358,6 +9390,67 @@ body.grades-missing-paste-open {
     object-fit: cover;
     background: var(--gray-100);
 }
+.queue-ads-fit-contain .queue-ad-card img,
+.queue-ad-preview.queue-ads-fit-contain .queue-ad-preview-ads img {
+    object-fit: contain;
+}
+.queue-ads-fit-fill .queue-ad-card img,
+.queue-ad-preview.queue-ads-fit-fill .queue-ad-preview-ads img {
+    object-fit: fill;
+}
+.queue-ad-preview {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas: "board ads";
+    gap: .5rem;
+    min-height: 140px;
+    padding: .65rem;
+    border: 1px dashed var(--gray-300);
+    border-radius: var(--radius);
+    background: #022c22;
+    color: #ecfdf5;
+}
+.queue-ad-preview.queue-ads-layout-side-left {
+    grid-template-areas: "ads board";
+}
+.queue-ad-preview.queue-ads-layout-top {
+    grid-template-columns: 1fr;
+    grid-template-areas: "ads" "board";
+}
+.queue-ad-preview.queue-ads-layout-bottom {
+    grid-template-columns: 1fr;
+    grid-template-areas: "board" "ads";
+}
+.queue-ad-preview-board,
+.queue-ad-preview-ads {
+    min-height: 72px;
+    border-radius: .75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.queue-ad-preview-board {
+    grid-area: board;
+    background: rgba(255, 255, 255, 0.08);
+    font-weight: 700;
+}
+.queue-ad-preview-ads {
+    grid-area: ads;
+    position: relative;
+    overflow: hidden;
+    background: #031a14;
+}
+.queue-ad-preview-ads img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    position: absolute;
+    inset: 0;
+}
+.queue-ad-preview.queue-ads-layout-top .queue-ad-preview-ads,
+.queue-ad-preview.queue-ads-layout-bottom .queue-ad-preview-ads {
+    min-height: 88px;
+}
 .queue-ad-card-body {
     display: flex;
     justify-content: space-between;
@@ -9381,10 +9474,15 @@ body.grades-missing-paste-open {
     .queue-window-layout,
     .queue-display-page.has-queue-ads .queue-display-split {
         grid-template-columns: 1fr;
+        grid-template-rows: minmax(0, 1fr) minmax(180px, 42vh);
+        grid-template-areas: "board" "ads";
+    }
+    .queue-display-page.has-queue-ads.queue-ads-layout-top .queue-display-split {
+        grid-template-rows: minmax(180px, 42vh) minmax(0, 1fr);
+        grid-template-areas: "ads" "board";
     }
     .queue-display-ads {
         margin: 0 1rem 1rem;
-        min-height: 50vh;
     }
 }
 

@@ -317,28 +317,131 @@ function notifyRegistrarsNewRequest(int $requestId, string $requestNumber, strin
     $docLabel = $documentCount === 1 ? '1 document' : $documentCount . ' documents';
     notifyUsersByRole(
         'registrar',
-        'New Incoming Request',
-        $studentName . ' submitted request ' . $requestNumber . ' (' . $docLabel . ') for review.',
+        'New request',
+        $studentName . ' submitted ' . $requestNumber . ' (' . $docLabel . ') for review.',
         'info',
         APP_URL . '/registrar/verify-request.php?id=' . $requestId
-    );
-    notifyUsersByRole(
-        'admin',
-        'New Incoming Request',
-        $studentName . ' submitted request ' . $requestNumber . ' (' . $docLabel . ').',
-        'info',
-        APP_URL . '/admin/request-manage.php?id=' . $requestId
     );
 }
 
 function notifyCashiersNewPayment(int $requestId, string $requestNumber, string $studentName): void {
     notifyUsersByRole(
         'cashier',
-        'New Payment to Verify',
-        $studentName . ' submitted payment for request ' . $requestNumber . '.',
+        'Payment to verify',
+        $studentName . ' submitted payment for ' . $requestNumber . '.',
         'info',
         APP_URL . '/cashier/payments.php?status=pending'
     );
+}
+
+/**
+ * One student notice for a status change. Returns title, message, type, and link.
+ *
+ * @return array{0:string,1:string,2:string,3:string}
+ */
+function studentRequestStatusNotice(array $request, string $newStatus, ?string $remarks = null): array {
+    $requestId = (int) ($request['id'] ?? 0);
+    $number = (string) ($request['request_number'] ?? 'your request');
+    $link = APP_URL . '/student/request-view.php?id=' . $requestId;
+    $remarks = trim((string) $remarks);
+
+    $release = '';
+    if (!empty($request['release_date'])) {
+        $release = formatDate((string) $request['release_date']);
+        if (!empty($request['release_time'])) {
+            $release .= ' at ' . date('g:i A', strtotime((string) $request['release_time']));
+        }
+    }
+
+    return match ($newStatus) {
+        'submitted', 'under_review' => [
+            'Request received',
+            'Request ' . $number . ' is with the Registrar for review.',
+            'info',
+            $link,
+        ],
+        'awaiting_requirements' => [
+            'Requirements needed',
+            'Request ' . $number . ' needs the listed requirements before it can continue.',
+            'info',
+            $link,
+        ],
+        'requirements_submitted' => [
+            'Requirements received',
+            'Request ' . $number . ' is with the Registrar for review.',
+            'info',
+            $link,
+        ],
+        'needs_revision' => [
+            'Corrections needed',
+            $remarks !== ''
+                ? 'Request ' . $number . ' needs corrections: ' . $remarks
+                : 'Request ' . $number . ' needs corrections before it can continue.',
+            'warning',
+            $link,
+        ],
+        'requirements_verified' => [
+            'Ready for payment',
+            'Request ' . $number . ' is approved. You can pay now.',
+            'success',
+            APP_URL . '/student/payment.php?request_id=' . $requestId,
+        ],
+        'payment_verified' => [
+            'Payment verified',
+            'Payment for ' . $number . ' is verified. The Registrar will assign it and set a release date.',
+            'success',
+            $link,
+        ],
+        'processing' => [
+            'Processing started',
+            'Request ' . $number . ' is now being processed.' . ($release !== '' ? ' Release date: ' . $release . '.' : ''),
+            'info',
+            $link,
+        ],
+        'ready_for_pickup' => [
+            'Ready for release',
+            'Request ' . $number . ' is ready for release.' . ($release !== '' ? ' Release date: ' . $release . '.' : ''),
+            'success',
+            $link,
+        ],
+        'shipped' => [
+            'Document shipped',
+            'Request ' . $number . ' has been shipped.'
+                . (trim((string) ($request['courier_tracking'] ?? '')) !== ''
+                    ? ' Tracking: ' . trim((string) $request['courier_tracking']) . '.'
+                    : ''),
+            'info',
+            $link,
+        ],
+        'completed' => [
+            'Request completed',
+            'Request ' . $number . ' is complete.',
+            'success',
+            $link,
+        ],
+        'rejected' => [
+            'Request rejected',
+            $remarks !== ''
+                ? 'Request ' . $number . ' was rejected. ' . $remarks
+                : 'Request ' . $number . ' was rejected.',
+            'error',
+            $link,
+        ],
+        'cancelled' => [
+            'Request cancelled',
+            $remarks !== ''
+                ? 'Request ' . $number . ' was cancelled. ' . $remarks
+                : 'Request ' . $number . ' was cancelled.',
+            'warning',
+            $link,
+        ],
+        default => [
+            'Request updated',
+            'Request ' . $number . ' was updated.',
+            'info',
+            $link,
+        ],
+    };
 }
 
 function getUnreadNotificationCount(int $userId): int {
@@ -399,14 +502,18 @@ function isSafeAppRedirect(?string $url): bool {
     return str_starts_with($url, $app . '/') || $url === $app;
 }
 
-function updateRequestStatus(int $requestId, string $newStatus, ?string $remarks = null): bool {
+function updateRequestStatus(int $requestId, string $newStatus, ?string $remarks = null, bool $notifyStudent = true): bool {
     $db = getDB();
-    $stmt = $db->prepare('SELECT status, user_id, request_number FROM requests WHERE id = ?');
+    $stmt = $db->prepare('SELECT id, status, user_id, request_number, release_date, release_time, courier_tracking FROM requests WHERE id = ?');
     $stmt->execute([$requestId]);
     $request = $stmt->fetch();
     if (!$request) return false;
 
     $oldStatus = $request['status'];
+    if ($oldStatus === $newStatus) {
+        return true;
+    }
+
     $db->prepare('UPDATE requests SET status = ?, updated_at = ? WHERE id = ?')
        ->execute([$newStatus, appNow(), $requestId]);
 
@@ -419,14 +526,10 @@ function updateRequestStatus(int $requestId, string $newStatus, ?string $remarks
     $db->prepare('INSERT INTO request_status_history (request_id, old_status, new_status, changed_by, remarks) VALUES (?, ?, ?, ?, ?)')
        ->execute([$requestId, $oldStatus, $newStatus, $userId, $remarks]);
 
-    $statusLabel = ucwords(str_replace('_', ' ', $newStatus));
-    sendNotification(
-        $request['user_id'],
-        'Request Status Updated',
-        "Your request {$request['request_number']} is now: {$statusLabel}",
-        'info',
-        APP_URL . '/student/request-view.php?id=' . $requestId
-    );
+    if ($notifyStudent && !empty($request['user_id'])) {
+        [$title, $message, $type, $link] = studentRequestStatusNotice($request, $newStatus, $remarks);
+        sendNotification((int) $request['user_id'], $title, $message, $type, $link);
+    }
 
     auditLog('status_change', 'requests', $requestId, ['status' => $oldStatus], ['status' => $newStatus]);
     return true;

@@ -31,6 +31,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     auditLog('update_queue_display_ads', 'app_settings', null, null, [
         'enabled' => !empty($_POST['queue_ads_enabled']),
         'interval' => (int) ($_POST['queue_ads_interval'] ?? 8),
+        'layout' => (string) ($_POST['queue_ads_layout'] ?? 'side'),
+        'fit' => (string) ($_POST['queue_ads_fit'] ?? 'cover'),
     ]);
 
     if ($errors === []) {
@@ -54,7 +56,7 @@ require_once __DIR__ . '/../includes/header.php';
         <div>
             <h2><i class="fas fa-images"></i> Display Board Advertisements</h2>
             <p class="text-muted" style="margin:.35rem 0 0">
-                Images fill the right half of the queue display board and rotate as a slideshow. The left half stays the now-serving queue.
+                Choose where advertisements appear on the display board and how each image fits that space. Images still rotate as a slideshow.
             </p>
         </div>
         <div class="card-header-actions">
@@ -102,6 +104,39 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
             </div>
 
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="queue_ads_layout">Showing</label>
+                    <select id="queue_ads_layout" name="queue_ads_layout" required>
+                        <?php foreach (queueAdLayoutOptions() as $value => $label): ?>
+                            <option value="<?= e($value) ?>" <?= $settings['ads_layout'] === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <small class="text-muted">Where the slideshow sits next to the now-serving queue.</small>
+                </div>
+                <div class="form-group">
+                    <label for="queue_ads_fit">Display fit</label>
+                    <select id="queue_ads_fit" name="queue_ads_fit" required>
+                        <?php foreach (queueAdFitOptions() as $value => $label): ?>
+                            <option value="<?= e($value) ?>" <?= $settings['ads_fit'] === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <small class="text-muted">How each image fills the advertisement area.</small>
+                </div>
+            </div>
+
+            <?php $previewImage = $ads[0]['url'] ?? ''; ?>
+            <div class="queue-ad-preview queue-ads-layout-<?= e($settings['ads_layout']) ?> queue-ads-fit-<?= e($settings['ads_fit']) ?>" id="queueAdPreview" data-preview-image="<?= e($previewImage) ?>">
+                <div class="queue-ad-preview-board">Queue</div>
+                <div class="queue-ad-preview-ads">
+                    <?php if ($previewImage !== ''): ?>
+                        <img src="<?= e($previewImage) ?>" alt="Advertisement preview">
+                    <?php else: ?>
+                        <span>Advertisement</span>
+                    <?php endif; ?>
+                </div>
+            </div>
+
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">
                     <i class="fas fa-save"></i> Save Advertisements
@@ -116,7 +151,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <p>No advertisement images yet. The display board uses the full screen until you add one.</p>
             </div>
         <?php else: ?>
-            <div class="queue-ad-grid">
+            <div class="queue-ad-grid queue-ads-fit-<?= e($settings['ads_fit']) ?>" id="queueAdGrid">
                 <?php foreach ($ads as $index => $ad): ?>
                     <article class="queue-ad-card">
                         <img src="<?= e((string) $ad['url']) ?>" alt="<?= e((string) ($ad['original_name'] ?: 'Advertisement')) ?>">
@@ -161,4 +196,29 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
 </div>
 
+<script>
+(function () {
+    const layout = document.getElementById('queue_ads_layout');
+    const fit = document.getElementById('queue_ads_fit');
+    const preview = document.getElementById('queueAdPreview');
+    const grid = document.getElementById('queueAdGrid');
+    const layouts = ['side', 'side-left', 'top', 'bottom'];
+    const fits = ['cover', 'contain', 'fill'];
+
+    function applyClass(el, prefix, value, allowed) {
+        if (!el) return;
+        allowed.forEach(function (name) { el.classList.remove(prefix + name); });
+        el.classList.add(prefix + (allowed.indexOf(value) >= 0 ? value : allowed[0]));
+    }
+
+    function syncPreview() {
+        applyClass(preview, 'queue-ads-layout-', layout ? layout.value : 'side', layouts);
+        applyClass(preview, 'queue-ads-fit-', fit ? fit.value : 'cover', fits);
+        applyClass(grid, 'queue-ads-fit-', fit ? fit.value : 'cover', fits);
+    }
+
+    layout?.addEventListener('change', syncPreview);
+    fit?.addEventListener('change', syncPreview);
+})();
+</script>
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

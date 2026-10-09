@@ -935,34 +935,19 @@ function processPaymentAction(int $paymentId, string $action, int $verifierId, s
         require_once __DIR__ . '/request-items.php';
         prepareRequestItemsAfterPayment((int) $payment['request_id']);
         ensureSimpleVerificationCode((int) $payment['request_id']);
-        sendNotification(
-            $payment['user_id'],
-            'Payment Verified',
-            'Your payment for ' . $payment['request_number'] . ' has been verified. The Registrar will assign your request for processing.',
-            'success',
-            APP_URL . '/student/request-view.php?id=' . $payment['request_id']
-        );
 
-        $db = getDB();
-        $registrarRoleId = $db->query("SELECT id FROM roles WHERE name = 'registrar'")->fetchColumn();
-        if ($registrarRoleId) {
-            $registrars = $db->prepare('SELECT id FROM users WHERE role_id = ? AND is_active = 1');
-            $registrars->execute([$registrarRoleId]);
-            foreach ($registrars->fetchAll() as $reg) {
-                sendNotification(
-                    (int) $reg['id'],
-                    'Payment Verified — Assign Processing',
-                    'Payment for ' . $payment['request_number'] . ' is verified. Assign personnel and set release date.',
-                    'info',
-                    APP_URL . '/registrar/verify-request.php?id=' . $payment['request_id']
-                );
-            }
-        }
+        notifyUsersByRole(
+            'registrar',
+            'Assign request',
+            'Payment for ' . $payment['request_number'] . ' is verified. Assign staff and set the release date.',
+            'info',
+            APP_URL . '/registrar/verify-request.php?id=' . $payment['request_id']
+        );
     } else {
         sendNotification(
             $payment['user_id'],
-            'Payment Rejected',
-            'Your payment for ' . $payment['request_number'] . ' was rejected. Feedback: ' . $notes . ' Please review and resubmit.',
+            'Payment rejected',
+            'Payment for ' . $payment['request_number'] . ' was rejected. ' . $notes,
             'error',
             APP_URL . '/student/payment.php?request_id=' . $payment['request_id']
         );

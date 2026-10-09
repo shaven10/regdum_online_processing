@@ -57,7 +57,7 @@ function canViewClaimStub(array $user, array $request): bool {
         return true;
     }
     if (hasRole('student') && (int) $user['id'] === (int) $request['user_id']) {
-        return in_array($request['status'], ['processing', 'ready_for_pickup', 'shipped', 'completed'], true);
+        return isClaimStubPrintableStatus((string) ($request['status'] ?? ''));
     }
     return false;
 }
@@ -65,24 +65,135 @@ function canViewClaimStub(array $user, array $request): bool {
 function canPrintClaimStub(array $data): bool {
     $request = $data['request'] ?? [];
     $payment = $data['payment'] ?? null;
-    if (!$request || empty($payment) || ($payment['status'] ?? '') !== 'verified') {
+    if (!$request || ($payment['status'] ?? '') !== 'verified') {
         return false;
     }
 
-    return isClaimStubPrintableStatus((string) ($request['status'] ?? ''))
-        || ($payment['status'] ?? '') === 'verified';
+    if (!isClaimStubPrintableStatus((string) ($request['status'] ?? ''))) {
+        return false;
+    }
+
+    return claimStubHasReleaseDateAfterAssignment($request, $data['items'] ?? []);
 }
 
 function canPrintCashierClaimStub(array $data): bool {
     return canPrintClaimStub($data);
 }
 
-function requestHasVerifiedPaymentForClaimSlip(array $request, ?array $payment = null): bool {
-    if ($payment && ($payment['status'] ?? '') === 'verified') {
-        return true;
+function requestHasVerifiedPaymentForClaimSlip(array $request, ?array $payment = null, array $items = []): bool {
+    if (!claimStubHasReleaseDateAfterAssignment($request, $items)) {
+        return false;
     }
 
-    return isClaimStubPrintableStatus((string) ($request['status'] ?? ''));
+    if (is_array($payment) && array_key_exists('status', $payment) && ($payment['status'] ?? '') !== 'verified') {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Claim stub printing starts only after assignment has saved a release date.
+ *
+ * @param list<array<string,mixed>> $items
+ */
+function claimStubHasReleaseDateAfterAssignment(array $request, array $items = []): bool {
+    $status = (string) ($request['status'] ?? '');
+    if (!in_array($status, ['processing', 'ready_for_pickup', 'shipped', 'completed'], true)) {
+        return false;
+    }
+
+    return claimStubResolvedRelease($request, $items)['date'] !== '';
+}
+
+/**
+ * @param list<int> $requestIds
+ * @return list<int>
+ */
+function filterClaimStubPrintableRequestIds(array $requestIds): array {
+    $requestIds = normalizeClaimStubRequestIds($requestIds);
+    if ($requestIds === []) {
+        return [];
+    }
+
+    $db = getDB();
+    $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
+    $stmt = $db->prepare("SELECT id, status, release_date, release_time, pickup_date, pickup_time
+        FROM requests WHERE id IN ($placeholders)");
+    $stmt->execute($requestIds);
+    $ready = [];
+    foreach ($stmt->fetchAll() as $row) {
+        if (claimStubHasReleaseDateAfterAssignment($row)) {
+            $ready[(int) $row['id']] = true;
+        }
+    }
+
+    return array_values(array_filter(
+        $requestIds,
+        static fn(int $id): bool => !empty($ready[$id])
+    ));
+}
+
+/**
+ * Release date for a claim stub. Documents in the same request share one date.
+ *
+ * @param list<array<string,mixed>> $items
+ * @return array{date:string,time:string}
+ */
+function claimStubResolvedRelease(array $request, array $items = []): array {
+    $itemDates = [];
+    foreach ($items as $item) {
+        $itemDate = trim((string) ($item['release_date'] ?? ''));
+        if ($itemDate === '') {
+            continue;
+        }
+        $itemTime = trim((string) ($item['release_time'] ?? ''));
+        if (!isset($itemDates[$itemDate]) || ($itemDates[$itemDate] === '' && $itemTime !== '')) {
+            $itemDates[$itemDate] = $itemTime;
+        }
+    }
+
+    $date = '';
+    $time = '';
+    if (count($itemDates) === 1) {
+        $date = (string) array_key_first($itemDates);
+        $time = $itemDates[$date];
+    } else {
+        $date = trim((string) ($request['release_date'] ?? ''));
+        $time = trim((string) ($request['release_time'] ?? ''));
+        if ($date === '' && $itemDates !== []) {
+            ksort($itemDates);
+            $date = (string) array_key_first($itemDates);
+            $time = $itemDates[$date];
+        }
+    }
+
+    if ($date === '') {
+        $date = trim((string) ($request['pickup_date'] ?? ''));
+        $time = trim((string) ($request['pickup_time'] ?? ''));
+    }
+
+    return ['date' => $date, 'time' => $time];
+}
+
+/**
+ * @param list<array<string,mixed>> $items
+ */
+function claimStubReleaseLabel(array $request, array $items = []): string {
+    $resolved = claimStubResolvedRelease($request, $items);
+    if ($resolved['date'] !== '') {
+        $label = formatDate($resolved['date']);
+        if ($resolved['time'] !== '') {
+            $label .= ' · ' . date('g:i A', strtotime($resolved['time']));
+        }
+        return $label;
+    }
+
+    if (($request['delivery_method'] ?? '') === 'courier') {
+        return 'Courier delivery';
+    }
+
+    return 'To be announced';
 }
 
 /**
@@ -92,7 +203,7 @@ function claimStubRelatedRequestIds(array $request): array {
     $requestId = (int) ($request['id'] ?? 0);
     $batchKey = trim((string) ($request['onsite_batch_key'] ?? ''));
     if ($batchKey === '') {
-        return $requestId > 0 ? [$requestId] : [];
+        return filterClaimStubPrintableRequestIds($requestId > 0 ? [$requestId] : []);
     }
 
     require_once __DIR__ . '/payments.php';
@@ -108,10 +219,10 @@ function claimStubRelatedRequestIds(array $request): array {
     }
 
     if ($ids === [] && $requestId > 0) {
-        return [$requestId];
+        $ids = [$requestId];
     }
 
-    return $ids;
+    return filterClaimStubPrintableRequestIds($ids);
 }
 
 function claimStubPageUrl(string $scriptPath, array $requestIds, string $layout = '', bool $autoPrint = false): string {
@@ -173,7 +284,19 @@ function registrarClaimStubUrl(array $requestIds, string $layout = '', bool $aut
 
 function renderRegistrarClaimSlipButtonsHtml(array $request, bool $compact = false, ?array $payment = null): string {
     $requestId = (int) ($request['id'] ?? 0);
-    if ($requestId <= 0 || !requestHasVerifiedPaymentForClaimSlip($request, $payment)) {
+    $items = is_array($request['items'] ?? null) ? $request['items'] : [];
+    if (
+        $items === []
+        && $requestId > 0
+        && !claimStubHasReleaseDateAfterAssignment($request)
+        && in_array((string) ($request['status'] ?? ''), ['processing', 'ready_for_pickup', 'shipped', 'completed'], true)
+    ) {
+        if (!function_exists('getRequestItems')) {
+            require_once __DIR__ . '/request-items.php';
+        }
+        $items = getRequestItems($requestId);
+    }
+    if ($requestId <= 0 || !requestHasVerifiedPaymentForClaimSlip($request, $payment, $items)) {
         return '';
     }
 
@@ -199,7 +322,7 @@ function renderRegistrarClaimSlipButtonsHtml(array $request, bool $compact = fal
  * @param list<int> $requestIds
  */
 function renderCashierClaimSlipButtonsHtml(array $requestIds, bool $compact = true): string {
-    $requestIds = normalizeClaimStubRequestIds($requestIds);
+    $requestIds = filterClaimStubPrintableRequestIds($requestIds);
     if ($requestIds === []) {
         return '';
     }
@@ -328,22 +451,7 @@ function buildClaimStubRows(array $data): array {
         }
     }
 
-    $releaseSchedule = 'To be announced';
-    if (isOnSitePickupMethod($request['delivery_method'])) {
-        if (!empty($request['release_date'])) {
-            $releaseSchedule = formatDate($request['release_date']);
-            if (!empty($request['release_time'])) {
-                $releaseSchedule .= ' · ' . date('g:i A', strtotime($request['release_time']));
-            }
-        } elseif (!empty($request['pickup_date'])) {
-            $releaseSchedule = formatDate($request['pickup_date']);
-            if (!empty($request['pickup_time'])) {
-                $releaseSchedule .= ' · ' . date('g:i A', strtotime($request['pickup_time']));
-            }
-        }
-    } elseif (($request['delivery_method'] ?? '') === 'courier') {
-        $releaseSchedule = 'Courier delivery';
-    }
+    $releaseSchedule = claimStubReleaseLabel($request, $items);
 
     $rows = [
         ['Student', $studentName !== '' ? $studentName : '—'],
@@ -355,14 +463,9 @@ function buildClaimStubRows(array $data): array {
     }
     $rows = array_merge($rows, [
         ['Documents', $documentSummary],
-        ['Delivery', deliveryMethodLabel($request['delivery_method'] ?? null)],
         ['Release', $releaseSchedule],
         ['Amount Paid', formatMoney((float) $request['total_amount'])],
     ]);
-
-    if (($request['delivery_method'] ?? '') === 'authorized_representative' && !empty($request['representative_name'])) {
-        $rows[] = ['Representative', (string) $request['representative_name']];
-    }
 
     if ($payment && (!empty($payment['or_number']) || !empty($payment['reference_number']))) {
         $rows[] = ['OR / Ref.', $payment['or_number'] ?? $payment['reference_number']];
@@ -601,6 +704,7 @@ function renderClaimStubCombinedSheetHtml(array $slips): void {
                     $code = formatVerificationCode($request['verification_code'] ?? '') ?: '—';
                     $requestorMeta = trim(($request['student_id'] ?? '') . ' · ' . ($request['request_number'] ?? ''), ' ·');
                     $amount = (float) (($payment['amount'] ?? 0) ?: ($request['total_amount'] ?? 0));
+                    $releaseLabel = claimStubReleaseLabel($request, $slip['items'] ?? []);
                     ?>
                     <tr>
                         <td><?= $index + 1 ?></td>
@@ -609,6 +713,7 @@ function renderClaimStubCombinedSheetHtml(array $slips): void {
                             <?php if ($requestorMeta !== ''): ?>
                                 <small><?= e($requestorMeta) ?></small>
                             <?php endif; ?>
+                            <small>Release: <?= e($releaseLabel) ?></small>
                         </td>
                         <td class="onsite-combined-code"><?= e($code) ?></td>
                         <td><?= formatMoney($amount) ?></td>

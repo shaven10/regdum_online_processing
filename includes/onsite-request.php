@@ -823,7 +823,8 @@ function createOnsiteCredentialRequest(
         updateRequestStatus(
             $requestId,
             'awaiting_requirements',
-            'Onsite walk-in — online clearance required before cashier payment verification'
+            'Onsite walk-in — online clearance required before cashier payment verification',
+            false
         );
     } else {
         saveAssignedRequirements($requestId, []);
@@ -836,7 +837,7 @@ function createOnsiteCredentialRequest(
                $requestId,
            ]);
 
-        updateRequestStatus($requestId, 'requirements_verified', 'Onsite walk-in request ready for cashier payment');
+        updateRequestStatus($requestId, 'requirements_verified', 'Onsite walk-in request ready for cashier payment', false);
     }
 
     refreshRequestTotalAmount($requestId);
@@ -864,46 +865,36 @@ function createOnsiteCredentialRequest(
     if ($requireClearance) {
         sendNotification(
             $studentUserId,
-            'Onsite Request Created — Clearance Required',
-            'Request ' . $requestNumber . ' was created at the Registrar. Complete online clearance at all offices before payment. Payment code: ' . $paymentCode . '.',
+            'Onsite request created',
+            'Request ' . $requestNumber . ' was created. Complete online clearance, then pay at the cashier with code ' . $paymentCode . '.',
             'info',
             APP_URL . '/student/request-view.php?id=' . $requestId
         );
 
         notifyUsersByRole(
             'cashier',
-            'Onsite Payment Pending Clearance',
-            $studentLabel . ' — code ' . $paymentCode . ' for ' . $requestNumber . ' (' . formatMoney($amount) . '). Verify only after online clearance is complete.',
+            'Onsite payment waiting',
+            $studentLabel . ' — code ' . $paymentCode . ' for ' . $requestNumber . ' (' . formatMoney($amount) . '). Verify after clearance is complete.',
             'warning',
             APP_URL . '/cashier/payments.php?onsite_code=' . urlencode($paymentCode)
         );
     } else {
         sendNotification(
             $studentUserId,
-            'Onsite Request Created',
-            'Request ' . $requestNumber . ' was created at the Registrar. Present payment code ' . $paymentCode . ' at the cashier.',
+            'Onsite request created',
+            'Request ' . $requestNumber . ' was created. Pay at the cashier with code ' . $paymentCode . '.',
             'info',
             APP_URL . '/student/request-view.php?id=' . $requestId
         );
 
-        notifyCashiersNewPayment($requestId, $requestNumber, $studentLabel);
         notifyUsersByRole(
             'cashier',
-            'Onsite Payment Code Ready',
+            'Onsite payment ready',
             $studentLabel . ' — code ' . $paymentCode . ' for ' . $requestNumber . ' (' . formatMoney($amount) . ').',
             'info',
             APP_URL . '/cashier/payments.php?onsite_code=' . urlencode($paymentCode)
         );
     }
-
-    notifyUsersByRole(
-        'admin',
-        'Onsite Request Created',
-        ($studentName !== '' ? $studentName : 'Walk-in') . ' — ' . $requestNumber . ' (' . $docCount . ' document' . ($docCount === 1 ? '' : 's') . ')'
-            . ($requireClearance ? '; online clearance required' : '') . '.',
-        'info',
-        APP_URL . '/admin/request-manage.php?id=' . $requestId
-    );
 
     return [
         'request_id' => $requestId,
@@ -939,7 +930,8 @@ function advanceOnsiteRequestAfterClearance(int $requestId): bool {
     updateRequestStatus(
         $requestId,
         'requirements_verified',
-        'Online clearance completed — ready for cashier payment verification'
+        'Online clearance completed — ready for cashier payment verification',
+        false
     );
     $db->prepare("UPDATE request_compliance_summary
         SET compliance_status = 'compliant', remarks = ?, updated_at = NOW()
@@ -958,19 +950,19 @@ function advanceOnsiteRequestAfterClearance(int $requestId): bool {
 
     sendNotification(
         (int) $request['user_id'],
-        'Clearance Complete — Proceed to Cashier',
-        'Online clearance for ' . $request['request_number'] . ' is complete. You may now pay at the cashier'
-            . ($paymentCode !== '' ? ' using code ' . $paymentCode : '') . '.',
+        'Clearance complete',
+        'Clearance for ' . $request['request_number'] . ' is complete. Pay at the cashier'
+            . ($paymentCode !== '' ? ' with code ' . $paymentCode : '') . '.',
         'success',
         APP_URL . '/student/request-view.php?id=' . $requestId
     );
 
     notifyUsersByRole(
         'cashier',
-        'Onsite Clearance Complete — Ready to Verify',
-        'Request ' . $request['request_number'] . ' clearance is complete'
+        'Onsite payment ready',
+        'Clearance for ' . $request['request_number'] . ' is complete'
             . ($paymentCode !== '' ? ' (code ' . $paymentCode . ')' : '')
-            . '. Payment can now be verified.',
+            . '. You can verify the payment.',
         'success',
         $paymentCode !== ''
             ? APP_URL . '/cashier/payments.php?onsite_code=' . urlencode($paymentCode)

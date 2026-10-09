@@ -224,7 +224,8 @@ function renderAssigneeSelectHtml(
     array $processors,
     ?string $preferredOffice = null,
     bool $required = true,
-    string $id = ''
+    string $id = '',
+    ?int $selectedUserId = null
 ): string {
     $groups = groupAssignableProcessorsByOffice($processors);
     $preferredOffice = $preferredOffice ? normalizeAssignmentOffice($preferredOffice) : null;
@@ -238,7 +239,12 @@ function renderAssigneeSelectHtml(
     foreach ($groups as $office => $group) {
         $html .= '<optgroup label="' . e($group['label']) . '">';
         foreach ($group['users'] as $user) {
-            $selected = ($preferredOffice && $office === $preferredOffice && count($group['users']) === 1) ? ' selected' : '';
+            $selected = '';
+            if ($selectedUserId && (int) $user['id'] === $selectedUserId) {
+                $selected = ' selected';
+            } elseif (!$selectedUserId && $preferredOffice && $office === $preferredOffice && count($group['users']) === 1) {
+                $selected = ' selected';
+            }
             $roleLabel = trim((string) ($user['office_label'] ?? $group['label']));
             $label = $user['first_name'] . ' ' . $user['last_name'] . ' (' . $roleLabel . ')';
             $html .= '<option value="' . (int) $user['id'] . '"' . $selected . '>' . e($label) . '</option>';

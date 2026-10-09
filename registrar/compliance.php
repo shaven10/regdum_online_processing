@@ -366,6 +366,8 @@ require_once __DIR__ . '/../includes/header.php';
                                         <td data-label="Action" class="payment-actions-cell">
                                             <?php if ($filter === 'payment_ready' || ($req['status'] ?? '') === 'payment_verified'): ?>
                                                 <a href="assignments.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-primary">Assign Staff</a>
+                                            <?php elseif (($req['status'] ?? '') === 'processing'): ?>
+                                                <a href="assignments.php?id=<?= (int) $req['id'] ?>&view=reassign" class="btn btn-sm btn-primary">Reassign</a>
                                             <?php else: ?>
                                                 <a href="verify-request.php?id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-primary">Open</a>
                                             <?php endif; ?>

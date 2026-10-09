@@ -19,8 +19,8 @@ if (!canViewClaimStub($user, $data['request'])) {
     redirect(APP_URL . '/staff/requests.php');
 }
 
-if (!in_array($data['request']['status'], ['processing', 'ready_for_pickup', 'shipped', 'completed'], true)) {
-    setFlash('warning', 'Claim stub is available after the request enters processing.');
+if (!canPrintClaimStub($data)) {
+    setFlash('warning', 'The claim stub can be printed after this request is assigned and a release date is set.');
     redirect(APP_URL . '/staff/process-request.php?id=' . $requestId);
 }
 

@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/payments.php';
 require_once __DIR__ . '/../includes/request-items.php';
+require_once __DIR__ . '/../includes/student-requests.php';
 requireRole('student');
 ensurePaymentMethodSchema();
 ensureRequestItemsSchema();
@@ -20,8 +21,8 @@ if (!$request) {
     redirect(APP_URL . '/student/requests.php');
 }
 
-if (!in_array($request['status'], ['requirements_verified', 'payment_verified'], true)) {
-    setFlash('warning', 'Payment is available after the Registrar verifies your request requirements.');
+if (!studentRequestCanProceedToPayment($request['status'] ?? null)) {
+    setFlash('warning', 'Payment is not available for this request yet.');
     redirect(APP_URL . '/student/request-view.php?id=' . $requestId);
 }
 
@@ -55,15 +56,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         $db->prepare('INSERT INTO payments (request_id, amount, payment_method, reference_number, receipt_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
            ->execute([$requestId, $request['total_amount'], $method, $reference ?: null, $receiptPath, appNow(), appNow()]);
 
-        sendNotification($user['id'], 'Payment Submitted', 'Your payment for ' . $request['request_number'] . ' is pending verification.', 'info');
         $studentName = trim(($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? ''));
-        notifyCashiersNewPayment($requestId, $request['request_number'], $studentName !== '' ? $studentName : 'A student');
+        if (isOnsitePaymentMethod($method)) {
+            notifyUsersByRole(
+                'cashier',
+                'Payment to verify',
+                ($studentName !== '' ? $studentName : 'A student') . ' — code ' . $reference . ' for ' . $request['request_number'] . '.',
+                'info',
+                APP_URL . '/cashier/payments.php?onsite_code=' . urlencode($reference)
+            );
+        } else {
+            notifyCashiersNewPayment($requestId, $request['request_number'], $studentName !== '' ? $studentName : 'A student');
+        }
 
         if (isOnsitePaymentMethod($method)) {
             sendNotification(
                 $user['id'],
-                'On-Site Payment Code',
-                'Your onsite payment code for ' . $request['request_number'] . ' is ' . $reference . '. Present this at the cashier.',
+                'Payment code',
+                'Payment for ' . $request['request_number'] . ' is waiting for the cashier. Your code is ' . $reference . '.',
                 'info',
                 APP_URL . '/student/request-view.php?id=' . $requestId
             );
@@ -77,6 +87,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                 'next_step' => 'Go to the cashier and give them your payment code so they can locate this request.',
             ]);
         } else {
+            sendNotification(
+                $user['id'],
+                'Payment submitted',
+                'Payment for ' . $request['request_number'] . ' is waiting for the cashier to verify.',
+                'info',
+                APP_URL . '/student/request-view.php?id=' . $requestId
+            );
             auditLog('payment_submitted', 'payments', $requestId);
             setFlash('success', 'Payment submitted! Awaiting verification.');
         }

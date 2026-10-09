@@ -123,7 +123,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         if ($message !== '') {
             sendNotification(
                 (int) $requestHeader['user_id'],
-                'Message from ' . ($processorLabel ?? 'Processing Office'),
+                'Message from ' . ($processorLabel ?? 'the office'),
                 $message,
                 'info',
                 APP_URL . '/student/request-view.php?id=' . $requestId

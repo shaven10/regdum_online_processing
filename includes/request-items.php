@@ -430,27 +430,36 @@ function prepareRequestItemsAfterPayment(int $requestId): void {
        ->execute([$requestId]);
 }
 
+function requestDocumentAssignmentIsOpen(?string $status): bool {
+    return in_array((string) $status, ['payment_verified', 'processing'], true);
+}
+
+function requestItemCanBeReassigned(array $item): bool {
+    return in_array((string) ($item['item_status'] ?? ''), ['pending_assignment', 'processing'], true);
+}
+
 function assignRequestItemProcessing(
     int $itemId,
     int $staffId,
     string $releaseDate,
     string $releaseTime,
-    int $assignedBy
+    int $assignedBy,
+    bool $notifyAssignee = true
 ): bool {
     $item = getRequestItem($itemId);
-    if (!$item || ($item['request_status'] ?? '') !== 'payment_verified') {
-        if (!$item || !in_array($item['request_status'] ?? '', ['payment_verified', 'processing'], true)) {
-            return false;
-        }
+    if (!$item || !requestDocumentAssignmentIsOpen($item['request_status'] ?? null)) {
+        return false;
     }
 
-    if ($item['item_status'] !== 'pending_assignment' && $item['item_status'] !== 'processing') {
+    if (!requestItemCanBeReassigned($item)) {
         return false;
     }
 
     if (!$staffId || !$releaseDate || !$releaseTime) {
         return false;
     }
+
+    $previousStaffId = (int) ($item['assigned_to'] ?? 0);
 
     $db = getDB();
     $assigneeRole = $db->prepare('SELECT r.name AS role_name FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?');
@@ -469,22 +478,9 @@ function assignRequestItemProcessing(
     syncRequestAssignmentSummary((int) $item['request_id']);
     syncRequestBatchStatus((int) $item['request_id']);
 
-    sendNotification(
-        (int) $item['user_id'],
-        'Document Processing Started',
-        'Processing has started for ' . ($item['document_name'] ?? 'a document') . ' in request ' . $item['request_number'] . '.',
-        'info',
-        APP_URL . '/student/request-view.php?id=' . (int) $item['request_id']
-    );
-
-    require_once __DIR__ . '/assignment-offices.php';
-    sendNotification(
-        $staffId,
-        'New Assignment',
-        'Document "' . ($item['document_name'] ?? '') . '" from request ' . $item['request_number'] . ' has been assigned to you.',
-        'info',
-        assignmentProcessUrlForUser($staffId, $itemId)
-    );
+    if ($notifyAssignee && $previousStaffId !== $staffId) {
+        notifyRequestAssignees((int) $item['request_id'], [$staffId => 1], $itemId);
+    }
 
     auditLog('request_item_assigned', 'request_items', $itemId, null, ['assigned_to' => $staffId, 'assigned_by' => $assignedBy]);
     return true;
@@ -574,10 +570,13 @@ function batchAssignRequestsProcessing(
 
         $assignedForRequest = 0;
         foreach ($pendingItems as $item) {
-            if (assignRequestItemProcessing((int) $item['id'], $staffId, $releaseDate, $releaseTime, $assignedBy)) {
+            if (assignRequestItemProcessing((int) $item['id'], $staffId, $releaseDate, $releaseTime, $assignedBy, false)) {
                 $assignedForRequest++;
                 $result['assigned_items']++;
             }
+        }
+        if ($assignedForRequest > 0) {
+            notifyRequestAssignees($requestId, [$staffId => $assignedForRequest]);
         }
 
         if ($assignedForRequest > 0) {
@@ -1599,6 +1598,69 @@ function requestHasAssignedStaff(int $requestId): bool {
     return !empty($legacy->fetchColumn());
 }
 
+/**
+ * Save one release date and time on the request and every document still open in that set.
+ */
+function applyReleaseScheduleToRequestDocumentSet(int $requestId, string $releaseDate, string $releaseTime): void {
+    $releaseDate = trim($releaseDate);
+    $releaseTime = trim($releaseTime);
+    if ($requestId <= 0 || $releaseDate === '' || $releaseTime === '') {
+        return;
+    }
+
+    $db = getDB();
+    $db->prepare('UPDATE requests SET release_date = ?, release_time = ?, pickup_date = ?, pickup_time = ? WHERE id = ?')
+       ->execute([$releaseDate, $releaseTime, $releaseDate, $releaseTime, $requestId]);
+    $db->prepare("UPDATE request_items
+        SET release_date = ?, release_time = ?, pickup_date = ?, pickup_time = ?
+        WHERE request_id = ? AND item_status <> 'completed'")
+       ->execute([$releaseDate, $releaseTime, $releaseDate, $releaseTime, $requestId]);
+}
+
+/**
+ * One assignment notice per staff member for a request.
+ *
+ * @param array<int,int> $countsByStaffId
+ */
+function notifyRequestAssignees(int $requestId, array $countsByStaffId, int $linkItemId = 0): void {
+    if ($requestId <= 0 || $countsByStaffId === []) {
+        return;
+    }
+
+    $db = getDB();
+    $stmt = $db->prepare('SELECT request_number FROM requests WHERE id = ?');
+    $stmt->execute([$requestId]);
+    $requestNumber = (string) ($stmt->fetchColumn() ?: ('#' . $requestId));
+
+    if (!function_exists('assignmentProcessUrlForUser')) {
+        require_once __DIR__ . '/assignment-offices.php';
+    }
+
+    foreach ($countsByStaffId as $staffId => $count) {
+        $staffId = (int) $staffId;
+        $count = (int) $count;
+        if ($staffId <= 0 || $count <= 0) {
+            continue;
+        }
+
+        $itemId = $linkItemId;
+        if ($itemId <= 0) {
+            $itemStmt = $db->prepare('SELECT id FROM request_items WHERE request_id = ? AND assigned_to = ? ORDER BY id ASC LIMIT 1');
+            $itemStmt->execute([$requestId, $staffId]);
+            $itemId = (int) ($itemStmt->fetchColumn() ?: 0);
+        }
+
+        $docLabel = $count === 1 ? '1 document' : $count . ' documents';
+        sendNotification(
+            $staffId,
+            'New assignment',
+            'Request ' . $requestNumber . ' (' . $docLabel . ') is assigned to you.',
+            'info',
+            $itemId > 0 ? assignmentProcessUrlForUser($staffId, $itemId) : null
+        );
+    }
+}
+
 function syncRequestAssignmentSummary(int $requestId): void {
     $items = getRequestItems($requestId);
     $assigned = array_values(array_filter($items, static fn(array $item): bool => !empty($item['assigned_to'])));
@@ -2248,13 +2310,23 @@ function syncRequestDocumentsFromDrafts(int $requestId, array $itemDrafts, array
             updateRequestStatus(
                 $requestId,
                 'submitted',
-                'Requested documents were updated before payment verification. The registrar will review this request again.'
+                'Requested documents were updated before payment verification. The registrar will review this request again.',
+                false
             );
             $autoApply = maybeAutoApplyOnRequestSubmission(
                 $requestId,
                 $afterTypeIds,
                 (string) ($fields['copy_request_type'] ?? 'first_request')
             );
+            if ($autoApply === 'manual' && !empty($request['user_id'])) {
+                sendNotification(
+                    (int) $request['user_id'],
+                    'Request received',
+                    'Request ' . ($request['request_number'] ?? '') . ' was updated and is with the Registrar for review again.',
+                    'info',
+                    APP_URL . '/student/request-view.php?id=' . $requestId
+                );
+            }
         }
 
         auditLog('edit_request_documents', 'requests', $requestId, [

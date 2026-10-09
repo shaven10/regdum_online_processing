@@ -186,10 +186,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         setFlash($ok ? 'success' : 'error', $ok ? 'Request rejected.' : 'Please provide a rejection reason.');
 
     } elseif ($action === 'assign_processing') {
-        $itemAssignments = $_POST['item_assignments'] ?? [];
-        $extra = ['item_assignments' => $itemAssignments];
-
-        if (empty(array_filter($itemAssignments, static fn($row) => !empty($row['assigned_to'])))) {
+        $itemAssignments = is_array($_POST['item_assignments'] ?? null) ? $_POST['item_assignments'] : [];
+        $hasItemAssignees = !empty(array_filter(
+            $itemAssignments,
+            static fn($row): bool => is_array($row) && !empty($row['assigned_to'])
+        ));
+        if ($hasItemAssignees) {
+            $extra = [
+                'item_assignments' => $itemAssignments,
+                'release_date' => $_POST['release_date'] ?? null,
+                'release_time' => $_POST['release_time'] ?? null,
+            ];
+        } else {
             $extra = [
                 'assigned_to' => (int) ($_POST['assigned_to'] ?? 0),
                 'release_date' => $_POST['release_date'] ?? null,
@@ -200,8 +208,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         $ok = processComplianceAction($requestId, [], 'assign_processing', $user['id'], $remarks, $extra);
 
         if ($ok) {
-            setFlash('success', 'Request assigned and processing started. Print the claim stub for the student.', [
-                'title' => 'Processing Started',
+            $isReassignment = ($request['status'] ?? '') === 'processing';
+            setFlash('success', $isReassignment
+                ? 'Documents were reassigned. Staff still processing this request will see the updated assignment.'
+                : 'Request assigned and processing started. Print the claim stub for the student.', [
+                'title' => $isReassignment ? 'Documents Reassigned' : 'Processing Started',
                 'context' => [
                     'Request' => $request['request_number'],
                     'Document' => $request['document_name'],
@@ -295,12 +306,19 @@ $assignedRequirements = getAssignedRequirements($requestId);
 ensureDocumentAssignmentOfficeSchema();
 $staffUsers = getAssignableProcessors();
 
-$releaseSchedule = buildReleaseScheduleForRequest(
-    $requestId,
-    (int) ($request['processing_days'] ?? 3),
-    $request['release_date'] ?? null,
-    $request['release_time'] ?? null
-);
+$releaseSchedule = count($requestItems) > 1
+    ? buildSharedReleaseScheduleForRequest(
+        $requestId,
+        $requestItems,
+        $request['release_date'] ?? null,
+        $request['release_time'] ?? null
+    )
+    : buildReleaseScheduleForRequest(
+        $requestId,
+        (int) ($request['processing_days'] ?? 3),
+        $request['release_date'] ?? null,
+        $request['release_time'] ?? null
+    );
 $releaseTimeOptions = [
     '09:00:00' => '9:00 AM',
     '10:00:00' => '10:00 AM',
@@ -318,7 +336,7 @@ $attachmentGroups = getRequestAttachmentsGrouped($requestId);
 $payment = $db->prepare('SELECT * FROM payments WHERE request_id = ? ORDER BY created_at DESC LIMIT 1');
 $payment->execute([$requestId]);
 $paymentData = $payment->fetch();
-$canPrintRegistrarClaimSlip = requestHasVerifiedPaymentForClaimSlip($request, $paymentData ?: null);
+$canPrintRegistrarClaimSlip = requestHasVerifiedPaymentForClaimSlip($request, $paymentData ?: null, $requestItems);
 
 $canModifyRequestFees = canModifyRequestItemAmounts($request['status'] ?? null)
     && !($paymentData && ($paymentData['status'] ?? '') === 'verified');
@@ -336,7 +354,7 @@ $phase = match (true) {
         && studentRequirementsComplete($requestId) => 3,
     $request['status'] === 'requirements_verified' => 4,
     $request['status'] === 'payment_verified' => 5,
-    $request['status'] === 'processing' && requestHasPendingAssignmentItems($requestId) => 5,
+    $request['status'] === 'processing' => 5,
     default => 6,
 };
 
@@ -1082,7 +1100,15 @@ require_once __DIR__ . '/../includes/header.php';
 
                     <i class="fas fa-user-check"></i>
 
-                    <strong>Step 5:</strong> Assign processing personnel per document. You can assign to a Registrar, Registrar Staff, Cashier, or Guidance Office account (e.g. SOA → Cashier, Good Moral → Guidance).
+                    <strong>Step 5:</strong>
+                    <?php if ($request['status'] === 'processing'): ?>
+                        Reassign documents that are still being processed. Ready for pickup and completed requests cannot be reassigned.
+                    <?php else: ?>
+                        Assign processing personnel per document. You can assign to a Registrar, Registrar Staff, Cashier, or Guidance Office account (e.g. SOA → Cashier, Good Moral → Guidance).
+                    <?php endif; ?>
+                    <?php if (count($requestItems) > 1): ?>
+                        Documents in this request share one release date.
+                    <?php endif; ?>
 
                 </div>
 
@@ -1104,15 +1130,27 @@ require_once __DIR__ . '/../includes/header.php';
                         <input type="hidden" name="item_assignments[<?= (int) $singleItem['id'] ?>][assigned_to]" value="" disabled>
                         <div class="form-group">
                             <label for="assigned_to">
-                                <?= e($singleItem['document_name']) ?> — Assign to *
+                                <?= e($singleItem['document_name']) ?> — <?= $request['status'] === 'processing' ? 'Reassign to' : 'Assign to' ?> *
                                 <span class="badge badge-review">Suggested: <?= e(assignmentOfficeLabel($preferredOffice)) ?></span>
                             </label>
-                            <?= renderAssigneeSelectHtml('assigned_to', $staffUsers, $preferredOffice, true, 'assigned_to') ?>
+                            <?php if (!requestItemCanBeReassigned($singleItem)): ?>
+                                <p><?= e(trim(($singleItem['staff_first'] ?? '') . ' ' . ($singleItem['staff_last'] ?? ''))) ?> <?= requestItemStatusBadge($singleItem['item_status'] ?? '') ?></p>
+                            <?php else: ?>
+                                <?= renderAssigneeSelectHtml(
+                                    'assigned_to',
+                                    $staffUsers,
+                                    $preferredOffice,
+                                    true,
+                                    'assigned_to',
+                                    (int) ($singleItem['assigned_to'] ?? 0) ?: null
+                                ) ?>
+                            <?php endif; ?>
                         </div>
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="release_date">On-Site Release Date *</label>
-                                <input type="date" id="release_date" name="release_date" value="<?= e($singleSchedule['release_date']) ?>" min="<?= date('Y-m-d') ?>" required>
+                                <?php $singleReleaseDate = (string) ($singleSchedule['release_date'] ?? date('Y-m-d')); ?>
+                                <input type="date" id="release_date" name="release_date" value="<?= e($singleReleaseDate) ?>" min="<?= e($singleReleaseDate !== '' && $singleReleaseDate < date('Y-m-d') ? $singleReleaseDate : date('Y-m-d')) ?>" required>
                             </div>
                             <div class="form-group">
                                 <label for="release_time">Release Time *</label>
@@ -1130,16 +1168,13 @@ require_once __DIR__ . '/../includes/header.php';
                                     <tr>
                                         <th>Document</th>
                                         <th>Assign To *</th>
-                                        <th>Release Date *</th>
-                                        <th>Release Time *</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <?php foreach ($requestItems as $requestItem): ?>
                                         <?php
                                         $itemId = (int) $requestItem['id'];
-                                        $schedule = $itemSchedules[$itemId] ?? $releaseSchedule;
-                                        $isAssigned = ($requestItem['item_status'] ?? '') !== 'pending_assignment';
+                                        $itemLocked = !requestItemCanBeReassigned($requestItem);
                                         $preferredOffice = getDocumentAssignmentOffice(
                                             (int) ($requestItem['document_type_id'] ?? 0),
                                             $requestItem['document_code'] ?? null
@@ -1150,43 +1185,45 @@ require_once __DIR__ . '/../includes/header.php';
                                                 <strong><?= e($requestItem['document_name']) ?></strong>
                                                 <br><small class="text-muted"><?= (int) $requestItem['copies'] ?> cop<?= (int) $requestItem['copies'] === 1 ? 'y' : 'ies' ?> · <?= formatMoney((float) $requestItem['item_amount']) ?></small>
                                                 <br><span class="badge badge-review">Suggested: <?= e(assignmentOfficeLabel($preferredOffice)) ?></span>
-                                                <?php if ($isAssigned): ?>
+                                                <?php if ($itemLocked || !empty($requestItem['assigned_to'])): ?>
                                                     <br><?= requestItemStatusBadge($requestItem['item_status']) ?>
                                                 <?php endif; ?>
                                             </td>
                                             <td>
-                                                <?php if ($isAssigned && !empty($requestItem['staff_first'])): ?>
-                                                    <span><?= e($requestItem['staff_first'] . ' ' . $requestItem['staff_last']) ?></span>
+                                                <?php if ($itemLocked): ?>
+                                                    <span><?= e(trim(($requestItem['staff_first'] ?? '') . ' ' . ($requestItem['staff_last'] ?? '')) ?: '—') ?></span>
+                                                    <br><small class="text-muted">Cannot reassign</small>
                                                 <?php else: ?>
                                                     <?= renderAssigneeSelectHtml(
                                                         'item_assignments[' . $itemId . '][assigned_to]',
                                                         $staffUsers,
-                                                        $preferredOffice
+                                                        $preferredOffice,
+                                                        true,
+                                                        '',
+                                                        (int) ($requestItem['assigned_to'] ?? 0) ?: null
                                                     ) ?>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <?php if ($isAssigned): ?>
-                                                    <?= !empty($requestItem['release_date']) ? e(formatDate($requestItem['release_date'])) : '—' ?>
-                                                <?php else: ?>
-                                                    <input type="date" name="item_assignments[<?= $itemId ?>][release_date]" value="<?= e($schedule['release_date']) ?>" min="<?= date('Y-m-d') ?>" required>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <?php if ($isAssigned): ?>
-                                                    <?= !empty($requestItem['release_time']) ? e(date('g:i A', strtotime((string) $requestItem['release_time']))) : '—' ?>
-                                                <?php else: ?>
-                                                    <select name="item_assignments[<?= $itemId ?>][release_time]" required>
-                                                        <?php foreach ($releaseTimeOptions as $value => $label): ?>
-                                                            <option value="<?= $value ?>" <?= ($schedule['release_time'] ?? '') === $value ? 'selected' : '' ?>><?= $label ?></option>
-                                                        <?php endforeach; ?>
-                                                    </select>
                                                 <?php endif; ?>
                                             </td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>
                             </table>
+                        </div>
+                        <p class="text-muted">One release date for this set of <?= count($requestItems) ?> documents. Saving it updates every document still open in this request. Suggested from <?= (int) $releaseSchedule['processing_days'] ?> working day(s), excluding weekends.</p>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="release_date">On-Site Release Date *</label>
+                                <?php $groupReleaseDate = (string) ($releaseSchedule['release_date'] ?? date('Y-m-d')); ?>
+                                <input type="date" id="release_date" name="release_date" value="<?= e($groupReleaseDate) ?>" min="<?= e($groupReleaseDate !== '' && $groupReleaseDate < date('Y-m-d') ? $groupReleaseDate : date('Y-m-d')) ?>" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="release_time">Release Time *</label>
+                                <select id="release_time" name="release_time" required>
+                                    <?php foreach ($releaseTimeOptions as $value => $label): ?>
+                                        <option value="<?= $value ?>" <?= ($releaseSchedule['release_time'] ?? '') === $value ? 'selected' : '' ?>><?= $label ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
                         </div>
                     <?php endif; ?>
 
@@ -1202,7 +1239,7 @@ require_once __DIR__ . '/../includes/header.php';
 
                     <button type="submit" class="btn btn-primary">
 
-                        <i class="fas fa-play"></i> Assign & Start Processing
+                        <i class="fas fa-play"></i> <?= $request['status'] === 'processing' ? 'Save Reassignment' : 'Assign & Start Processing' ?>
 
                     </button>
 
@@ -1211,7 +1248,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <?php if ($canPrintRegistrarClaimSlip): ?>
                     <div class="alert alert-success" style="margin-top:1rem">
                         <i class="fas fa-print"></i>
-                        Payment is verified. You can print the claim slip now, even before staff assignment.
+                        The release date is set. Print the claim slip for the student to present when claiming the document.
                     </div>
                     <?= renderRegistrarClaimSlipButtonsHtml($request, false, $paymentData ?: null) ?>
                 <?php endif; ?>
@@ -1221,6 +1258,9 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="alert alert-info">
                     <i class="fas fa-calendar-alt"></i>
                     <strong>Step 6:</strong> Document release. Update the on-site release schedule if needed before the student collects the document.
+                    <?php if (count($requestItems) > 1): ?>
+                        This date applies to every document in the request.
+                    <?php endif; ?>
                 </div>
 
                 <form method="POST" class="form-grid release-schedule-panel">
@@ -1232,7 +1272,11 @@ require_once __DIR__ . '/../includes/header.php';
                         <div>
                             <strong>System suggested date:</strong>
                             <?= formatDate($releaseSchedule['suggested_date']) ?>
-                            (<?= (int) $releaseSchedule['processing_days'] ?> working day(s) for <?= e($request['document_name']) ?>, excluding weekends)
+                            <?php if (count($requestItems) > 1): ?>
+                                (<?= (int) $releaseSchedule['processing_days'] ?> working day(s) for this set of <?= count($requestItems) ?> documents, excluding weekends)
+                            <?php else: ?>
+                                (<?= (int) $releaseSchedule['processing_days'] ?> working day(s) for <?= e($request['document_name']) ?>, excluding weekends)
+                            <?php endif; ?>
                         </div>
                     </div>
 
@@ -1271,7 +1315,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <?php if ($canPrintRegistrarClaimSlip): ?>
                     <div class="alert alert-success" style="margin-top:1rem">
                         <i class="fas fa-print"></i>
-                        Payment is verified. Print the claim slip for the student to present when claiming the document.
+                        The release date is set. Print the claim slip for the student to present when claiming the document.
                     </div>
                     <?= renderRegistrarClaimSlipButtonsHtml($request, false, $paymentData ?: null) ?>
                 <?php endif; ?>
@@ -1282,7 +1326,7 @@ require_once __DIR__ . '/../includes/header.php';
 
                     <div class="alert alert-success">
                         <i class="fas fa-print"></i>
-                        Payment is verified. Print the claim slip for the student to present when claiming the document.
+                        The release date is set. Print the claim slip for the student to present when claiming the document.
                     </div>
                     <?= renderRegistrarClaimSlipButtonsHtml($request, false, $paymentData ?: null) ?>
 

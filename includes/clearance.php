@@ -190,13 +190,11 @@ function notifyClearanceOfficersPendingSigning(
     }
 
     if ($allOfficers) {
-        $title = 'New Request — Pending Clearance Signing';
-        $message = $studentLabel . ' has a request (' . $request['request_number']
-            . ') with pending clearance signing. Please review and sign for your office.';
+        $title = 'Clearance to sign';
+        $message = $studentLabel . ' — ' . $request['request_number'] . ' is waiting for your office to sign.';
     } else {
-        $title = 'Pending Clearance for Signing';
-        $message = $studentLabel . ' — request ' . $request['request_number']
-            . ' needs your office clearance signature.';
+        $title = 'Clearance to sign';
+        $message = $studentLabel . ' — ' . $request['request_number'] . ' needs your office signature.';
     }
     $link = APP_URL . '/clearance/sign.php?request_id=' . $requestId;
 
@@ -423,19 +421,20 @@ function processClearanceAction(int $requestId, int $departmentId, int $userId, 
     maybeAdvanceToRequirementsSubmitted($requestId);
 
     $studentId = (int) $clearance['user_id'];
-    if ($action === 'cleared') {
+    if ($action === 'cleared' && !isClearanceComplete($requestId)) {
         sendNotification(
             $studentId,
-            'Clearance Signed',
-            $clearance['department_name'] . ' has cleared your request ' . $clearance['request_number'] . '.',
+            'Office cleared',
+            $clearance['department_name'] . ' cleared ' . $clearance['request_number'] . '. Other offices still need to sign.',
             'success',
             APP_URL . '/student/request-view.php?id=' . $requestId
         );
     } elseif ($action === 'on_hold') {
         sendNotification(
             $studentId,
-            'Clearance On Hold',
-            $clearance['department_name'] . ' placed your request ' . $clearance['request_number'] . ' on hold: ' . $remarks,
+            'Clearance on hold',
+            $clearance['department_name'] . ' put ' . $clearance['request_number'] . ' on hold'
+                . ($remarks !== '' ? ': ' . $remarks : '.') ,
             'warning',
             APP_URL . '/student/request-view.php?id=' . $requestId
         );

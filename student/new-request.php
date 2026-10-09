@@ -343,8 +343,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                 if (empty($result['workflow_reset'])) {
                     sendNotification(
                         $subjectUserId,
-                        'Requested Documents Updated',
-                        'The registrar updated the documents on request ' . $requestNumber . ' (' . $docLabel . ').',
+                        'Documents updated',
+                        'The registrar updated request ' . $requestNumber . ' (' . $docLabel . ').',
                         'info',
                         APP_URL . '/student/request-view.php?id=' . $editRequestId
                     );
@@ -353,8 +353,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                 $studentName = trim(($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? ''));
                 notifyUsersByRole(
                     'registrar',
-                    'Request Documents Updated',
-                    ($studentName !== '' ? $studentName : 'A student') . ' updated the documents on request ' . $requestNumber . ' before payment verification.',
+                    'Documents updated',
+                    ($studentName !== '' ? $studentName : 'A student') . ' updated ' . $requestNumber . ' before payment.',
                     'info',
                     APP_URL . '/registrar/verify-request.php?id=' . $editRequestId
                 );
@@ -439,20 +439,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         $studentName = trim(($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? ''));
         notifyRegistrarsNewRequest($requestId, $requestNumber, $studentName !== '' ? $studentName : 'A student', $documentCount);
 
-        sendNotification(
-            $user['id'],
-            'Request Submitted',
-            'Your request ' . $requestNumber . ' (' . $documentCount . ' document' . ($documentCount === 1 ? '' : 's') . ') has been submitted.',
-            'success',
-            APP_URL . '/student/request-view.php?id=' . $requestId
-        );
+        if ($autoApplyResult === 'manual') {
+            $docLabel = $documentCount === 1 ? '1 document' : $documentCount . ' documents';
+            sendNotification(
+                $user['id'],
+                'Request received',
+                'Request ' . $requestNumber . ' (' . $docLabel . ') is with the Registrar for review.',
+                'success',
+                APP_URL . '/student/request-view.php?id=' . $requestId
+            );
+        }
 
-        if ($autoApplyResult === 'payment') {
-            setFlash('success', 'Request submitted successfully! No additional requirements are needed — you may proceed to payment.');
-        } elseif ($autoApplyResult === 'affidavit') {
+        $statusStmt = $db->prepare('SELECT status FROM requests WHERE id = ?');
+        $statusStmt->execute([$requestId]);
+        $createdStatus = (string) $statusStmt->fetchColumn();
+
+        if (studentRequestCanProceedToPayment($createdStatus)) {
+            setFlash('success', 'Request ' . $requestNumber . ' is submitted. Continue with payment.', [
+                'title' => 'Request Submitted',
+                'next_step' => 'Choose how you will pay, then submit it for cashier verification.',
+            ]);
+            redirect(APP_URL . '/student/payment.php?request_id=' . $requestId);
+        }
+
+        if ($autoApplyResult === 'affidavit') {
             setFlash('success', 'Request submitted successfully! Please upload the affidavit for your second copy request.');
         } else {
-            setFlash('success', 'Request submitted successfully with ' . $documentCount . ' document' . ($documentCount === 1 ? '' : 's') . '! The Registrar will review and confirm the required requirements.');
+            setFlash('success', 'Request submitted successfully with ' . $documentCount . ' document' . ($documentCount === 1 ? '' : 's') . '.');
         }
 
         redirect(APP_URL . '/student/request-view.php?id=' . $requestId);

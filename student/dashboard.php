@@ -78,7 +78,7 @@ renderDashboardActions([
                         <td data-label="Progress"><?= renderStudentProgressMini($req['status'], (int) $req['id']) ?></td>
                         <td data-label="Next Step"><small><?= e(studentProgressStatusLabel($req['status'])) ?></small></td>
                         <td data-label="Action">
-                            <?php if ($req['status'] === 'requirements_verified'): ?>
+                            <?php if (studentRequestShowsPayAction($req['status'] ?? null)): ?>
                                 <a href="payment.php?request_id=<?= $req['id'] ?>" class="btn btn-sm btn-primary">Pay Now</a>
                             <?php else: ?>
                                 <a href="request-view.php?id=<?= $req['id'] ?>" class="btn btn-sm btn-primary">Complete</a>

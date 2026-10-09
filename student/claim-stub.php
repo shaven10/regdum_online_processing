@@ -19,8 +19,8 @@ if (!canViewClaimStub($user, $data['request'])) {
     redirect(APP_URL . '/student/requests.php');
 }
 
-if (!in_array($data['request']['status'], ['processing', 'ready_for_pickup', 'shipped', 'completed'], true)) {
-    setFlash('warning', 'Your claim stub will be available once processing starts.');
+if (!canPrintClaimStub($data)) {
+    setFlash('warning', 'The claim stub can be printed after this request is assigned and a release date is set.');
     redirect(APP_URL . '/student/request-view.php?id=' . $requestId);
 }
 

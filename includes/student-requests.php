@@ -59,6 +59,14 @@ function studentCanCreateOnlineRequest(int $userId): bool {
     return getStudentBlockingOnlineRequest($userId) === null;
 }
 
+function studentRequestCanProceedToPayment(?string $status): bool {
+    return in_array((string) $status, ['submitted', 'under_review', 'requirements_verified', 'payment_verified'], true);
+}
+
+function studentRequestShowsPayAction(?string $status): bool {
+    return in_array((string) $status, ['submitted', 'under_review', 'requirements_verified'], true);
+}
+
 function studentCanEditRequestDocuments(array $request, int $userId): bool {
     if ($userId <= 0 || (int) ($request['user_id'] ?? 0) !== $userId) {
         return false;
@@ -140,7 +148,7 @@ function cancelStudentOnlineRequest(int $requestId, int $userId, string $remarks
     }
 
     rejectPendingPaymentsForRequest($requestId, $remarks);
-    updateRequestStatus($requestId, 'cancelled', $remarks);
+    updateRequestStatus($requestId, 'cancelled', $remarks, false);
 
     auditLog('student_cancel_request', 'requests', $requestId, ['status' => $request['status']], ['status' => 'cancelled']);
 

@@ -24,7 +24,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
            ->execute([$requestId, $user['id'], $date, $time]);
         $db->prepare('UPDATE requests SET pickup_date = ?, pickup_time = ? WHERE id = ?')
            ->execute([$date, $time, $requestId]);
-        sendNotification($user['id'], 'Pickup Scheduled', 'Your pickup for ' . $request['request_number'] . ' is scheduled.', 'success');
+        sendNotification(
+            $user['id'],
+            'Pickup scheduled',
+            'Pickup for ' . $request['request_number'] . ' is ' . formatDate($date) . ' at ' . date('g:i A', strtotime($time)) . '.',
+            'success',
+            APP_URL . '/student/request-view.php?id=' . $requestId
+        );
         setFlash('success', 'Pickup appointment scheduled!');
         redirect(APP_URL . '/student/request-view.php?id=' . $requestId);
     }

@@ -859,22 +859,8 @@ function applyNoRequirementsToRequest(
     updateRequestStatus($requestId, 'requirements_verified', $statusNote);
 
     if ($requirementsAlreadyComplete) {
-        sendNotification(
-            (int) $request['user_id'],
-            'Requirements Complete',
-            'Your request ' . $request['request_number'] . ' has been confirmed. Your requirements are already on file and you may proceed to payment.',
-            'success',
-            APP_URL . '/student/payment.php?request_id=' . $requestId
-        );
         auditLog('requirements_already_complete', 'requests', $requestId, null, ['document_type_id' => $documentTypeId]);
     } else {
-        sendNotification(
-            (int) $request['user_id'],
-            'Ready for Payment',
-            'Your request ' . $request['request_number'] . ' does not require additional documents. You may proceed to payment.',
-            'success',
-            APP_URL . '/student/payment.php?request_id=' . $requestId
-        );
         auditLog('requirements_skipped', 'requests', $requestId, null, ['document_type_id' => $documentTypeId]);
     }
 
@@ -923,13 +909,6 @@ function applyRequirementDefaultsToRequest(int $requestId, int $documentTypeId, 
         }
 
         updateRequestStatus($requestId, 'awaiting_requirements', 'Requirements auto-assigned from credential settings');
-        sendNotification(
-            (int) $request['user_id'],
-            'Requirements Assigned',
-            'Your request ' . $request['request_number'] . ' has been reviewed. Please complete the listed requirements.',
-            'info',
-            APP_URL . '/student/request-view.php?id=' . $requestId
-        );
         auditLog('requirements_auto_assigned', 'requests', $requestId, null, ['document_type_id' => $documentTypeId, 'codes' => $codes]);
     }
 
@@ -1018,6 +997,37 @@ function buildReleaseScheduleForRequest(int $requestId, int $processingDays, ?st
         'release_date' => $existingDate ?: $suggestedDate,
         'release_time' => $existingTime ?: $suggestedTime,
     ];
+}
+
+/**
+ * One release schedule for every document in the same request.
+ * The suggested date follows the longest processing time in the set.
+ *
+ * @param list<array<string,mixed>> $items
+ */
+function buildSharedReleaseScheduleForRequest(int $requestId, array $items, ?string $existingDate = null, ?string $existingTime = null): array {
+    $date = trim((string) $existingDate);
+    $time = trim((string) $existingTime);
+
+    if ($date === '') {
+        foreach ($items as $item) {
+            $itemDate = trim((string) ($item['release_date'] ?? ''));
+            if ($itemDate === '') {
+                continue;
+            }
+            if ($date === '' || $itemDate < $date) {
+                $date = $itemDate;
+                $time = trim((string) ($item['release_time'] ?? ''));
+            }
+        }
+    }
+
+    $processingDays = 1;
+    foreach ($items as $item) {
+        $processingDays = max($processingDays, max(1, (int) ($item['processing_days'] ?? 1)));
+    }
+
+    return buildReleaseScheduleForRequest($requestId, $processingDays, $date !== '' ? $date : null, $time !== '' ? $time : null);
 }
 
 function ensureRequestStatuses(): void {
@@ -1241,8 +1251,8 @@ function syncAssignedClearanceRequirement(int $requestId): void {
 function notifyRegistrarsRequirementsReady(int $requestId, string $requestNumber): void {
     notifyUsersByRole(
         'registrar',
-        'Requirements Submitted',
-        'Request ' . $requestNumber . ' is ready for re-evaluation.',
+        'Requirements ready',
+        'Request ' . $requestNumber . ' is ready for review.',
         'info',
         APP_URL . '/registrar/verify-request.php?id=' . $requestId
     );
@@ -1752,6 +1762,53 @@ function getRequestsAwaitingStaffAssignment(string $search = ''): array {
     return $stmt->fetchAll();
 }
 
+/** Processing requests whose documents can still be given to another staff member. */
+function getRequestsEligibleForDocumentReassignment(string $search = ''): array {
+    require_once __DIR__ . '/request-items.php';
+    ensureRequestItemsSchema();
+    $db = getDB();
+
+    $sql = "SELECT r.*,
+                   COALESCE(
+                       (SELECT GROUP_CONCAT(dt2.name ORDER BY ri2.sort_order, ri2.id SEPARATOR ', ')
+                        FROM request_items ri2
+                        JOIN document_types dt2 ON dt2.id = ri2.document_type_id
+                        WHERE ri2.request_id = r.id),
+                       dt.name
+                   ) AS document_name,
+                   (SELECT COUNT(*) FROM request_items ri3 WHERE ri3.request_id = r.id) AS document_count,
+                   (SELECT COUNT(*) FROM request_items ri4
+                    WHERE ri4.request_id = r.id
+                      AND ri4.item_status IN ('pending_assignment', 'processing')) AS pending_assignment_count,
+                   (SELECT GROUP_CONCAT(DISTINCT TRIM(CONCAT(su.first_name, ' ', su.last_name)) ORDER BY su.last_name SEPARATOR ', ')
+                    FROM request_items ri5
+                    JOIN users su ON su.id = ri5.assigned_to
+                    WHERE ri5.request_id = r.id
+                      AND ri5.item_status IN ('pending_assignment', 'processing')) AS assignee_names,
+                   u.first_name, u.last_name, u.student_id, u.email
+            FROM requests r
+            LEFT JOIN document_types dt ON r.document_type_id = dt.id
+            JOIN users u ON r.user_id = u.id
+            WHERE r.status = 'processing'
+              AND EXISTS (
+                    SELECT 1 FROM request_items ri
+                    WHERE ri.request_id = r.id
+                      AND ri.item_status IN ('pending_assignment', 'processing')
+              )";
+
+    $params = [];
+    if ($search !== '') {
+        $sql .= ' AND (r.request_number LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.student_id LIKE ?)';
+        $like = '%' . $search . '%';
+        array_push($params, $like, $like, $like, $like);
+    }
+
+    $sql .= ' ORDER BY r.updated_at DESC, r.created_at DESC';
+    $stmt = $db->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll();
+}
+
 function getRequestsForCompliance(string $filter = ''): array {
     $db = getDB();
     $params = [];
@@ -1912,8 +1969,8 @@ function processStudentRequirementUploads(int $requestId, int $userId, array $up
 function notifyRegistrarsRequestResubmitted(int $requestId, string $requestNumber): void {
     notifyUsersByRole(
         'registrar',
-        'Request Resubmitted',
-        'Request ' . $requestNumber . ' was resubmitted after rejection and needs review.',
+        'Request resubmitted',
+        'Request ' . $requestNumber . ' was sent back and needs review.',
         'warning',
         APP_URL . '/registrar/verify-request.php?id=' . $requestId
     );
@@ -2019,8 +2076,11 @@ function processStudentRejectedResubmit(int $requestId, int $userId, array $uplo
         WHERE request_id = ?')->execute([$requestId]);
 
     if (!empty($requirements)) {
-        updateRequestStatus($requestId, 'awaiting_requirements', 'Student resubmitted documents after rejection');
-        maybeAdvanceToRequirementsSubmitted($requestId);
+        updateRequestStatus($requestId, 'awaiting_requirements', 'Student resubmitted documents after rejection', false);
+        if (!maybeAdvanceToRequirementsSubmitted($requestId)) {
+            [$title, $message, $type, $link] = studentRequestStatusNotice($request, 'awaiting_requirements');
+            sendNotification((int) $request['user_id'], $title, $message, $type, $link);
+        }
     } else {
         updateRequestStatus($requestId, 'submitted', 'Student resubmitted documents after rejection');
     }
@@ -2079,14 +2139,6 @@ function processComplianceAction(int $requestId, array $checks, string $action, 
            ->execute([$remarks ?: null, $requestId]);
 
         updateRequestStatus($requestId, 'awaiting_requirements', 'Registrar confirmed request and set requirements');
-        $noteHint = $remarks !== '' ? ' Review the registrar instructions and any attached files.' : '';
-        sendNotification(
-            $request['user_id'],
-            'Requirements Assigned',
-            'Your request ' . $request['request_number'] . ' has been reviewed. Please complete the listed requirements.' . $noteHint,
-            'info',
-            APP_URL . '/student/request-view.php?id=' . $requestId
-        );
         auditLog('requirements_assigned', 'requests', $requestId);
         return true;
     }
@@ -2130,13 +2182,6 @@ function processComplianceAction(int $requestId, array $checks, string $action, 
            ->execute([$verifierId, $keptRemarks ?: null, $requestId]);
 
         updateRequestStatus($requestId, 'requirements_verified', 'Requirements approved — proceed to payment');
-        sendNotification(
-            $request['user_id'],
-            'Requirements Approved',
-            'Your request ' . $request['request_number'] . ' has been approved. You may now proceed to payment.',
-            'success',
-            APP_URL . '/student/payment.php?request_id=' . $requestId
-        );
         auditLog('requirements_approved', 'requests', $requestId);
         return true;
     }
@@ -2154,14 +2199,6 @@ function processComplianceAction(int $requestId, array $checks, string $action, 
            ->execute([$verifierId, $remarks, $requestId]);
 
         updateRequestStatus($requestId, 'needs_revision', $remarks);
-        sendNotification(
-            $request['user_id'],
-            'Requirements Need Revision',
-            'Your request ' . $request['request_number'] . ' requires corrections: ' . $remarks
-                . ' Check any instruction attachments from the registrar.',
-            'warning',
-            APP_URL . '/student/request-view.php?id=' . $requestId
-        );
         auditLog('requirements_needs_revision', 'requests', $requestId);
         return true;
     }
@@ -2172,13 +2209,6 @@ function processComplianceAction(int $requestId, array $checks, string $action, 
 
         $db->prepare('UPDATE requests SET rejection_reason = ? WHERE id = ?')->execute([$remarks, $requestId]);
         updateRequestStatus($requestId, 'rejected', $remarks ?: 'Request rejected');
-        sendNotification(
-            $request['user_id'],
-            'Request Rejected',
-            'Your request ' . $request['request_number'] . ' was rejected: ' . $remarks,
-            'error',
-            APP_URL . '/student/request-view.php?id=' . $requestId
-        );
         auditLog('request_rejected', 'requests', $requestId);
         return true;
     }
@@ -2186,30 +2216,51 @@ function processComplianceAction(int $requestId, array $checks, string $action, 
     if ($action === 'assign_processing') {
         require_once __DIR__ . '/request-items.php';
 
-        $canAssign = $request['status'] === 'payment_verified'
-            || ($request['status'] === 'processing' && requestHasPendingAssignmentItems($requestId));
-        if (!$canAssign) {
+        if (!requestDocumentAssignmentIsOpen($request['status'] ?? null)) {
             return false;
         }
 
         $itemAssignments = $extra['item_assignments'] ?? [];
         if (!empty($itemAssignments)) {
+            $sharedReleaseDate = trim((string) ($extra['release_date'] ?? ''));
+            $sharedReleaseTime = trim((string) ($extra['release_time'] ?? ''));
             $assignedCount = 0;
+            $assignedByStaff = [];
             foreach ($itemAssignments as $itemId => $assignment) {
+                if (!is_array($assignment)) {
+                    continue;
+                }
                 $itemId = (int) $itemId;
                 $staffId = (int) ($assignment['assigned_to'] ?? 0);
                 $releaseDate = trim((string) ($assignment['release_date'] ?? ''));
                 $releaseTime = trim((string) ($assignment['release_time'] ?? ''));
+                if ($releaseDate === '') {
+                    $releaseDate = $sharedReleaseDate;
+                }
+                if ($releaseTime === '') {
+                    $releaseTime = $sharedReleaseTime;
+                }
                 if (!$itemId || !$staffId || !$releaseDate || !$releaseTime) {
                     continue;
                 }
-                if (assignRequestItemProcessing($itemId, $staffId, $releaseDate, $releaseTime, $verifierId)) {
+                $existingItem = getRequestItem($itemId);
+                $previousStaffId = (int) ($existingItem['assigned_to'] ?? 0);
+                if (assignRequestItemProcessing($itemId, $staffId, $releaseDate, $releaseTime, $verifierId, false)) {
                     $assignedCount++;
+                    if ($previousStaffId !== $staffId) {
+                        $assignedByStaff[$staffId] = (int) ($assignedByStaff[$staffId] ?? 0) + 1;
+                    }
                 }
             }
 
             if ($assignedCount === 0) {
                 return false;
+            }
+
+            notifyRequestAssignees($requestId, $assignedByStaff);
+
+            if ($sharedReleaseDate !== '' && $sharedReleaseTime !== '' && getRequestItemCount($requestId) > 1) {
+                applyReleaseScheduleToRequestDocumentSet($requestId, $sharedReleaseDate, $sharedReleaseTime);
             }
 
             auditLog('request_batch_assigned', 'requests', $requestId, null, ['items_assigned' => $assignedCount]);
@@ -2229,13 +2280,17 @@ function processComplianceAction(int $requestId, array $checks, string $action, 
             static fn(array $item): bool => ($item['item_status'] ?? '') === 'pending_assignment'
         ));
         if (count($pendingItems) === 1) {
-            return assignRequestItemProcessing(
+            $assigned = assignRequestItemProcessing(
                 (int) $pendingItems[0]['id'],
                 $staffId,
                 (string) $releaseDate,
                 (string) $releaseTime,
                 $verifierId
             );
+            if ($assigned && count($items) > 1 && $releaseDate && $releaseTime) {
+                applyReleaseScheduleToRequestDocumentSet($requestId, (string) $releaseDate, (string) $releaseTime);
+            }
+            return $assigned;
         }
 
         if (count($items) === 1) {
@@ -2260,13 +2315,13 @@ function processComplianceAction(int $requestId, array $checks, string $action, 
             return false;
         }
 
-        $db->prepare('UPDATE requests SET release_date = ?, release_time = ?, pickup_date = ?, pickup_time = ? WHERE id = ?')
-           ->execute([$releaseDate, $releaseTime, $releaseDate, $releaseTime, $requestId]);
+        require_once __DIR__ . '/request-items.php';
+        applyReleaseScheduleToRequestDocumentSet($requestId, (string) $releaseDate, (string) $releaseTime);
 
         sendNotification(
             $request['user_id'],
-            'Release Date Updated',
-            'The on-site release schedule for ' . $request['request_number'] . ' is now ' . formatDate($releaseDate) . ' at ' . date('g:i A', strtotime($releaseTime)) . '.',
+            'Release date set',
+            'Release for ' . $request['request_number'] . ' is ' . formatDate($releaseDate) . ' at ' . date('g:i A', strtotime($releaseTime)) . '.',
             'info',
             APP_URL . '/student/request-view.php?id=' . $requestId
         );
