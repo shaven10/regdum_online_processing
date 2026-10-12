@@ -110,7 +110,10 @@ function adminWorkflowStats(): array {
     ];
 }
 
-function clearanceDashboardStats(int $departmentId, ?int $programId = null): array {
+/**
+ * @param list<int>|null $programIds null = no course filter; [] = match nothing
+ */
+function clearanceDashboardStats(int $departmentId, ?array $programIds = null): array {
     $db = getDB();
     $baseFrom = "FROM request_clearances rc
         JOIN requests r ON rc.request_id = r.id
@@ -119,9 +122,15 @@ function clearanceDashboardStats(int $departmentId, ?int $programId = null): arr
         WHERE rc.department_id = ?
           AND r.status NOT IN ('completed','rejected')";
     $params = [$departmentId];
-    if ($programId !== null) {
-        $baseFrom .= ' AND sp.course_id = ?';
-        $params[] = $programId;
+    if ($programIds !== null) {
+        $programIds = array_values(array_unique(array_filter(array_map('intval', $programIds), static fn(int $id): bool => $id > 0)));
+        if ($programIds === []) {
+            $baseFrom .= ' AND 1 = 0';
+        } else {
+            $placeholders = implode(',', array_fill(0, count($programIds), '?'));
+            $baseFrom .= ' AND sp.course_id IN (' . $placeholders . ')';
+            $params = array_merge($params, $programIds);
+        }
     }
 
     $pending = $db->prepare("SELECT COUNT(*) $baseFrom AND rc.status = 'pending'");

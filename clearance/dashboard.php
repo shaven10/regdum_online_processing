@@ -13,22 +13,21 @@ if (!$department && !hasRole('admin')) {
 }
 
 $deptId = $department['id'] ?? (int) ($_GET['department_id'] ?? 0);
-$programScope = $user ? getClearanceOfficerProgramScope($user) : null;
+$programIds = $user ? getClearanceOfficerProgramIds($user) : null;
 $isProgramChair = isProgramChairDepartment($department);
-$assignedProgram = null;
-if ($isProgramChair && $programScope && $programScope > 0) {
-    $assignedProgram = getAcademicProgramById($programScope);
-}
+$assignedPrograms = $isProgramChair && $user ? getClearanceOfficerPrograms((int) $user['id']) : [];
+$assignedProgramLabel = formatClearanceOfficerProgramLabel($assignedPrograms);
+$assignedProgramCodes = implode(', ', array_filter(array_map(
+    static fn(array $program): string => trim((string) ($program['code'] ?? '')),
+    $assignedPrograms
+)));
 
-$queueProgramId = null;
-if ($isProgramChair) {
-    $queueProgramId = ($programScope !== null && $programScope > 0) ? $programScope : 0;
-}
+$queueProgramIds = $isProgramChair ? ($programIds ?? []) : null;
 
-$pending = $deptId ? getClearanceRequestsForDepartment($deptId, 'pending', '', $queueProgramId) : [];
-$onHold = $deptId ? getClearanceRequestsForDepartment($deptId, 'on_hold', '', $queueProgramId) : [];
+$pending = $deptId ? getClearanceRequestsForDepartment($deptId, 'pending', '', $queueProgramIds) : [];
+$onHold = $deptId ? getClearanceRequestsForDepartment($deptId, 'on_hold', '', $queueProgramIds) : [];
 $clearanceStats = $deptId
-    ? clearanceDashboardStats($deptId, $queueProgramId)
+    ? clearanceDashboardStats($deptId, $queueProgramIds)
     : ['pending' => 0, 'on_hold' => 0, 'cleared_today' => 0];
 
 $pageTitle = 'Clearance Dashboard';
@@ -43,8 +42,8 @@ ensureRequestItemsSchema();
 $assignedDocuments = getStaffAssignedItems((int) $user['id']);
 
 $welcomeHint = 'Sign student clearances for ' . $department['name'];
-if ($isProgramChair && $assignedProgram) {
-    $welcomeHint .= ' — ' . $assignedProgram['name'] . ' (' . $assignedProgram['code'] . ')';
+if ($isProgramChair && $assignedProgramLabel !== '') {
+    $welcomeHint .= ' — ' . $assignedProgramLabel;
 }
 $welcomeHint .= ' and process assigned documents (e.g. Good Moral).';
 
@@ -57,10 +56,10 @@ renderDashboardActions([
 ]);
 ?>
 
-<?php if ($isProgramChair && (!$programScope || $programScope <= 0)): ?>
+<?php if ($isProgramChair && $assignedPrograms === []): ?>
     <div class="alert alert-warning">
         <i class="fas fa-exclamation-triangle"></i>
-        This Program Chair account has no assigned course/program yet. Ask an administrator to assign a course so you can see matching clearance requests.
+        This Program Chair account has no assigned courses yet. Ask an administrator to assign one or more courses so you can see matching clearance requests.
     </div>
 <?php endif; ?>
 
@@ -69,13 +68,13 @@ renderDashboardActions([
     <?= statCardLink('documents.php', 'purple', 'fa-file-signature', (string) count($assignedDocuments), 'Assigned Documents') ?>
     <?= statCardLink('requests.php?status=on_hold', 'gold', 'fa-pause-circle', (string)$clearanceStats['on_hold'], 'On Hold') ?>
     <?= statCardLink('requests.php?status=cleared', 'green', 'fa-check', (string)$clearanceStats['cleared_today'], 'Cleared Today') ?>
-    <?= statCardLink('requests.php', 'blue', 'fa-building', e($isProgramChair && $assignedProgram ? $assignedProgram['code'] : $department['name']), $isProgramChair && $assignedProgram ? 'Assigned Course' : 'Your Office') ?>
+    <?= statCardLink('requests.php', 'blue', 'fa-building', e($isProgramChair && $assignedProgramCodes !== '' ? $assignedProgramCodes : $department['name']), $isProgramChair && $assignedPrograms !== [] ? (count($assignedPrograms) === 1 ? 'Assigned Course' : 'Assigned Courses') : 'Your Office') ?>
 </div>
 
 <div class="grid-2">
     <div class="card">
         <div class="card-header">
-            <h2>Pending — <?= e($department['name']) ?><?= $assignedProgram ? ' · ' . e($assignedProgram['code']) : '' ?></h2>
+            <h2>Pending — <?= e($department['name']) ?><?= $assignedProgramCodes !== '' ? ' · ' . e($assignedProgramCodes) : '' ?></h2>
             <a href="requests.php?status=pending" class="btn btn-primary btn-sm">View All</a>
         </div>
         <div class="card-body">

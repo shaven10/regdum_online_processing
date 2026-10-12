@@ -454,12 +454,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         $statusStmt->execute([$requestId]);
         $createdStatus = (string) $statusStmt->fetchColumn();
 
-        if (studentRequestCanProceedToPayment($createdStatus)) {
+        if (studentRequestCanProceedToPayment($createdStatus, $requestId)) {
             setFlash('success', 'Request ' . $requestNumber . ' is submitted. Continue with payment.', [
                 'title' => 'Request Submitted',
                 'next_step' => 'Choose how you will pay, then submit it for cashier verification.',
             ]);
             redirect(APP_URL . '/student/payment.php?request_id=' . $requestId);
+        }
+
+        if (requestRequiresRegistrarRequirementsFirst($requestId)) {
+            setFlash('success', 'Request ' . $requestNumber . ' is submitted. The Registrar will set the requirements before payment.', [
+                'title' => 'Request Submitted',
+                'next_step' => 'Complete the requirements after the Registrar assigns them.',
+            ]);
+            redirect(APP_URL . '/student/request-view.php?id=' . $requestId);
         }
 
         if ($autoApplyResult === 'affidavit') {
@@ -640,8 +648,39 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
             <?php endif; ?>
 
-            <section class="form-section request-form-step">
-                <h3><span class="request-step-num">1</span> Purpose &amp; type</h3>
+            <?php
+            $initialRequestTab = 1;
+            foreach (array_keys($errors) as $requestErrorKey) {
+                $requestErrorKey = (string) $requestErrorKey;
+                if ($requestErrorKey === 'document_type_ids'
+                    || $requestErrorKey === 'tor_specific_purpose'
+                    || str_starts_with($requestErrorKey, 'document_term_')
+                    || str_starts_with($requestErrorKey, 'document_auth_type_')) {
+                    $initialRequestTab = 2;
+                    break;
+                }
+            }
+            if (!empty($errors['purpose']) || !empty($errors['copy_request_type']) || !empty($errors['purpose_other'])) {
+                $initialRequestTab = 1;
+            }
+            ?>
+            <div class="request-step-tabs" role="tablist" aria-label="Request steps">
+                <button type="button" class="request-step-tab<?= $initialRequestTab === 1 ? ' is-active' : '' ?>" role="tab" id="requestTabBtn1" data-request-tab-target="1" aria-selected="<?= $initialRequestTab === 1 ? 'true' : 'false' ?>" aria-controls="requestTabPanel1">
+                    <span class="request-step-num">1</span>
+                    <span>Purpose</span>
+                </button>
+                <button type="button" class="request-step-tab<?= $initialRequestTab === 2 ? ' is-active' : '' ?>" role="tab" id="requestTabBtn2" data-request-tab-target="2" aria-selected="<?= $initialRequestTab === 2 ? 'true' : 'false' ?>" aria-controls="requestTabPanel2">
+                    <span class="request-step-num">2</span>
+                    <span>Documents</span>
+                </button>
+                <button type="button" class="request-step-tab<?= $initialRequestTab === 3 ? ' is-active' : '' ?>" role="tab" id="requestTabBtn3" data-request-tab-target="3" aria-selected="<?= $initialRequestTab === 3 ? 'true' : 'false' ?>" aria-controls="requestTabPanel3">
+                    <span class="request-step-num">3</span>
+                    <span>Notes</span>
+                </button>
+            </div>
+
+            <section class="form-section request-form-step" id="requestTabPanel1" role="tabpanel" data-request-tab="1" aria-labelledby="requestTabBtn1" <?= $initialRequestTab === 1 ? '' : 'hidden' ?>>
+                <h3>Purpose &amp; type</h3>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="purpose">Purpose *</label>
@@ -669,15 +708,6 @@ require_once __DIR__ . '/../includes/header.php';
                     <label for="purpose_other">Specify purpose</label>
                     <input type="text" id="purpose_other" name="purpose_other" value="<?= e($purposeOtherValue) ?>" placeholder="Describe your purpose">
                 </div>
-                <?php $torPurposeVisible = selectedDocumentTypesIncludeTor($docTypesById, $selectedDocIds); ?>
-                <div class="form-group" id="torSpecificPurposeGroup" <?= $torPurposeVisible ? '' : 'hidden' ?>>
-                    <label for="tor_specific_purpose">Specific purpose for Transcript of Records *</label>
-                    <input type="text" id="tor_specific_purpose" name="tor_specific_purpose" maxlength="255"
-                           value="<?= e($torSpecificPurposeValue) ?>"
-                           placeholder="Example: board examination, employment, transfer evaluation">
-                    <small class="text-muted">Required when Transcript of Records is included in this request.</small>
-                    <?php if (!empty($errors['tor_specific_purpose'])): ?><span class="field-error"><?= e($errors['tor_specific_purpose']) ?></span><?php endif; ?>
-                </div>
                 <div class="purpose-suggestion-panel" id="purposeSuggestionPanel" hidden>
                     <div class="purpose-suggestion-header">
                         <i class="fas fa-lightbulb"></i>
@@ -689,8 +719,8 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
             </section>
 
-            <section class="form-section request-form-step">
-                <h3><span class="request-step-num">2</span> Select documents</h3>
+            <section class="form-section request-form-step" id="requestTabPanel2" role="tabpanel" data-request-tab="2" aria-labelledby="requestTabBtn2" <?= $initialRequestTab === 2 ? '' : 'hidden' ?>>
+                <h3>Select documents</h3>
                 <p class="text-muted">Select every document you need. Different document types can be included in the same request.</p>
                 <?php
                 $documentValidationErrors = array_filter(
@@ -817,6 +847,19 @@ require_once __DIR__ . '/../includes/header.php';
                                 </div>
                                 <?php elseif ($requiresAuthDocumentType): ?>
                                 <input type="hidden" name="document_copies[<?= (int) $dt['id'] ?>]" value="1">
+                                <?php endif; ?>
+                                <?php if (isTorDocumentCode($dt['code'] ?? '')): ?>
+                                <div class="document-checklist-tor-fields" data-extra-fields <?= $isSelected ? '' : 'hidden' ?>>
+                                    <div class="form-group" id="torSpecificPurposeGroup">
+                                        <label for="tor_specific_purpose">Specific purpose for Transcript of Records *</label>
+                                        <input type="text" id="tor_specific_purpose" name="tor_specific_purpose" maxlength="255"
+                                               value="<?= e($torSpecificPurposeValue) ?>"
+                                               placeholder="Example: board examination, employment, transfer evaluation"
+                                               onclick="event.stopPropagation()">
+                                        <small class="text-muted">Required when Transcript of Records is included in this request.</small>
+                                        <?php if (!empty($errors['tor_specific_purpose'])): ?><span class="field-error"><?= e($errors['tor_specific_purpose']) ?></span><?php endif; ?>
+                                    </div>
+                                </div>
                                 <?php endif; ?>
                                 <?php if ($requiresTermInfo): ?>
                                 <div class="document-checklist-term" data-extra-fields data-term-block <?= $isSelected ? '' : 'hidden' ?>>
@@ -960,8 +1003,8 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
             </section>
 
-            <section class="form-section request-form-step">
-                <h3><span class="request-step-num">3</span> Notes <span class="request-optional-tag">optional</span></h3>
+            <section class="form-section request-form-step" id="requestTabPanel3" role="tabpanel" data-request-tab="3" aria-labelledby="requestTabBtn3" <?= $initialRequestTab === 3 ? '' : 'hidden' ?>>
+                <h3>Notes <span class="request-optional-tag">optional</span></h3>
                 <div class="form-group">
                     <textarea id="notes" name="notes" rows="2" placeholder="Any special instructions for the Registrar..."><?= e($notesValue) ?></textarea>
                 </div>
@@ -979,14 +1022,20 @@ require_once __DIR__ . '/../includes/header.php';
                         <strong id="totalFee">₱ 0.00</strong>
                     </div>
                 </div>
-                <div class="request-form-actions" style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;">
+                <div class="request-form-actions">
+                    <button type="button" class="btn btn-outline btn-lg" id="requestTabBack" <?= $initialRequestTab === 1 ? 'hidden' : '' ?>>
+                        <i class="fas fa-arrow-left"></i> Back
+                    </button>
+                    <button type="button" class="btn btn-primary btn-lg" id="requestTabNext" <?= $initialRequestTab === 3 ? 'hidden' : '' ?>>
+                        Next <i class="fas fa-arrow-right"></i>
+                    </button>
                     <?php if ($isEditMode): ?>
-                        <a href="<?= e($editReturnUrl) ?>" class="btn btn-outline btn-lg">Back</a>
-                        <button type="submit" class="btn btn-primary btn-lg request-submit-btn">
+                        <a href="<?= e($editReturnUrl) ?>" class="btn btn-outline btn-lg">Cancel</a>
+                        <button type="submit" class="btn btn-primary btn-lg request-submit-btn" id="requestTabSubmit" <?= $initialRequestTab === 3 ? '' : 'hidden' ?>>
                             <i class="fas fa-save"></i> Save Documents
                         </button>
                     <?php else: ?>
-                        <button type="submit" class="btn btn-primary btn-lg request-submit-btn">
+                        <button type="submit" class="btn btn-primary btn-lg request-submit-btn" id="requestTabSubmit" <?= $initialRequestTab === 3 ? '' : 'hidden' ?>>
                             <i class="fas fa-paper-plane"></i> Submit Request
                         </button>
                     <?php endif; ?>
@@ -1370,6 +1419,15 @@ function toggleTorSpecificPurposeField() {
     const show = requestIncludesTor();
     group.hidden = !show;
     input.required = show;
+    if (!show) {
+        return;
+    }
+    const item = input.closest('.document-checklist-item');
+    setDocumentChecklistItemExpanded(item, true);
+    const extra = input.closest('[data-extra-fields]');
+    if (extra) {
+        extra.hidden = false;
+    }
 }
 
 function togglePurposeOtherField() {
@@ -1616,7 +1674,7 @@ function validateStudentRequestBeforeSubmit() {
 
     const purpose = (document.getElementById('purpose')?.value || '').trim();
     if (!purpose) {
-        details.push('Select a purpose in step 1.');
+        details.push('Select a purpose on the Purpose tab.');
     }
 
     if (requestIncludesTor() && !(document.getElementById('tor_specific_purpose')?.value || '').trim()) {
@@ -1640,8 +1698,9 @@ function validateStudentRequestBeforeSubmit() {
             title: 'Cannot Submit Request',
             message: 'Please fix the following before submitting your request.',
             details: details,
-            next_step: 'Choose a document in step 2, complete any required term or authentication fields, then try again.',
+            next_step: 'Open the Documents tab, choose a document, complete any required term or authentication fields, then try again.',
             focusDocId: null,
+            tab: purpose ? 2 : 1,
         };
     }
 
@@ -1699,10 +1758,83 @@ function validateStudentRequestBeforeSubmit() {
         details: details,
         next_step: 'Complete the missing school year/semester or authentication details, then try again.',
         focusDocId: focusTargets.length ? focusTargets[0] : null,
+        tab: !purpose || !copyType ? 1 : 2,
     };
 }
 
+function showRequestTab(tab) {
+    const panels = document.querySelectorAll('[data-request-tab]');
+    const buttons = document.querySelectorAll('[data-request-tab-target]');
+    const nextTab = String(tab || 1);
+    panels.forEach(function (panel) {
+        panel.hidden = panel.getAttribute('data-request-tab') !== nextTab;
+    });
+    buttons.forEach(function (button) {
+        const active = button.getAttribute('data-request-tab-target') === nextTab;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    const backButton = document.getElementById('requestTabBack');
+    const nextButton = document.getElementById('requestTabNext');
+    const submitButton = document.getElementById('requestTabSubmit');
+    if (backButton) backButton.hidden = nextTab === '1';
+    if (nextButton) nextButton.hidden = nextTab === '3';
+    if (submitButton) submitButton.hidden = nextTab !== '3';
+}
+
+function currentRequestTabIssues(tab) {
+    if (tab !== 1) {
+        return [];
+    }
+    const issues = [];
+    if (!(document.getElementById('purpose')?.value || '').trim()) {
+        issues.push('Select a purpose before continuing.');
+    }
+    if (!(document.getElementById('copy_request_type')?.value || '').trim()) {
+        issues.push('Select whether this is a first request or a second copy.');
+    }
+    return issues;
+}
+
+function initRequestStepTabs(initialTab) {
+    const buttons = document.querySelectorAll('[data-request-tab-target]');
+    if (!buttons.length) {
+        return;
+    }
+    buttons.forEach(function (button) {
+        button.addEventListener('click', function () {
+            showRequestTab(button.getAttribute('data-request-tab-target'));
+        });
+    });
+    document.getElementById('requestTabBack')?.addEventListener('click', function () {
+        const active = document.querySelector('[data-request-tab-target][aria-selected="true"]');
+        const current = parseInt(active ? active.getAttribute('data-request-tab-target') : '1', 10) || 1;
+        showRequestTab(Math.max(1, current - 1));
+    });
+    document.getElementById('requestTabNext')?.addEventListener('click', function () {
+        const active = document.querySelector('[data-request-tab-target][aria-selected="true"]');
+        const current = parseInt(active ? active.getAttribute('data-request-tab-target') : '1', 10) || 1;
+        const issues = currentRequestTabIssues(current);
+        if (issues.length) {
+            showStudentRequestValidationDialog({
+                ok: false,
+                title: 'Complete this step',
+                message: 'Please fix the following before continuing.',
+                details: issues,
+                next_step: 'Finish the Purpose tab, then continue to documents.',
+                tab: current,
+            });
+            return;
+        }
+        showRequestTab(Math.min(3, current + 1));
+    });
+    showRequestTab(initialTab || 1);
+}
+
 function showStudentRequestValidationDialog(validation) {
+    if (validation.tab) {
+        showRequestTab(validation.tab);
+    }
     if (validation.focusDocId === 'tor_specific_purpose') {
         const torField = document.getElementById('tor_specific_purpose');
         if (torField) {
@@ -1759,6 +1891,7 @@ togglePurposeOtherField();
 toggleTorSpecificPurposeField();
 updatePurposeSuggestions(false);
 initDocumentChecklistToggles();
+initRequestStepTabs(<?= (int) ($initialRequestTab ?? 1) ?>);
 if (requestValidationDialog && typeof window.openStatusModal === 'function') {
     window.openStatusModal(requestValidationDialog);
     const alertEl = document.getElementById('studentDocumentValidationAlert');

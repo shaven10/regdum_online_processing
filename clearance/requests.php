@@ -16,18 +16,13 @@ if (!$deptId) {
     redirect(dashboardUrl());
 }
 
-$programScope = getClearanceOfficerProgramScope($user);
+$programIds = getClearanceOfficerProgramIds($user);
 $isProgramChair = isProgramChairDepartment($department);
-$queueProgramId = null;
-$assignedProgram = null;
-if ($isProgramChair) {
-    $queueProgramId = ($programScope !== null && $programScope > 0) ? $programScope : 0;
-    if ($queueProgramId > 0) {
-        $assignedProgram = getAcademicProgramById($queueProgramId);
-    }
-}
+$assignedPrograms = $isProgramChair ? getClearanceOfficerPrograms((int) $user['id']) : [];
+$assignedProgramLabel = formatClearanceOfficerProgramLabel($assignedPrograms);
+$queueProgramIds = $isProgramChair ? ($programIds ?? []) : null;
 
-$requests = getClearanceRequestsForDepartment((int) $deptId, $status, $search, $queueProgramId);
+$requests = getClearanceRequestsForDepartment((int) $deptId, $status, $search, $queueProgramIds);
 $sortColumns = [
     'request_number' => ['type' => 'string'],
     'name' => [
@@ -63,10 +58,10 @@ require_once __DIR__ . '/../includes/header.php';
         <div>
             <h2><?= e($department['name']) ?> — Clearance Queue</h2>
             <p class="text-muted" style="margin:.35rem 0 0">
-                <?php if ($isProgramChair && $assignedProgram): ?>
-                    Showing requests for <strong><?= e($assignedProgram['name']) ?></strong> (<?= e($assignedProgram['code']) ?>).
+                <?php if ($isProgramChair && $assignedProgramLabel !== ''): ?>
+                    Showing requests for <strong><?= e($assignedProgramLabel) ?></strong>.
                 <?php elseif ($isProgramChair): ?>
-                    No course/program is assigned to this Program Chair account yet.
+                    No courses are assigned to this Program Chair account yet.
                 <?php else: ?>
                     Open a request to review requestor details and sign clearance.
                 <?php endif; ?>

@@ -90,7 +90,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         $lastName = normalizePersonName($_POST['last_name'] ?? '');
         $isActive = !empty($_POST['is_active']) ? 1 : 0;
         $clearanceDeptId = (int) ($_POST['clearance_department_id'] ?? 0) ?: null;
-        $clearanceProgramId = (int) ($_POST['clearance_program_id'] ?? 0) ?: null;
+        $clearanceProgramIds = array_values(array_unique(array_filter(
+            array_map('intval', (array) ($_POST['clearance_program_ids'] ?? [])),
+            static fn(int $id): bool => $id > 0
+        )));
 
         $errors = [];
         if ($firstName === '') {
@@ -116,16 +119,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         }
         if (($roleNames[$roleId] ?? '') !== 'clearance_officer') {
             $clearanceDeptId = null;
-            $clearanceProgramId = null;
+            $clearanceProgramIds = [];
         }
         if ($clearanceDeptId && $programChairDeptId && (int) $clearanceDeptId === (int) $programChairDeptId) {
-            if (!$clearanceProgramId) {
-                $errors[] = 'Course/program is required for Program Chair accounts.';
-            } elseif (!getAcademicProgramById($clearanceProgramId)) {
-                $errors[] = 'Selected course/program is invalid.';
+            if ($clearanceProgramIds === []) {
+                $errors[] = 'Select at least one course/program for Program Chair accounts.';
+            } else {
+                foreach ($clearanceProgramIds as $programId) {
+                    if (!getAcademicProgramById($programId)) {
+                        $errors[] = 'One or more selected courses are invalid.';
+                        break;
+                    }
+                }
             }
         } else {
-            $clearanceProgramId = null;
+            $clearanceProgramIds = [];
         }
 
         if ($action === 'update' && !(int) ($_POST['user_id'] ?? 0)) {
@@ -142,15 +150,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
 
         if (empty($errors)) {
             try {
+                $primaryProgramId = $clearanceProgramIds[0] ?? null;
                 if ($action === 'create') {
                     $hash = password_hash($password, PASSWORD_BCRYPT);
                     $db->prepare('INSERT INTO users (role_id, clearance_department_id, clearance_program_id, email, password, first_name, last_name, is_active, email_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)')
-                       ->execute([$roleId, $clearanceDeptId, $clearanceProgramId, $email, $hash, $firstName, $lastName, $isActive]);
+                       ->execute([$roleId, $clearanceDeptId, $primaryProgramId, $email, $hash, $firstName, $lastName, $isActive]);
                     $newId = (int) $db->lastInsertId();
-                    auditLog('create_user', 'users', $newId);
+                    saveClearanceOfficerPrograms($newId, $clearanceProgramIds);
+                    auditLog('create_user', 'users', $newId, null, ['program_ids' => $clearanceProgramIds]);
                     setFlash('success', 'User account created.');
                 } else {
-                    $params = [$roleId, $clearanceDeptId, $clearanceProgramId, $email, $firstName, $lastName, $isActive];
+                    $params = [$roleId, $clearanceDeptId, $primaryProgramId, $email, $firstName, $lastName, $isActive];
                     $sql = 'UPDATE users SET role_id = ?, clearance_department_id = ?, clearance_program_id = ?, email = ?, first_name = ?, last_name = ?, is_active = ?';
                     if ($password !== '') {
                         $sql .= ', password = ?';
@@ -159,7 +169,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
                     $sql .= ' WHERE id = ?';
                     $params[] = $targetUserId;
                     $db->prepare($sql)->execute($params);
-                    auditLog('update_user', 'users', $targetUserId);
+                    saveClearanceOfficerPrograms($targetUserId, $clearanceProgramIds);
+                    auditLog('update_user', 'users', $targetUserId, null, ['program_ids' => $clearanceProgramIds]);
                     setFlash('success', 'User account updated.');
                 }
             } catch (PDOException $e) {
@@ -276,16 +287,19 @@ if ($usersPaging['per_page'] !== ITEMS_PER_PAGE) {
 }
 
 $stmt = $db->prepare("SELECT u.*, r.name as role_name, cd.name as department_name, cd.code as department_code,
-        ap.code as program_code, ap.name as program_name
+        (SELECT GROUP_CONCAT(CONCAT(ap2.code, ' — ', ap2.name) ORDER BY ap2.code SEPARATOR ', ')
+         FROM clearance_officer_programs cop
+         JOIN academic_programs ap2 ON ap2.id = cop.program_id
+         WHERE cop.user_id = u.id) AS assigned_programs
     FROM users u
     JOIN roles r ON u.role_id = r.id
     LEFT JOIN clearance_departments cd ON u.clearance_department_id = cd.id
-    LEFT JOIN academic_programs ap ON u.clearance_program_id = ap.id
     WHERE $whereClause
     ORDER BY " . recordsSqlOrderBy($sortState, 'u.created_at DESC') . '
     LIMIT ' . (int) $usersPaging['limit'] . ' OFFSET ' . (int) $usersPaging['offset']);
 $stmt->execute($params);
 $users = $stmt->fetchAll();
+$programIdsByUser = getClearanceOfficerProgramIdsByUser(array_map(static fn(array $account): int => (int) $account['id'], $users));
 
 $userActivity = [];
 foreach ($users as $account) {
@@ -347,8 +361,8 @@ require_once __DIR__ . '/../includes/header.php';
                                     <?php if ($account['department_name']): ?>
                                         <br><small class="text-muted"><?= e($account['department_name']) ?></small>
                                     <?php endif; ?>
-                                    <?php if (!empty($account['program_name'])): ?>
-                                        <br><small class="text-muted"><?= e($account['program_code'] . ' — ' . $account['program_name']) ?></small>
+                                    <?php if (!empty($account['assigned_programs'])): ?>
+                                        <br><small class="text-muted"><?= e($account['assigned_programs']) ?></small>
                                     <?php endif; ?>
                                 </td>
                                 <td data-label="Status">
@@ -364,7 +378,7 @@ require_once __DIR__ . '/../includes/header.php';
                                             'email' => $account['email'],
                                             'role_id' => (int) $account['role_id'],
                                             'clearance_department_id' => $account['clearance_department_id'] ?? '',
-                                            'clearance_program_id' => $account['clearance_program_id'] ?? '',
+                                            'clearance_program_ids' => $programIdsByUser[(int) $account['id']] ?? [],
                                             'is_active' => (int) $account['is_active'],
                                             'is_self' => $isSelf,
                                         ]) ?>"><?= adminSettingsIconBtnContent('edit') ?></button>
@@ -464,14 +478,16 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
 
     <div class="form-group" id="clearanceProgramGroup" hidden>
-        <label for="clearance_program_id">Course / Program *</label>
-        <select id="clearance_program_id" name="clearance_program_id">
-            <option value="">— Select Course —</option>
+        <label>Courses / Programs *</label>
+        <div class="program-chair-course-list">
             <?php foreach ($programs as $program): ?>
-                <option value="<?= (int) $program['id'] ?>"><?= e($program['code'] . ' — ' . $program['name']) ?></option>
+                <label class="checkbox-label">
+                    <input type="checkbox" name="clearance_program_ids[]" value="<?= (int) $program['id'] ?>">
+                    <?= e($program['code'] . ' — ' . $program['name']) ?>
+                </label>
             <?php endforeach; ?>
-        </select>
-        <small class="text-muted">Program Chair accounts only see clearance requests for students in this course.</small>
+        </div>
+        <small class="text-muted">A Program Chair can be assigned to more than one course and only sees clearance requests for students in those courses.</small>
     </div>
 
     <div class="form-group">
@@ -495,7 +511,7 @@ require_once __DIR__ . '/../includes/header.php';
     'email' => $editUser['email'],
     'role_id' => (int) $editUser['role_id'],
     'clearance_department_id' => $editUser['clearance_department_id'] ?? '',
-    'clearance_program_id' => $editUser['clearance_program_id'] ?? '',
+    'clearance_program_ids' => loadClearanceOfficerProgramIds((int) $editUser['id']),
     'is_active' => (int) $editUser['is_active'],
     'is_self' => (int) $editUser['id'] === (int) $user['id'],
 ], JSON_UNESCAPED_UNICODE) ?>;</script>
@@ -508,7 +524,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const deptGroup = document.getElementById('clearanceDepartmentGroup');
     const deptSelect = document.getElementById('clearance_department_id');
     const programGroup = document.getElementById('clearanceProgramGroup');
-    const programSelect = document.getElementById('clearance_program_id');
+    const programChecks = () => programGroup ? Array.from(programGroup.querySelectorAll('input[name="clearance_program_ids[]"]')) : [];
     const passwordHint = form ? form.querySelector('[data-admin-form-password-hint]') : null;
     const passwordNote = form ? form.querySelector('[data-admin-form-password-note]') : null;
     const passwordInput = document.getElementById('password');
@@ -531,10 +547,9 @@ document.addEventListener('DOMContentLoaded', function () {
         const programChairDeptId = deptSelect.dataset.programChairDeptId || '';
         const show = !deptGroup.hidden && programChairDeptId && String(deptSelect.value) === programChairDeptId;
         programGroup.hidden = !show;
-        if (programSelect) {
-            programSelect.required = show;
-            if (!show) programSelect.value = '';
-        }
+        programChecks().forEach(function (box) {
+            if (!show) box.checked = false;
+        });
     }
 
     function syncClearanceDepartment() {
@@ -564,6 +579,12 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     if (form) {
+        form.addEventListener('submit', function (event) {
+            if (!programGroup || programGroup.hidden) return;
+            if (programChecks().some(function (box) { return box.checked; })) return;
+            event.preventDefault();
+            alert('Select at least one course for this Program Chair account.');
+        });
         form.addEventListener('adminformpopulated', function (e) {
             syncClearanceDepartment();
             const isUpdate = e.detail.mode === 'update';

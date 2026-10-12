@@ -59,12 +59,52 @@ function studentCanCreateOnlineRequest(int $userId): bool {
     return getStudentBlockingOnlineRequest($userId) === null;
 }
 
-function studentRequestCanProceedToPayment(?string $status): bool {
-    return in_array((string) $status, ['submitted', 'under_review', 'requirements_verified', 'payment_verified'], true);
+function requestRequiresRegistrarRequirementsFirst(int $requestId): bool {
+    if ($requestId <= 0) {
+        return false;
+    }
+
+    $db = getDB();
+    $requestStmt = $db->prepare('SELECT copy_request_type, document_type_id FROM requests WHERE id = ?');
+    $requestStmt->execute([$requestId]);
+    $request = $requestStmt->fetch();
+    if (!$request) {
+        return false;
+    }
+
+    $copyType = normalizeRequirementCopyType((string) ($request['copy_request_type'] ?? 'first_request'));
+    $itemStmt = $db->prepare('SELECT DISTINCT document_type_id FROM request_items WHERE request_id = ?');
+    $itemStmt->execute([$requestId]);
+    $documentTypeIds = array_map('intval', $itemStmt->fetchAll(PDO::FETCH_COLUMN) ?: []);
+    if ($documentTypeIds === [] && (int) ($request['document_type_id'] ?? 0) > 0) {
+        $documentTypeIds = [(int) $request['document_type_id']];
+    }
+
+    foreach ($documentTypeIds as $documentTypeId) {
+        if (documentTypeRequiresRequirements($documentTypeId, $copyType)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
-function studentRequestShowsPayAction(?string $status): bool {
-    return in_array((string) $status, ['submitted', 'under_review', 'requirements_verified'], true);
+function studentRequestCanProceedToPayment(?string $status, ?int $requestId = null): bool {
+    $payableStatuses = ['submitted', 'under_review', 'requirements_verified', 'payment_verified'];
+    if ($requestId && requestRequiresRegistrarRequirementsFirst($requestId)) {
+        $payableStatuses = ['requirements_verified', 'payment_verified'];
+    }
+
+    return in_array((string) $status, $payableStatuses, true);
+}
+
+function studentRequestShowsPayAction(?string $status, ?int $requestId = null): bool {
+    $payableStatuses = ['submitted', 'under_review', 'requirements_verified'];
+    if ($requestId && requestRequiresRegistrarRequirementsFirst($requestId)) {
+        $payableStatuses = ['requirements_verified'];
+    }
+
+    return in_array((string) $status, $payableStatuses, true);
 }
 
 function studentCanEditRequestDocuments(array $request, int $userId): bool {
@@ -212,6 +252,112 @@ function maybeAutoCancelStaleOnlineRequests(int $days = 3): void {
 
     autoCancelStaleOnlineRequests($days);
     setAppSetting('auto_cancel_online_requests_last_run', (string) time());
+}
+
+/**
+ * Compact request and payment rows for the student top bar.
+ *
+ * @return array{
+ *     requests: list<array<string,mixed>>,
+ *     open_count: int,
+ *     payment_attention: int
+ * }
+ */
+function getStudentHeaderReviewSummaries(int $userId): array {
+    $empty = ['requests' => [], 'open_count' => 0, 'payment_attention' => 0];
+    if ($userId <= 0) {
+        return $empty;
+    }
+
+    if (!function_exists('ensureRequestItemsSchema')) {
+        require_once __DIR__ . '/request-items.php';
+    }
+    ensureRequestItemsSchema();
+    if (!function_exists('paymentMethodLabel')) {
+        require_once __DIR__ . '/payments.php';
+    }
+
+    $db = getDB();
+    $countStmt = $db->prepare("SELECT COUNT(*) FROM requests WHERE user_id = ? AND status NOT IN ('completed','rejected','cancelled')");
+    $countStmt->execute([$userId]);
+    $openCount = (int) $countStmt->fetchColumn();
+
+    $stmt = $db->prepare("SELECT r.id, r.request_number, r.status, r.total_amount, r.updated_at,
+            COALESCE(
+                (SELECT GROUP_CONCAT(dt.name ORDER BY ri.sort_order, ri.id SEPARATOR ', ')
+                 FROM request_items ri
+                 JOIN document_types dt ON dt.id = ri.document_type_id
+                 WHERE ri.request_id = r.id),
+                dt0.name
+            ) AS documents_summary,
+            p.status AS payment_status,
+            p.amount AS payment_amount,
+            p.payment_method,
+            p.or_number
+        FROM requests r
+        LEFT JOIN document_types dt0 ON dt0.id = r.document_type_id
+        LEFT JOIN payments p ON p.id = (
+            SELECT MAX(p2.id) FROM payments p2 WHERE p2.request_id = r.id
+        )
+        WHERE r.user_id = ? AND r.status <> 'cancelled'
+        ORDER BY r.updated_at DESC
+        LIMIT 5");
+    $stmt->execute([$userId]);
+
+    $requests = [];
+    $paymentAttention = 0;
+    foreach ($stmt->fetchAll() ?: [] as $row) {
+        $requestId = (int) $row['id'];
+        $status = (string) ($row['status'] ?? '');
+        $paymentStatus = trim((string) ($row['payment_status'] ?? ''));
+        $canPay = studentRequestShowsPayAction($status, $requestId);
+        if ($canPay || $paymentStatus === 'rejected') {
+            $paymentAttention++;
+        }
+
+        $method = trim((string) ($row['payment_method'] ?? ''));
+        $methodLabel = '';
+        if ($method !== '') {
+            $methodLabel = function_exists('paymentMethodLabel')
+                ? paymentMethodLabel($method)
+                : ucwords(str_replace('_', ' ', $method));
+        }
+
+        $requests[] = [
+            'id' => $requestId,
+            'request_number' => (string) ($row['request_number'] ?? ''),
+            'status' => $status,
+            'status_label' => function_exists('studentProgressStatusLabel')
+                ? studentProgressStatusLabel($status)
+                : ucwords(str_replace('_', ' ', $status)),
+            'documents' => trim((string) ($row['documents_summary'] ?? '')) ?: 'Document request',
+            'amount' => (float) ($row['payment_amount'] ?? $row['total_amount'] ?? 0),
+            'updated_at' => (string) ($row['updated_at'] ?? ''),
+            'payment_status' => $paymentStatus,
+            'payment_label' => studentHeaderPaymentSummaryLabel($paymentStatus, $canPay),
+            'payment_method' => $methodLabel,
+            'or_number' => trim((string) ($row['or_number'] ?? '')),
+            'can_pay' => $canPay,
+            'view_url' => APP_URL . '/student/request-view.php?id=' . $requestId,
+            'pay_url' => APP_URL . '/student/payment.php?request_id=' . $requestId,
+        ];
+    }
+
+    return [
+        'requests' => $requests,
+        'open_count' => $openCount,
+        'payment_attention' => $paymentAttention,
+    ];
+}
+
+function studentHeaderPaymentSummaryLabel(string $paymentStatus, bool $canPay): string {
+    return match ($paymentStatus) {
+        'pending' => 'Waiting for cashier verification',
+        'verified' => 'Payment verified',
+        'rejected' => 'Payment rejected',
+        'refunded' => 'Refunded',
+        default => $canPay ? 'Payment due' : 'Payment not open yet',
+    };
 }
 
 function renderStudentBlockingOnlineRequestAlert(?array $blockingRequest): string {

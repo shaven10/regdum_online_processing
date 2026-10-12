@@ -1,5 +1,60 @@
+function initStudentTopbarReview() {
+    const menus = document.querySelectorAll('[data-topbar-review]');
+    if (!menus.length) {
+        return;
+    }
+
+    function closeMenus(except) {
+        menus.forEach(function (menu) {
+            if (except && menu === except) {
+                return;
+            }
+            const panel = menu.querySelector('.topbar-review-panel');
+            const button = menu.querySelector('[data-topbar-review-toggle]');
+            if (panel) {
+                panel.hidden = true;
+            }
+            if (button) {
+                button.setAttribute('aria-expanded', 'false');
+                button.classList.remove('is-open');
+            }
+        });
+    }
+
+    menus.forEach(function (menu) {
+        const button = menu.querySelector('[data-topbar-review-toggle]');
+        const panel = menu.querySelector('.topbar-review-panel');
+        if (!button || !panel) {
+            return;
+        }
+        button.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const willOpen = panel.hidden;
+            closeMenus(menu);
+            panel.hidden = !willOpen;
+            button.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+            button.classList.toggle('is-open', willOpen);
+        });
+    });
+
+    document.addEventListener('click', function (event) {
+        if (event.target.closest('[data-topbar-review]')) {
+            return;
+        }
+        closeMenus();
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') {
+            closeMenus();
+        }
+    });
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     initNotificationToasts();
+    initStudentTopbarReview();
     initLandingNav();
     initLandingHeroCarousel();
     initRecordsPerPageSelects();

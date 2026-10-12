@@ -624,6 +624,13 @@ CREATE TABLE request_clearances (
     UNIQUE KEY uk_request_department (request_id, department_id)
 );
 
+CREATE TABLE clearance_officer_programs (
+    user_id INT UNSIGNED NOT NULL,
+    program_id TINYINT UNSIGNED NOT NULL,
+    PRIMARY KEY (user_id, program_id),
+    KEY idx_clearance_officer_programs_program (program_id)
+);
+
 CREATE TABLE course_prospectuses (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     program_id INT UNSIGNED NOT NULL,

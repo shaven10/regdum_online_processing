@@ -235,6 +235,70 @@ $userInitials = strtoupper(substr($user['first_name'] ?? 'U', 0, 1) . substr($us
             <button class="sidebar-toggle" id="sidebarToggle"><i class="fas fa-bars"></i></button>
             <h1 class="page-heading"><?= e($pageTitle) ?></h1>
             <div class="topbar-actions">
+                <?php if (hasRole('student')): ?>
+                    <?php
+                    require_once __DIR__ . '/student-requests.php';
+                    $studentReview = getStudentHeaderReviewSummaries((int) $user['id']);
+                    ?>
+                    <div class="topbar-review" data-topbar-review>
+                        <button type="button" class="topbar-notif-btn" data-topbar-review-toggle aria-expanded="false" aria-controls="requestSummaryPanel" title="Request summary" aria-label="Request summary">
+                            <i class="fas fa-file-alt"></i>
+                            <?php if ((int) $studentReview['open_count'] > 0): ?>
+                                <span class="notif-badge topbar-notif-badge"><?= (int) $studentReview['open_count'] ?></span>
+                            <?php endif; ?>
+                        </button>
+                        <div class="topbar-review-panel" id="requestSummaryPanel" hidden>
+                            <div class="topbar-review-head">
+                                <strong>Request Summary</strong>
+                                <a href="<?= APP_URL ?>/student/requests.php">View all</a>
+                            </div>
+                            <?php if ($studentReview['requests'] === []): ?>
+                                <p class="topbar-review-empty">No requests to review yet.</p>
+                            <?php else: ?>
+                                <ul class="topbar-review-list">
+                                    <?php foreach ($studentReview['requests'] as $reviewRequest): ?>
+                                        <li>
+                                            <a href="<?= e($reviewRequest['view_url']) ?>">
+                                                <span class="topbar-review-title"><?= e($reviewRequest['request_number']) ?></span>
+                                                <span class="topbar-review-meta"><?= e($reviewRequest['documents']) ?></span>
+                                                <span class="topbar-review-status"><?= e($reviewRequest['status_label']) ?></span>
+                                            </a>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <div class="topbar-review" data-topbar-review>
+                        <button type="button" class="topbar-notif-btn" data-topbar-review-toggle aria-expanded="false" aria-controls="paymentSummaryPanel" title="Payment summary" aria-label="Payment summary">
+                            <i class="fas fa-credit-card"></i>
+                            <?php if ((int) $studentReview['payment_attention'] > 0): ?>
+                                <span class="notif-badge topbar-notif-badge"><?= (int) $studentReview['payment_attention'] ?></span>
+                            <?php endif; ?>
+                        </button>
+                        <div class="topbar-review-panel" id="paymentSummaryPanel" hidden>
+                            <div class="topbar-review-head">
+                                <strong>Payment Summary</strong>
+                                <a href="<?= APP_URL ?>/student/requests.php">View all</a>
+                            </div>
+                            <?php if ($studentReview['requests'] === []): ?>
+                                <p class="topbar-review-empty">No payments to review yet.</p>
+                            <?php else: ?>
+                                <ul class="topbar-review-list">
+                                    <?php foreach ($studentReview['requests'] as $reviewRequest): ?>
+                                        <li>
+                                            <a href="<?= e($reviewRequest['can_pay'] ? $reviewRequest['pay_url'] : $reviewRequest['view_url']) ?>">
+                                                <span class="topbar-review-title"><?= e($reviewRequest['request_number']) ?> · <?= e(formatMoney((float) $reviewRequest['amount'])) ?></span>
+                                                <span class="topbar-review-meta"><?= e($reviewRequest['documents']) ?></span>
+                                                <span class="topbar-review-status"><?= e($reviewRequest['payment_label']) ?><?= $reviewRequest['payment_method'] !== '' ? ' · ' . e($reviewRequest['payment_method']) : '' ?><?= $reviewRequest['or_number'] !== '' ? ' · OR ' . e($reviewRequest['or_number']) : '' ?></span>
+                                            </a>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                <?php endif; ?>
                 <a href="<?= APP_URL ?>/notifications.php" class="topbar-notif-btn" id="topbarNotifBtn" title="Notifications" aria-label="Notifications">
                     <i class="fas fa-bell"></i>
                     <?php if ($notifCount > 0): ?>

@@ -123,10 +123,12 @@ $stmt = $db->prepare('SELECT u.*, r.name AS role_name, cd.name AS department_nam
 $stmt->execute([$user['id']]);
 $profile = $stmt->fetch() ?: $user;
 
-$assignedProgram = null;
-if (!empty($profile['clearance_program_id'])) {
-    require_once __DIR__ . '/../includes/programs.php';
-    $assignedProgram = getAcademicProgramById((int) $profile['clearance_program_id']);
+$assignedPrograms = [];
+$assignedProgramLabel = '';
+if (($profile['role_name'] ?? '') === 'clearance_officer') {
+    require_once __DIR__ . '/../includes/clearance.php';
+    $assignedPrograms = getClearanceOfficerPrograms((int) $profile['id']);
+    $assignedProgramLabel = formatClearanceOfficerProgramLabel($assignedPrograms);
 }
 
 require_once __DIR__ . '/../includes/header.php';
@@ -185,10 +187,10 @@ require_once __DIR__ . '/../includes/header.php';
                             <span><?= e($profile['department_name']) ?></span>
                         </div>
                     <?php endif; ?>
-                    <?php if ($assignedProgram): ?>
+                    <?php if ($assignedProgramLabel !== ''): ?>
                         <div class="detail-item">
-                            <label>Assigned Course</label>
-                            <span><?= e($assignedProgram['code'] . ' — ' . $assignedProgram['name']) ?></span>
+                            <label><?= count($assignedPrograms) === 1 ? 'Assigned Course' : 'Assigned Courses' ?></label>
+                            <span><?= e($assignedProgramLabel) ?></span>
                         </div>
                     <?php endif; ?>
                     <div class="detail-item">

@@ -333,13 +333,17 @@ require_once __DIR__ . '/../includes/header.php';
 
             <?php if ($request['status'] === 'submitted' || $request['status'] === 'under_review'): ?>
 
-                <div class="alert alert-info"><i class="fas fa-credit-card"></i> Your request is submitted. Continue to payment so the cashier can verify it.</div>
+                <?php if (requestRequiresRegistrarRequirementsFirst($requestId)): ?>
+                    <div class="alert alert-info"><i class="fas fa-clipboard-list"></i> Your request is submitted. The Registrar will set the requirements before payment is available.</div>
+                <?php else: ?>
+                    <div class="alert alert-info"><i class="fas fa-credit-card"></i> Your request is submitted. Continue to payment so the cashier can verify it.</div>
+                <?php endif; ?>
 
             <?php endif; ?>
 
 
 
-            <?php if (studentRequestShowsPayAction($request['status'] ?? null)): ?>
+            <?php if (studentRequestShowsPayAction($request['status'] ?? null, $requestId)): ?>
 
                 <a href="payment.php?request_id=<?= $requestId ?>" class="btn btn-primary"><i class="fas fa-credit-card"></i> Proceed to Payment</a>
 
@@ -715,7 +719,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <i class="fas fa-comment-dots"></i>
                     <strong>Cashier Feedback:</strong> <?= e($paymentData['notes']) ?>
                 </div>
-                <?php if (studentRequestShowsPayAction($request['status'] ?? null)): ?>
+                <?php if (studentRequestShowsPayAction($request['status'] ?? null, $requestId)): ?>
                     <a href="payment.php?request_id=<?= $requestId ?>" class="btn btn-primary" style="margin-top:.75rem">
                         <i class="fas fa-redo"></i> Resubmit Payment
                     </a>

@@ -21,7 +21,7 @@ if (!$request) {
     redirect(APP_URL . '/student/requests.php');
 }
 
-if (!studentRequestCanProceedToPayment($request['status'] ?? null)) {
+if (!studentRequestCanProceedToPayment($request['status'] ?? null, $requestId)) {
     setFlash('warning', 'Payment is not available for this request yet.');
     redirect(APP_URL . '/student/request-view.php?id=' . $requestId);
 }

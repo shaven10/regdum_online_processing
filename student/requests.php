@@ -141,7 +141,7 @@ require_once __DIR__ . '/../includes/header.php';
                                     <a href="new-request.php?request_id=<?= (int) $req['id'] ?>" class="btn btn-sm btn-outline">Edit</a>
                                 <?php endif; ?>
                                 <a href="request-view.php?id=<?= $req['id'] ?>" class="btn btn-sm btn-outline">View</a>
-                                <?php if (studentRequestShowsPayAction($req['status'] ?? null)): ?>
+                                <?php if (studentRequestShowsPayAction($req['status'] ?? null, (int) $req['id'])): ?>
                                     <a href="payment.php?request_id=<?= $req['id'] ?>" class="btn btn-sm btn-primary">Pay</a>
                                 <?php endif; ?>
                             </td>

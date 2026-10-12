@@ -49,6 +49,16 @@ function ensureClearanceSchema(): void {
         $db->exec('ALTER TABLE users ADD COLUMN clearance_program_id TINYINT UNSIGNED NULL AFTER clearance_department_id');
     }
 
+    $db->exec("CREATE TABLE IF NOT EXISTS clearance_officer_programs (
+        user_id INT UNSIGNED NOT NULL,
+        program_id TINYINT UNSIGNED NOT NULL,
+        PRIMARY KEY (user_id, program_id),
+        KEY idx_clearance_officer_programs_program (program_id)
+    )");
+    $db->exec('INSERT IGNORE INTO clearance_officer_programs (user_id, program_id)
+        SELECT id, clearance_program_id FROM users
+        WHERE clearance_program_id IS NOT NULL AND clearance_program_id > 0');
+
     $role = $db->query("SELECT id FROM roles WHERE name = 'clearance_officer'")->fetch();
     if (!$role) {
         $db->exec("INSERT INTO roles (name, description) VALUES ('clearance_officer', 'Clearance Signing Officer')");
@@ -64,17 +74,126 @@ function isProgramChairDepartment(?array $department): bool {
 }
 
 /**
- * Program/course scope for a clearance officer.
+ * Courses assigned to a program chair.
  * null = not a program chair (no course filter).
- * 0 = program chair with no course assigned (should see no requests).
- * >0 = only requests for that academic program.
+ * [] = program chair with no courses assigned (should see no requests).
+ *
+ * @return list<int>|null
  */
-function getClearanceOfficerProgramScope(array $user): ?int {
+function getClearanceOfficerProgramIds(array $user): ?array {
     $department = getUserClearanceDepartment($user);
     if (!isProgramChairDepartment($department)) {
         return null;
     }
-    return (int) ($user['clearance_program_id'] ?? 0);
+
+    return loadClearanceOfficerProgramIds((int) ($user['id'] ?? 0));
+}
+
+/**
+ * @param list<int> $userIds
+ * @return array<int, list<int>>
+ */
+function getClearanceOfficerProgramIdsByUser(array $userIds): array {
+    ensureClearanceSchema();
+    $userIds = array_values(array_unique(array_filter(array_map('intval', $userIds), static fn(int $id): bool => $id > 0)));
+    if ($userIds === []) {
+        return [];
+    }
+
+    $db = getDB();
+    $placeholders = implode(',', array_fill(0, count($userIds), '?'));
+    $stmt = $db->prepare("SELECT user_id, program_id
+        FROM clearance_officer_programs
+        WHERE user_id IN ($placeholders)
+        ORDER BY program_id");
+    $stmt->execute($userIds);
+
+    $map = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $map[(int) $row['user_id']][] = (int) $row['program_id'];
+    }
+
+    $missing = array_values(array_filter($userIds, static fn(int $id): bool => empty($map[$id])));
+    if ($missing !== []) {
+        $missingPlaceholders = implode(',', array_fill(0, count($missing), '?'));
+        $legacy = $db->prepare("SELECT id, clearance_program_id FROM users
+            WHERE id IN ($missingPlaceholders) AND clearance_program_id IS NOT NULL AND clearance_program_id > 0");
+        $legacy->execute($missing);
+        foreach ($legacy->fetchAll() as $row) {
+            $map[(int) $row['id']] = [(int) $row['clearance_program_id']];
+        }
+    }
+
+    return $map;
+}
+
+/** @return list<int> */
+function loadClearanceOfficerProgramIds(int $userId): array {
+    if ($userId <= 0) {
+        return [];
+    }
+
+    $map = getClearanceOfficerProgramIdsByUser([$userId]);
+    return $map[$userId] ?? [];
+}
+
+/** @return list<array<string,mixed>> */
+function getClearanceOfficerPrograms(int $userId): array {
+    $programIds = loadClearanceOfficerProgramIds($userId);
+    if ($programIds === []) {
+        return [];
+    }
+
+    if (!function_exists('getAcademicProgramById')) {
+        require_once __DIR__ . '/programs.php';
+    }
+
+    $db = getDB();
+    $placeholders = implode(',', array_fill(0, count($programIds), '?'));
+    $stmt = $db->prepare("SELECT id, code, name FROM academic_programs
+        WHERE id IN ($placeholders)
+        ORDER BY code, name");
+    $stmt->execute($programIds);
+    return $stmt->fetchAll() ?: [];
+}
+
+function formatClearanceOfficerProgramLabel(array $programs): string {
+    $labels = [];
+    foreach ($programs as $program) {
+        $code = trim((string) ($program['code'] ?? ''));
+        $name = trim((string) ($program['name'] ?? ''));
+        if ($code !== '' && $name !== '') {
+            $labels[] = $code . ' — ' . $name;
+        } elseif ($code !== '' || $name !== '') {
+            $labels[] = $code !== '' ? $code : $name;
+        }
+    }
+
+    return implode(', ', $labels);
+}
+
+/**
+ * @param list<int> $programIds
+ */
+function saveClearanceOfficerPrograms(int $userId, array $programIds): void {
+    if ($userId <= 0) {
+        return;
+    }
+
+    ensureClearanceSchema();
+    $programIds = array_values(array_unique(array_filter(array_map('intval', $programIds), static fn(int $id): bool => $id > 0)));
+
+    $db = getDB();
+    $db->prepare('DELETE FROM clearance_officer_programs WHERE user_id = ?')->execute([$userId]);
+    if ($programIds !== []) {
+        $insert = $db->prepare('INSERT INTO clearance_officer_programs (user_id, program_id) VALUES (?, ?)');
+        foreach ($programIds as $programId) {
+            $insert->execute([$userId, $programId]);
+        }
+    }
+
+    $db->prepare('UPDATE users SET clearance_program_id = ? WHERE id = ?')
+       ->execute([$programIds[0] ?? null, $userId]);
 }
 
 function getRequestorCourseIdForRequest(int $requestId): int {
@@ -97,15 +216,15 @@ function canClearanceOfficerAccessRequest(array $user, int $requestId): bool {
         return true;
     }
 
-    $programScope = getClearanceOfficerProgramScope($user);
-    if ($programScope === null) {
+    $programIds = getClearanceOfficerProgramIds($user);
+    if ($programIds === null) {
         return true;
     }
-    if ($programScope <= 0) {
+    if ($programIds === []) {
         return false;
     }
 
-    return getRequestorCourseIdForRequest($requestId) === $programScope;
+    return in_array(getRequestorCourseIdForRequest($requestId), $programIds, true);
 }
 
 function removeExcludedClearanceOffices(): void {
@@ -214,18 +333,26 @@ function notifyClearanceOfficersPendingSigning(
 
     $users = $db->prepare($sql);
     $users->execute($params);
+    $officerRows = $users->fetchAll() ?: [];
+    $chairIds = [];
+    foreach ($officerRows as $row) {
+        if (($row['department_code'] ?? '') === 'program_chair') {
+            $chairIds[] = (int) $row['id'];
+        }
+    }
+    $programIdsByUser = getClearanceOfficerProgramIdsByUser($chairIds);
 
     $count = 0;
-    foreach ($users->fetchAll() as $row) {
+    foreach ($officerRows as $row) {
         $userId = (int) $row['id'];
         if ($excludeUserId !== null && $userId === $excludeUserId) {
             continue;
         }
 
-        // Program chairs only receive requests for their assigned course/program.
+        // Program chairs only receive requests for their assigned courses.
         if (($row['department_code'] ?? '') === 'program_chair') {
-            $officerProgramId = (int) ($row['clearance_program_id'] ?? 0);
-            if ($officerProgramId <= 0 || $requestorCourseId <= 0 || $officerProgramId !== $requestorCourseId) {
+            $officerProgramIds = $programIdsByUser[$userId] ?? [];
+            if ($requestorCourseId <= 0 || !in_array($requestorCourseId, $officerProgramIds, true)) {
                 continue;
             }
         }
@@ -334,7 +461,10 @@ function requireClearanceAccess(): void {
     }
 }
 
-function getClearanceRequestsForDepartment(int $departmentId, string $status = '', string $search = '', ?int $programId = null): array {
+/**
+ * @param list<int>|null $programIds null = no course filter; [] = match nothing
+ */
+function getClearanceRequestsForDepartment(int $departmentId, string $status = '', string $search = '', ?array $programIds = null): array {
     $db = getDB();
     $where = ['rc.department_id = ?'];
     $params = [$departmentId];
@@ -351,9 +481,15 @@ function getClearanceRequestsForDepartment(int $departmentId, string $status = '
         array_push($params, $like, $like, $like, $like, $like);
     }
 
-    if ($programId !== null) {
-        $where[] = 'sp.course_id = ?';
-        $params[] = $programId;
+    if ($programIds !== null) {
+        $programIds = array_values(array_unique(array_filter(array_map('intval', $programIds), static fn(int $id): bool => $id > 0)));
+        if ($programIds === []) {
+            $where[] = '1 = 0';
+        } else {
+            $placeholders = implode(',', array_fill(0, count($programIds), '?'));
+            $where[] = 'sp.course_id IN (' . $placeholders . ')';
+            $params = array_merge($params, $programIds);
+        }
     }
 
     $where[] = "r.status NOT IN ('completed','rejected')";
@@ -389,9 +525,9 @@ function processClearanceAction(int $requestId, int $departmentId, int $userId, 
     $officerStmt->execute([$userId]);
     $officer = $officerStmt->fetch();
     if ($officer && ($officer['department_code'] ?? '') === 'program_chair') {
-        $officerProgramId = (int) ($officer['clearance_program_id'] ?? 0);
+        $officerProgramIds = loadClearanceOfficerProgramIds($userId);
         $requestorCourseId = getRequestorCourseIdForRequest($requestId);
-        if ($officerProgramId <= 0 || $requestorCourseId !== $officerProgramId) {
+        if ($officerProgramIds === [] || !in_array($requestorCourseId, $officerProgramIds, true)) {
             return false;
         }
     }

@@ -140,9 +140,19 @@ function getAssignableProcessors(): array {
         $addProcessor($row, 'accounting', 'Accounting (SOA)', 'accounting');
     }
 
+    if (!function_exists('ensureClearanceSchema')) {
+        require_once __DIR__ . '/clearance.php';
+    }
+    ensureClearanceSchema();
     $officers = $db->query("SELECT u.id, u.first_name, u.last_name, u.email, u.clearance_program_id,
             r.name as role_name, cd.code AS department_code, cd.name AS department_name,
-            ap.code AS program_code, ap.name AS program_name
+            COALESCE(
+                (SELECT GROUP_CONCAT(ap2.code ORDER BY ap2.code SEPARATOR ', ')
+                 FROM clearance_officer_programs cop
+                 JOIN academic_programs ap2 ON ap2.id = cop.program_id
+                 WHERE cop.user_id = u.id),
+                ap.code
+            ) AS program_code
         FROM users u
         JOIN roles r ON u.role_id = r.id
         LEFT JOIN clearance_departments cd ON cd.id = u.clearance_department_id
@@ -165,9 +175,8 @@ function getAssignableProcessors(): array {
             $officeLabel = $deptLabels[$office];
             if ($office === 'program_chair') {
                 $programCode = trim((string) ($row['program_code'] ?? ''));
-                $programName = trim((string) ($row['program_name'] ?? ''));
-                if ($programCode !== '' || $programName !== '') {
-                    $officeLabel .= ' — ' . ($programCode !== '' ? $programCode : $programName);
+                if ($programCode !== '') {
+                    $officeLabel .= ' — ' . $programCode;
                 }
             }
         }
