@@ -3597,6 +3597,17 @@ a.feature-card-link:hover {
     display: none;
 }
 
+.request-form-actions [hidden],
+#requestTabSubmit[hidden],
+#requestTabNext[hidden],
+#requestTabBack[hidden] {
+    display: none !important;
+}
+
+#requestTabPanel3 .request-submit-btn {
+    margin-top: .25rem;
+}
+
 .request-form-simple .request-form-step {
     margin-bottom: 1.25rem;
     padding-bottom: 0;
@@ -3737,6 +3748,87 @@ a.feature-card-link:hover {
     flex-wrap: wrap;
     align-items: center;
     justify-content: flex-end;
+}
+
+.request-confirm-dialog {
+    width: min(100%, 680px);
+    max-height: min(90vh, 820px);
+    overflow: auto;
+    text-align: left;
+}
+
+.request-confirm-accent {
+    background: linear-gradient(90deg, #34d399, #059669);
+}
+
+.request-confirm-icon {
+    background: var(--primary, #059669);
+}
+
+.request-confirm-heading {
+    text-align: center;
+    margin-bottom: .25rem;
+}
+
+.request-confirm-summary {
+    display: grid;
+    gap: .9rem;
+    margin: 1rem 0 1.15rem;
+}
+
+.request-confirm-block h3 {
+    margin: 0 0 .45rem;
+    font-size: .78rem;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--gray-500);
+}
+
+.request-confirm-facts {
+    display: grid;
+    gap: .55rem;
+    margin: 0;
+}
+
+.request-confirm-facts div {
+    display: grid;
+    gap: .1rem;
+}
+
+.request-confirm-facts dt {
+    font-size: .75rem;
+    color: var(--gray-500);
+}
+
+.request-confirm-facts dd {
+    margin: 0;
+    font-weight: 600;
+    color: var(--gray-800);
+}
+
+.request-confirm-docs {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: grid;
+    gap: .35rem;
+}
+
+.request-confirm-pay {
+    border: 1px solid var(--gray-200);
+    border-radius: 12px;
+    padding: .75rem .85rem;
+    background: var(--gray-50, #f8fafc);
+}
+
+.request-confirm-total {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: .75rem;
+    margin-top: .75rem;
+    padding-top: .7rem;
+    border-top: 1px solid var(--gray-200);
+    font-weight: 700;
 }
 
 .request-form-footer .payment-breakdown-panel {

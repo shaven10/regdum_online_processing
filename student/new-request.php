@@ -1008,6 +1008,15 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="form-group">
                     <textarea id="notes" name="notes" rows="2" placeholder="Any special instructions for the Registrar..."><?= e($notesValue) ?></textarea>
                 </div>
+                <?php if ($isEditMode): ?>
+                    <button type="submit" class="btn btn-primary btn-lg request-submit-btn" id="requestTabSubmit">
+                        <i class="fas fa-save"></i> Save Documents
+                    </button>
+                <?php else: ?>
+                    <button type="submit" class="btn btn-primary btn-lg request-submit-btn" id="requestTabSubmit" data-confirm-request="1">
+                        <i class="fas fa-paper-plane"></i> Submit Request
+                    </button>
+                <?php endif; ?>
             </section>
 
             <section class="request-form-footer">
@@ -1031,17 +1040,36 @@ require_once __DIR__ . '/../includes/header.php';
                     </button>
                     <?php if ($isEditMode): ?>
                         <a href="<?= e($editReturnUrl) ?>" class="btn btn-outline btn-lg">Cancel</a>
-                        <button type="submit" class="btn btn-primary btn-lg request-submit-btn" id="requestTabSubmit" <?= $initialRequestTab === 3 ? '' : 'hidden' ?>>
-                            <i class="fas fa-save"></i> Save Documents
-                        </button>
-                    <?php else: ?>
-                        <button type="submit" class="btn btn-primary btn-lg request-submit-btn" id="requestTabSubmit" <?= $initialRequestTab === 3 ? '' : 'hidden' ?>>
-                            <i class="fas fa-paper-plane"></i> Submit Request
-                        </button>
                     <?php endif; ?>
                 </div>
             </section>
         </form>
+        <?php if (!$isEditMode): ?>
+        <div class="confirm-modal" id="requestConfirmModal" aria-hidden="true">
+            <div class="confirm-modal-overlay" data-close-request-confirm></div>
+            <div class="confirm-modal-dialog request-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="requestConfirmTitle">
+                <div class="confirm-modal-accent request-confirm-accent"></div>
+                <button type="button" class="confirm-modal-close" data-close-request-confirm aria-label="Close">
+                    <i class="fas fa-times"></i>
+                </button>
+                <div class="request-confirm-heading">
+                    <div class="confirm-modal-icon-wrap request-confirm-icon">
+                        <i class="fas fa-file-signature"></i>
+                    </div>
+                    <span class="confirm-modal-eyebrow">Confirm Request</span>
+                    <h2 class="confirm-modal-title" id="requestConfirmTitle">Review before submitting</h2>
+                    <p class="confirm-modal-message">Check the request, the documents, and the payment breakdown. Submit only after these details are correct.</p>
+                </div>
+                <div class="request-confirm-summary" id="requestConfirmSummary"></div>
+                <div class="confirm-modal-actions">
+                    <button type="button" class="btn btn-outline" data-close-request-confirm>Back</button>
+                    <button type="button" class="btn btn-primary" id="requestConfirmSubmit">
+                        <i class="fas fa-paper-plane"></i> Submit Request
+                    </button>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
         <?php endif; ?>
     </div>
 </div>
@@ -1660,11 +1688,157 @@ document.getElementById('purpose')?.addEventListener('change', function () {
 document.getElementById('applyPurposeSuggestions')?.addEventListener('click', function () {
     applyPurposeSuggestions(true);
 });
+let requestConfirmAccepted = false;
+
+function selectedOptionLabel(selectId) {
+    const select = document.getElementById(selectId);
+    if (!select) {
+        return '';
+    }
+    const option = select.selectedOptions && select.selectedOptions[0];
+    const label = option ? String(option.textContent || '').trim() : '';
+    return select.value ? label : '';
+}
+
+function collectRequestedDocumentLines() {
+    const lines = [];
+    document.querySelectorAll('.document-checklist-checkbox:checked').forEach(function (checkbox) {
+        const item = checkbox.closest('.document-checklist-item');
+        const name = checkbox.getAttribute('data-doc-name') || 'Document';
+        const requiresAuth = checkbox.getAttribute('data-requires-auth-type') === '1';
+        const requiresTerm = checkbox.getAttribute('data-requires-term') === '1';
+
+        if (requiresTerm && item) {
+            item.querySelectorAll('[data-term-line]').forEach(function (termLine, index) {
+                const sySelect = termLine.querySelector('select[name*="[school_year]"]');
+                const semSelect = termLine.querySelector('select[name*="[semester]"]');
+                const copiesInput = termLine.querySelector('[data-term-copies]');
+                const syText = sySelect && sySelect.value && sySelect.selectedOptions[0] ? sySelect.selectedOptions[0].textContent.trim() : '';
+                const semText = semSelect && semSelect.value && semSelect.selectedOptions[0] ? semSelect.selectedOptions[0].textContent.trim() : '';
+                const copies = copiesInput ? copiesInput.value : '1';
+                const termLabel = syText && semText ? (syText + ' · ' + semText) : ('Term ' + (index + 1));
+                lines.push(name + ' — ' + termLabel + ' · ' + copies + ' cop' + (String(copies) === '1' ? 'y' : 'ies'));
+            });
+            return;
+        }
+
+        if (requiresAuth && item) {
+            const authItems = collectAuthItems(item);
+            if (!authItems.length) {
+                lines.push(name);
+                return;
+            }
+            authItems.forEach(function (authItem) {
+                lines.push(name + ' — ' + authItem.label + ' · ' + authItem.sets + ' set' + (authItem.sets === 1 ? '' : 's'));
+            });
+            return;
+        }
+
+        const copiesInput = item ? item.querySelector('.document-checklist-copies input') : null;
+        const copies = copiesInput ? copiesInput.value : '1';
+        lines.push(name + ' — ' + copies + ' cop' + (String(copies) === '1' ? 'y' : 'ies'));
+    });
+    return lines;
+}
+
+function buildRequestConfirmSummary() {
+    updateFee();
+    const purpose = selectedOptionLabel('purpose');
+    const purposeOther = (document.getElementById('purpose_other')?.value || '').trim();
+    const requestType = selectedOptionLabel('copy_request_type');
+    const notes = (document.getElementById('notes')?.value || '').trim();
+    const torPurpose = requestIncludesTor() ? (document.getElementById('tor_specific_purpose')?.value || '').trim() : '';
+    const documents = collectRequestedDocumentLines();
+    const breakdown = document.getElementById('paymentBreakdownList');
+    const total = document.getElementById('totalFee')?.textContent || '';
+
+    const summaryRows = [
+        ['Purpose', purposeOther && purpose ? purpose + ' — ' + purposeOther : purpose],
+        ['Request type', requestType],
+    ];
+    if (torPurpose) {
+        summaryRows.push(['Transcript purpose', torPurpose]);
+    }
+    if (notes) {
+        summaryRows.push(['Notes', notes]);
+    }
+
+    let html = '<section class="request-confirm-block"><h3>Request summary</h3><dl class="request-confirm-facts">';
+    summaryRows.forEach(function (row) {
+        html += '<div><dt>' + escapeHtml(row[0]) + '</dt><dd>' + escapeHtml(row[1] || '—') + '</dd></div>';
+    });
+    html += '</dl></section>';
+
+    html += '<section class="request-confirm-block"><h3>Requested documents</h3><ul class="request-confirm-docs">';
+    if (!documents.length) {
+        html += '<li>No documents selected</li>';
+    } else {
+        documents.forEach(function (line) {
+            html += '<li>' + escapeHtml(line) + '</li>';
+        });
+    }
+    html += '</ul></section>';
+
+    html += '<section class="request-confirm-block"><h3>Payment breakdown</h3><div class="request-confirm-pay">';
+    html += breakdown && !breakdown.hidden ? breakdown.innerHTML : '<p class="text-muted">No fees to show yet.</p>';
+    html += '<div class="request-confirm-total"><span>Estimated total</span><strong>' + escapeHtml(total) + '</strong></div>';
+    html += '</div></section>';
+    return html;
+}
+
+function closeRequestConfirm() {
+    const modal = document.getElementById('requestConfirmModal');
+    if (!modal) {
+        return;
+    }
+    modal.classList.remove('is-open');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+}
+
+function openRequestConfirm() {
+    const modal = document.getElementById('requestConfirmModal');
+    const summary = document.getElementById('requestConfirmSummary');
+    if (!modal || !summary) {
+        return;
+    }
+    summary.innerHTML = buildRequestConfirmSummary();
+    modal.classList.add('is-open');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+}
+
 document.getElementById('requestForm')?.addEventListener('submit', function (event) {
     const validation = validateStudentRequestBeforeSubmit();
     if (!validation.ok) {
         event.preventDefault();
         showStudentRequestValidationDialog(validation);
+        return;
+    }
+
+    const submitButton = document.getElementById('requestTabSubmit');
+    if (submitButton && submitButton.dataset.confirmRequest === '1' && !requestConfirmAccepted) {
+        event.preventDefault();
+        showRequestTab(3);
+        openRequestConfirm();
+    }
+});
+
+document.querySelectorAll('[data-close-request-confirm]').forEach(function (control) {
+    control.addEventListener('click', closeRequestConfirm);
+});
+document.getElementById('requestConfirmSubmit')?.addEventListener('click', function () {
+    const form = document.getElementById('requestForm');
+    if (!form) {
+        return;
+    }
+    requestConfirmAccepted = true;
+    this.disabled = true;
+    form.submit();
+});
+document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+        closeRequestConfirm();
     }
 });
 
@@ -1776,10 +1950,8 @@ function showRequestTab(tab) {
     });
     const backButton = document.getElementById('requestTabBack');
     const nextButton = document.getElementById('requestTabNext');
-    const submitButton = document.getElementById('requestTabSubmit');
     if (backButton) backButton.hidden = nextTab === '1';
     if (nextButton) nextButton.hidden = nextTab === '3';
-    if (submitButton) submitButton.hidden = nextTab !== '3';
 }
 
 function currentRequestTabIssues(tab) {
