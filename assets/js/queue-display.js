@@ -13,17 +13,14 @@
     const timeEl = root.querySelector('[data-queue-time]');
     const adsEl = root.querySelector('[data-queue-ads]');
     let soundEnabled = true;
-<<<<<<< HEAD
     let chimeId = 'bell';
     let chimeUrl = '';
     let chimeVolume = 1;
     let chimeAudio = null;
     let voicePref = { uri: '', name: '', lang: '' };
+    let speechVoiceUri = '';
     let primed = false;
     let announced = {};
-=======
-    let speechVoiceUri = '';
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
     let adsSignature = '';
     let adsIndex = 0;
     let adsTimer = null;
@@ -39,7 +36,6 @@
             .replace(/"/g, '&quot;');
     }
 
-<<<<<<< HEAD
     function requestorLabel(name, properCase) {
         const trimmed = String(name || '').trim();
         if (trimmed === '') return 'Walk-in';
@@ -86,15 +82,6 @@
         if (!soundEnabled || chimeId === 'none') {
             done(0);
             return;
-=======
-    function announceCall(called) {
-        if (!soundEnabled || !called) return;
-        if (window.QueueSpeech && typeof window.QueueSpeech.announce === 'function') {
-            window.QueueSpeech.announce(called, {
-                enabled: true,
-                voiceUri: speechVoiceUri
-            });
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
         }
         if (chimeUrl) {
             try {
@@ -215,15 +202,12 @@
     function render(state) {
         if (!state) return;
         soundEnabled = !!state.sound_enabled;
-<<<<<<< HEAD
         chimeId = state.chime || 'bell';
         chimeUrl = state.chime_url || '';
         const volume = Number(state.chime_volume);
         chimeVolume = Number.isFinite(volume) ? Math.max(0, Math.min(100, volume)) / 100 : 1;
         voicePref = state.voice || voicePref;
-=======
         speechVoiceUri = state.speech_voice ? String(state.speech_voice) : '';
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
         if (dateEl) dateEl.textContent = state.date_label || '';
         if (timeEl) timeEl.textContent = state.time_label || '';
 
@@ -265,7 +249,6 @@
         maybeAnnounce(state);
     }
 
-<<<<<<< HEAD
     function renderTicker(text) {
         const ticker = root.querySelector('[data-queue-ticker]');
         if (!ticker) return;
@@ -280,11 +263,6 @@
         if (track) {
             const seconds = Math.min(80, Math.max(18, Math.round(Math.max(1, next.length) * 0.28)));
             track.style.setProperty('--queue-ticker-duration', seconds + 's');
-=======
-        const calledId = state.last_called && state.last_called.id ? Number(state.last_called.id) : null;
-        if (calledId && lastCalledId !== null && calledId !== lastCalledId && state.last_called) {
-            announceCall(state.last_called);
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
         }
     }
 
@@ -338,7 +316,6 @@
         if (indexEl) indexEl.textContent = String(adsIndex + 1);
     }
 
-<<<<<<< Updated upstream
     function applyAdPresentation(ads) {
         const layouts = ['side', 'side-left', 'top', 'bottom'];
         const splits = ['equal', 'ads', 'queue'];
@@ -349,11 +326,9 @@
         layouts.forEach(function (name) { root.classList.remove('queue-ads-layout-' + name); });
         splits.forEach(function (name) { root.classList.remove('queue-ads-split-' + name); });
         fits.forEach(function (name) { root.classList.remove('queue-ads-fit-' + name); });
-<<<<<<< HEAD
         root.classList.add('queue-ads-layout-' + layout, 'queue-ads-split-' + split, 'queue-ads-fit-' + fit);
-=======
-        root.classList.add('queue-ads-layout-' + layout, 'queue-ads-fit-' + fit);
-=======
+    }
+
     function startAdsTimer(intervalSeconds, slideCount) {
         if (adsTimer) {
             clearInterval(adsTimer);
@@ -385,8 +360,6 @@
         root.classList.add('has-queue-ads');
         showAd(adsIndex);
         startAdsTimer(interval, slides.length);
->>>>>>> Stashed changes
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
     }
 
     function renderAds(ads) {
@@ -440,7 +413,6 @@
             .catch(function () { /* keep last frame */ });
     }
 
-<<<<<<< HEAD
     root.addEventListener('pointerdown', function () {
         try {
             const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -457,9 +429,7 @@
         window.speechSynthesis.getVoices();
     }
 
-=======
     bootstrapAdsFromDom();
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
     poll();
     setInterval(poll, 3000);
 })();

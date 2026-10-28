@@ -93,7 +93,6 @@ $adsFit = normalizeQueueAdFit($ads['fit'] ?? 'cover');
             </p>
         </aside>
     </div>
-<<<<<<< HEAD
     <?php $announcement = trim((string) ($state['announcement'] ?? '')); ?>
     <div class="queue-display-ticker" data-queue-ticker <?= $announcement === '' ? 'hidden' : '' ?>>
         <span class="queue-display-ticker-label">Announcement</span>
@@ -105,9 +104,6 @@ $adsFit = normalizeQueueAdFit($ads['fit'] ?? 'cover');
         </div>
     </div>
     <script src="<?= APP_URL ?>/assets/js/queue-chimes.js"></script>
-=======
-    <script src="<?= APP_URL ?>/assets/js/queue-speech.js"></script>
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
     <script src="<?= APP_URL ?>/assets/js/queue-display.js"></script>
 </body>
 </html>

@@ -97,15 +97,12 @@ function queueDefaultSettings(): array {
         'queue_pad' => '3',
         'queue_require_name' => '0',
         'queue_sound_enabled' => '1',
-<<<<<<< HEAD
         'queue_voice_uri' => '',
         'queue_voice_name' => '',
         'queue_voice_lang' => '',
         'queue_chime' => 'bell',
         'queue_chime_volume' => '100',
-=======
         'queue_speech_voice' => '',
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
         'queue_ads_enabled' => '1',
         'queue_ads_interval' => '8',
         'queue_ads_layout' => 'side',
@@ -545,15 +542,12 @@ function normalizeQueueVoiceChoice(string $uri, string $name, string $lang): arr
  *   pad:int,
  *   require_name:bool,
  *   sound_enabled:bool,
-<<<<<<< HEAD
  *   voice_uri:string,
  *   voice_name:string,
  *   voice_lang:string,
  *   chime:string,
  *   chime_volume:int,
-=======
  *   speech_voice:string,
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
  *   ads_enabled:bool,
  *   ads_interval:int,
  *   ads_layout:string,
@@ -578,15 +572,12 @@ function getQueueSettings(): array {
         'pad' => $pad,
         'require_name' => getAppSetting('queue_require_name', '0') === '1',
         'sound_enabled' => getAppSetting('queue_sound_enabled', '1') === '1',
-<<<<<<< HEAD
         'voice_uri' => trim(getAppSetting('queue_voice_uri', '')),
         'voice_name' => trim(getAppSetting('queue_voice_name', '')),
         'voice_lang' => trim(getAppSetting('queue_voice_lang', '')),
         'chime' => normalizeQueueChime(getAppSetting('queue_chime', 'bell')),
         'chime_volume' => normalizeQueueChimeVolume(getAppSetting('queue_chime_volume', '100')),
-=======
         'speech_voice' => trim(getAppSetting('queue_speech_voice', '')),
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
         'ads_enabled' => getAppSetting('queue_ads_enabled', '1') === '1',
         'ads_interval' => $interval,
         'ads_layout' => normalizeQueueAdLayout(getAppSetting('queue_ads_layout', 'side')),
@@ -805,18 +796,17 @@ function saveQueueSettingsFromPost(array $input): array {
 
     $requireName = !empty($input['queue_require_name']) ? '1' : '0';
     $sound = !empty($input['queue_sound_enabled']) ? '1' : '0';
-<<<<<<< HEAD
     $voice = normalizeQueueVoiceChoice(
         (string) ($input['queue_voice_uri'] ?? ''),
         (string) ($input['queue_voice_name'] ?? ''),
         (string) ($input['queue_voice_lang'] ?? '')
     );
-=======
-    $speechVoice = trim((string) ($input['queue_speech_voice'] ?? ''));
+    $speechVoice = array_key_exists('queue_speech_voice', $input)
+        ? trim((string) $input['queue_speech_voice'])
+        : trim(getAppSetting('queue_speech_voice', ''));
     if (strlen($speechVoice) > 255) {
         $speechVoice = substr($speechVoice, 0, 255);
     }
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
 
     setAppSetting('queue_enabled', $enabled);
     setAppSetting('queue_window_count', (string) $count);
@@ -824,16 +814,13 @@ function saveQueueSettingsFromPost(array $input): array {
     setAppSetting('queue_pad', (string) $pad);
     setAppSetting('queue_require_name', $requireName);
     setAppSetting('queue_sound_enabled', $sound);
-<<<<<<< HEAD
     setAppSetting('queue_voice_uri', $voice['uri']);
     setAppSetting('queue_voice_name', $voice['name']);
     setAppSetting('queue_voice_lang', $voice['lang']);
     setAppSetting('queue_chime', normalizeQueueChime((string) ($input['queue_chime'] ?? 'bell')));
     setAppSetting('queue_chime_volume', (string) normalizeQueueChimeVolume($input['queue_chime_volume'] ?? 100));
-    $errors = array_merge($errors, saveQueueAnnouncement((string) ($input['queue_announcement'] ?? '')));
-=======
     setAppSetting('queue_speech_voice', $speechVoice);
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
+    $errors = array_merge($errors, saveQueueAnnouncement((string) ($input['queue_announcement'] ?? '')));
 
     syncQueueWindows($count);
 
@@ -1427,7 +1414,6 @@ function getQueueDisplayState(): array {
     return [
         'enabled' => $settings['enabled'],
         'sound_enabled' => $settings['sound_enabled'],
-<<<<<<< HEAD
         'voice' => [
             'uri' => (string) $settings['voice_uri'],
             'name' => (string) $settings['voice_name'],
@@ -1436,9 +1422,7 @@ function getQueueDisplayState(): array {
         'chime' => (string) $settings['chime'],
         'chime_url' => queueChimePlaybackUrl((string) $settings['chime']),
         'chime_volume' => (int) $settings['chime_volume'],
-=======
-        'speech_voice' => $settings['speech_voice'],
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
+        'speech_voice' => (string) $settings['speech_voice'],
         'date' => queueToday(),
         'date_label' => date('F j, Y'),
         'time_label' => date('g:i A'),
@@ -1454,10 +1438,7 @@ function getQueueDisplayState(): array {
             'id' => (int) $lastCalled['id'],
             'ticket_code' => (string) $lastCalled['ticket_code'],
             'requestor_name' => trim((string) ($lastCalled['requestor_name'] ?? '')),
-<<<<<<< HEAD
-=======
             'window_number' => (int) ($lastCalled['window_number'] ?? 0),
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
             'window' => (string) ($lastCalled['window_label'] ?? ''),
             'called_at' => (string) ($lastCalled['called_at'] ?? ''),
         ] : null,

@@ -169,7 +169,6 @@ require_once __DIR__ . '/../includes/header.php';
                     Require requestor name on the Get Number page
                 </label>
             </div>
-<<<<<<< HEAD
             <div class="span-2 queue-voice-settings" id="queue-voice-settings"
                  data-voice-uri="<?= e($settings['voice_uri']) ?>"
                  data-voice-name="<?= e($settings['voice_name']) ?>"
@@ -273,24 +272,6 @@ require_once __DIR__ . '/../includes/header.php';
                     <textarea id="queue_announcement" name="queue_announcement" maxlength="280" rows="2" placeholder="Example: Office hours today are 8:00 AM to 5:00 PM. Please have your claim stub ready."><?= e($settings['announcement']) ?></textarea>
                     <small class="text-muted">Up to 280 characters. Saving applies it on the public monitor within a few seconds.</small>
                 </div>
-=======
-            <div class="form-group">
-                <label class="checkbox-label">
-                    <input type="checkbox" name="queue_sound_enabled" value="1" <?= $settings['sound_enabled'] ? 'checked' : '' ?>>
-                    Speak queue announcements on the display board when a new number is called
-                </label>
-                <small class="text-muted">Example: “Now serving Maria Santos at window 2.” Uses the browser’s built-in speech on the display device.</small>
-            </div>
-            <div class="form-group">
-                <label for="queue_speech_voice">Announcement voice</label>
-                <select id="queue_speech_voice" name="queue_speech_voice" data-saved-voice="<?= e($settings['speech_voice']) ?>">
-                    <option value="">System default (English when available)</option>
-                </select>
-                <small class="text-muted">Voices depend on the display board computer’s browser and operating system. Open this page on that device to see the same list, or pick a voice here and adjust if needed.</small>
-                <button type="button" class="btn btn-outline btn-sm" id="queue_speech_voice_test" style="margin-top:.5rem">
-                    <i class="fas fa-volume-up"></i> Test voice
-                </button>
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
             </div>
 
             <div class="span-2">
@@ -353,7 +334,6 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
 </div>
 
-<<<<<<< HEAD
 <?php foreach ($chimeUploads as $upload): ?>
     <form id="delete-chime-<?= (int) $upload['id'] ?>" method="POST">
         <?= csrfField() ?>
@@ -363,38 +343,4 @@ require_once __DIR__ . '/../includes/header.php';
 <?php endforeach; ?>
 <script src="<?= APP_URL ?>/assets/js/queue-chimes.js"></script>
 <script src="<?= APP_URL ?>/assets/js/queue-voice-settings.js"></script>
-=======
-<script src="<?= APP_URL ?>/assets/js/queue-speech.js"></script>
-<script>
-(function () {
-    var select = document.getElementById('queue_speech_voice');
-    var testBtn = document.getElementById('queue_speech_voice_test');
-    if (!select || !window.QueueSpeech) return;
-
-    var saved = select.getAttribute('data-saved-voice') || '';
-
-    function fillVoices() {
-        QueueSpeech.populateVoiceSelect(select, saved);
-    }
-
-    fillVoices();
-    if (window.speechSynthesis) {
-        window.speechSynthesis.addEventListener('voiceschanged', fillVoices);
-    }
-
-    if (testBtn) {
-        testBtn.addEventListener('click', function () {
-            QueueSpeech.announce({
-                requestor_name: 'Sample Requestor',
-                ticket_code: '001',
-                window_number: 1
-            }, {
-                enabled: true,
-                voiceUri: select.value || ''
-            });
-        });
-    }
-})();
-</script>
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

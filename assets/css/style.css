@@ -9460,7 +9460,6 @@ body.grades-missing-paste-open {
     grid-template-rows: minmax(0, 1fr) minmax(180px, 34vh);
     grid-template-areas: "board" "ads";
 }
-<<<<<<< HEAD
 .queue-display-page.has-queue-ads.queue-ads-layout-side.queue-ads-split-ads .queue-display-split {
     grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
 }
@@ -9491,11 +9490,6 @@ body.grades-missing-paste-open {
 }
 .queue-display-page.has-queue-ads.queue-ads-split-ads .queue-display-number {
     font-size: clamp(1.8rem, 4vw, 3.2rem);
-=======
-.queue-display-page.has-queue-ads .queue-display-ads {
-    min-height: min(70vh, 720px);
-    align-self: stretch;
->>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
 }
 .queue-display-board {
     grid-area: board;
