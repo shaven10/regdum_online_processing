@@ -76,15 +76,16 @@ require_once __DIR__ . '/../includes/header.php';
             <div class="alert alert-error"><?= e($errors['general']) ?></div>
         <?php endif; ?>
 
+        <p class="auth-student-info-link">
+            <button type="button" class="link-button" data-open-login-instructions>
+                <i class="fas fa-circle-info"></i> Login instructions
+            </button>
+        </p>
+
         <form method="POST" class="auth-form">
             <?= csrfField() ?>
             <input type="hidden" name="login_mode" value="<?= e($mode) ?>">
             <?php if ($mode === 'student'): ?>
-                <p class="auth-student-info-link">
-                    <button type="button" class="link-button" data-open-student-login-info>
-                        <i class="fas fa-circle-info"></i> Default login credentials
-                    </button>
-                </p>
                 <div class="form-group">
                     <label for="identifier"><i class="fas fa-id-card"></i> Student ID Number</label>
                     <input type="text" id="identifier" name="identifier" value="<?= e($_POST['identifier'] ?? '') ?>" placeholder="808401000XXXXX" required autofocus autocomplete="username">
@@ -128,38 +129,75 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
 </div>
 
-<?php if ($mode === 'student'): ?>
-<div class="admin-form-modal auth-student-info-modal" id="studentLoginInfoModal" aria-hidden="true">
-    <div class="admin-form-modal-overlay" data-close-student-login-info></div>
-    <div class="admin-form-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="studentLoginInfoTitle">
+<div class="admin-form-modal auth-instructions-modal" id="loginInstructionsModal" aria-hidden="true" data-default-tab="<?= $mode === 'student' ? 'active' : 'alumni' ?>">
+    <div class="admin-form-modal-overlay" data-close-login-instructions></div>
+    <div class="admin-form-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="loginInstructionsTitle">
         <div class="admin-form-modal-header">
             <div>
-                <span class="admin-form-modal-eyebrow">Student ID login</span>
-                <h2 class="admin-form-modal-title" id="studentLoginInfoTitle">Default login credentials</h2>
+                <span class="admin-form-modal-eyebrow">Before you sign in</span>
+                <h2 class="admin-form-modal-title" id="loginInstructionsTitle">Login instructions</h2>
             </div>
-            <button type="button" class="admin-form-modal-close" data-close-student-login-info aria-label="Close">
+            <button type="button" class="admin-form-modal-close" data-close-login-instructions aria-label="Close">
                 <i class="fas fa-times"></i>
             </button>
         </div>
         <div class="admin-form-modal-body">
-            <p>For officially enrolled students on the active list, the default login credentials are:</p>
-            <ul class="auth-student-info-list">
-                <li><strong>Student ID Number</strong> — use this as your username</li>
-                <li><strong>Password</strong> — use the same Student ID Number on first sign-in</li>
-            </ul>
-            <p class="text-muted" style="margin:0">Example format: <code>808401000XXXXX</code></p>
+            <div class="auth-instructions-tabs" role="tablist" aria-label="Client instructions">
+                <button type="button" class="auth-instructions-tab is-active" role="tab" id="loginInstructionsTabActive" data-instruction-tab="active" aria-selected="true" aria-controls="loginInstructionsActive">Active clients</button>
+                <button type="button" class="auth-instructions-tab" role="tab" id="loginInstructionsTabAlumni" data-instruction-tab="alumni" aria-selected="false" aria-controls="loginInstructionsAlumni">Inactive / Graduate</button>
+            </div>
+
+            <div class="auth-instructions-panel" id="loginInstructionsActive" role="tabpanel" aria-labelledby="loginInstructionsTabActive" data-instruction-panel="active">
+                <p>Use this if you are officially enrolled this semester and your Student ID is on the active enrollment list.</p>
+                <ol class="auth-student-info-list">
+                    <li>Open the <strong>Student ID</strong> tab on this page.</li>
+                    <li>Enter your <strong>Student ID Number</strong> as the username.</li>
+                    <li>On first sign-in, the password is the same <strong>Student ID Number</strong>.</li>
+                    <li>Read and accept the Data Privacy Consent, then choose <strong>Sign In</strong>.</li>
+                    <li>Complete your profile if the system asks for it, then submit your document request.</li>
+                </ol>
+                <p class="text-muted">Example Student ID: <code>808401000XXXXX</code>. If that ID is not on the active list, follow the Inactive / Graduate instructions or contact the registrar office.</p>
+            </div>
+
+            <div class="auth-instructions-panel" id="loginInstructionsAlumni" role="tabpanel" aria-labelledby="loginInstructionsTabAlumni" data-instruction-panel="alumni" hidden>
+                <p>Use this if you have already graduated, or if you are no longer enrolled. Student ID login is only for the active enrollment list.</p>
+                <ol class="auth-student-info-list">
+                    <li>Choose <strong>Register here</strong> and create an account with your name, Student ID, email, and your own password.</li>
+                    <li>Return to this page and stay on the <strong>Email</strong> tab.</li>
+                    <li>Sign in with the email and password you registered.</li>
+                    <li>Open your profile and set your status to <strong>Graduated</strong> or <strong>Inactive</strong>.</li>
+                    <li>Graduates enter the course, year graduated, and origin campus. Inactive clients enter the last course, last school year enrolled, and origin campus.</li>
+                    <li>After the profile is complete, submit your document request.</li>
+                </ol>
+                <p class="text-muted">Student ID sign-in will say the ID was not found if you are not on the current active list.</p>
+            </div>
         </div>
         <div class="admin-form-modal-footer">
-            <button type="button" class="btn btn-primary" data-close-student-login-info>I understand</button>
+            <button type="button" class="btn btn-primary" data-close-login-instructions>I understand</button>
         </div>
     </div>
 </div>
 <script>
 (function () {
-    var modal = document.getElementById('studentLoginInfoModal');
+    var modal = document.getElementById('loginInstructionsModal');
     if (!modal) return;
 
+    var storageKey = 'regdum-login-instructions-seen';
+    var defaultTab = modal.getAttribute('data-default-tab') === 'active' ? 'active' : 'alumni';
+
+    function showTab(name) {
+        modal.querySelectorAll('[data-instruction-tab]').forEach(function (tab) {
+            var selected = tab.getAttribute('data-instruction-tab') === name;
+            tab.classList.toggle('is-active', selected);
+            tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+        });
+        modal.querySelectorAll('[data-instruction-panel]').forEach(function (panel) {
+            panel.hidden = panel.getAttribute('data-instruction-panel') !== name;
+        });
+    }
+
     function openModal() {
+        showTab(defaultTab);
         modal.classList.add('is-open');
         modal.setAttribute('aria-hidden', 'false');
     }
@@ -167,12 +205,18 @@ require_once __DIR__ . '/../includes/header.php';
     function closeModal() {
         modal.classList.remove('is-open');
         modal.setAttribute('aria-hidden', 'true');
+        try { sessionStorage.setItem(storageKey, '1'); } catch (err) { /* ignore */ }
     }
 
-    document.querySelectorAll('[data-open-student-login-info]').forEach(function (el) {
+    document.querySelectorAll('[data-open-login-instructions]').forEach(function (el) {
         el.addEventListener('click', openModal);
     });
-    modal.querySelectorAll('[data-close-student-login-info]').forEach(function (el) {
+    modal.querySelectorAll('[data-instruction-tab]').forEach(function (tab) {
+        tab.addEventListener('click', function () {
+            showTab(tab.getAttribute('data-instruction-tab'));
+        });
+    });
+    modal.querySelectorAll('[data-close-login-instructions]').forEach(function (el) {
         el.addEventListener('click', closeModal);
     });
     document.addEventListener('keydown', function (event) {
@@ -181,9 +225,13 @@ require_once __DIR__ . '/../includes/header.php';
         }
     });
 
-    openModal();
+    var hasError = <?= !empty($errors['general']) ? 'true' : 'false' ?>;
+    var seen = false;
+    try { seen = sessionStorage.getItem(storageKey) === '1'; } catch (err) { seen = false; }
+    if (!hasError && !seen) {
+        openModal();
+    }
 })();
 </script>
-<?php endif; ?>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>
