@@ -7,9 +7,10 @@ require_once __DIR__ . '/../includes/theme.php';
 
 ensureQueueSchema();
 $state = getQueueDisplayState();
-$ads = $state['ads'] ?? ['enabled' => false, 'interval_seconds' => 8, 'layout' => 'side', 'fit' => 'cover', 'images' => []];
+$ads = $state['ads'] ?? ['enabled' => false, 'interval_seconds' => 8, 'layout' => 'side', 'split' => 'equal', 'fit' => 'cover', 'images' => []];
 $adsVisible = !empty($ads['enabled']) && ($ads['images'] ?? []) !== [];
 $adsLayout = normalizeQueueAdLayout($ads['layout'] ?? 'side');
+$adsSplit = normalizeQueueAdSplit($ads['split'] ?? 'equal');
 $adsFit = normalizeQueueAdFit($ads['fit'] ?? 'cover');
 ?>
 <!DOCTYPE html>
@@ -26,7 +27,7 @@ $adsFit = normalizeQueueAdFit($ads['fit'] ?? 'cover');
     <?php renderThemeStyleTag(); ?>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
-<body class="queue-display-page queue-ads-layout-<?= e($adsLayout) ?> queue-ads-fit-<?= e($adsFit) ?><?= $adsVisible ? ' has-queue-ads' : '' ?>" data-queue-status-url="<?= e(queueStatusUrl()) ?>">
+<body class="queue-display-page queue-ads-layout-<?= e($adsLayout) ?> queue-ads-split-<?= e($adsSplit) ?> queue-ads-fit-<?= e($adsFit) ?><?= $adsVisible ? ' has-queue-ads' : '' ?>" data-queue-status-url="<?= e(queueStatusUrl()) ?>">
     <header class="queue-display-top">
         <div class="queue-display-brand">
             <?= renderAppLogo('nav') ?>
@@ -50,6 +51,11 @@ $adsFit = normalizeQueueAdFit($ads['fit'] ?? 'cover');
                             <p class="queue-display-window-name"><?= e((string) $window['name']) ?></p>
                             <p class="queue-display-now-label">Now Serving</p>
                             <p class="queue-display-number"><?= e((string) ($window['ticket_code'] ?: '---')) ?></p>
+                            <?php if (!empty($window['ticket_code'])): ?>
+                                <p class="queue-display-field-label">Client</p>
+                                <p class="queue-display-requestor"><?= e(queueRequestorProperName($window['requestor_name'] ?? '')) ?></p>
+                            <?php endif; ?>
+                            <p class="queue-display-field-label">Window teller</p>
                             <p class="queue-display-staff"><?= e((string) ($window['staff'] !== '' ? $window['staff'] : 'Window open')) ?></p>
                         </article>
                     <?php endforeach; ?>
@@ -62,8 +68,12 @@ $adsFit = normalizeQueueAdFit($ads['fit'] ?? 'cover');
                         <?php if ($state['waiting'] === []): ?>
                             <li class="is-empty">No one waiting</li>
                         <?php else: ?>
-                            <?php foreach ($state['waiting'] as $ticket): ?>
-                                <li><strong><?= e((string) $ticket['ticket_code']) ?></strong> <?= e((string) $ticket['service_label']) ?></li>
+                            <?php foreach ($state['waiting'] as $index => $ticket): ?>
+                                <li<?= $index === 0 ? ' class="is-next"' : '' ?>>
+                                    <span class="queue-display-waiting-number"><?= e((string) $ticket['ticket_code']) ?></span>
+                                    <span class="queue-display-waiting-kicker">Client</span>
+                                    <span class="queue-display-waiting-name"><?= e(queueRequestorProperName($ticket['requestor_name'] ?? '')) ?></span>
+                                </li>
                             <?php endforeach; ?>
                         <?php endif; ?>
                     </ol>
@@ -83,6 +93,21 @@ $adsFit = normalizeQueueAdFit($ads['fit'] ?? 'cover');
             </p>
         </aside>
     </div>
+<<<<<<< HEAD
+    <?php $announcement = trim((string) ($state['announcement'] ?? '')); ?>
+    <div class="queue-display-ticker" data-queue-ticker <?= $announcement === '' ? 'hidden' : '' ?>>
+        <span class="queue-display-ticker-label">Announcement</span>
+        <div class="queue-display-ticker-viewport">
+            <div class="queue-display-ticker-track" data-queue-ticker-track style="--queue-ticker-duration: <?= max(18, min(80, (int) round(max(1, mb_strlen($announcement)) * 0.28))) ?>s">
+                <span data-queue-ticker-text><?= e($announcement) ?></span>
+                <span data-queue-ticker-text aria-hidden="true"><?= e($announcement) ?></span>
+            </div>
+        </div>
+    </div>
+    <script src="<?= APP_URL ?>/assets/js/queue-chimes.js"></script>
+=======
+    <script src="<?= APP_URL ?>/assets/js/queue-speech.js"></script>
+>>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
     <script src="<?= APP_URL ?>/assets/js/queue-display.js"></script>
 </body>
 </html>

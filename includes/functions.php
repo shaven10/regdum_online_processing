@@ -34,6 +34,26 @@ function e(?string $str): string {
     return htmlspecialchars($str ?? '', ENT_QUOTES, 'UTF-8');
 }
 
+/** Web path prefix for this install (e.g. /regdum_online_processing), no trailing slash. */
+function appBasePath(): string {
+    if (!defined('APP_URL')) {
+        return '';
+    }
+    $path = parse_url(APP_URL, PHP_URL_PATH);
+    if (!is_string($path) || $path === '' || $path === '/') {
+        return '';
+    }
+
+    return rtrim($path, '/');
+}
+
+/** App-relative URL path; resolves against whatever host opens the page. */
+function appUrlPath(string $path = ''): string {
+    $path = '/' . ltrim($path, '/');
+
+    return appBasePath() . $path;
+}
+
 function appTimezone(): string {
     return defined('APP_TIMEZONE') ? APP_TIMEZONE : 'Asia/Manila';
 }

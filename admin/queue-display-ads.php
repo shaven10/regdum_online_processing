@@ -32,6 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
         'enabled' => !empty($_POST['queue_ads_enabled']),
         'interval' => (int) ($_POST['queue_ads_interval'] ?? 8),
         'layout' => (string) ($_POST['queue_ads_layout'] ?? 'side'),
+        'split' => (string) ($_POST['queue_ads_split'] ?? 'equal'),
         'fit' => (string) ($_POST['queue_ads_fit'] ?? 'cover'),
     ]);
 
@@ -115,6 +116,15 @@ require_once __DIR__ . '/../includes/header.php';
                     <small class="text-muted">Where the slideshow sits next to the now-serving queue.</small>
                 </div>
                 <div class="form-group">
+                    <label for="queue_ads_split">Screen division</label>
+                    <select id="queue_ads_split" name="queue_ads_split" required>
+                        <?php foreach (queueAdSplitOptions() as $value => $label): ?>
+                            <option value="<?= e($value) ?>" <?= ($settings['ads_split'] ?? 'equal') === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <small class="text-muted">How the advertisement area and the queue share the public monitor.</small>
+                </div>
+                <div class="form-group">
                     <label for="queue_ads_fit">Display fit</label>
                     <select id="queue_ads_fit" name="queue_ads_fit" required>
                         <?php foreach (queueAdFitOptions() as $value => $label): ?>
@@ -126,7 +136,7 @@ require_once __DIR__ . '/../includes/header.php';
             </div>
 
             <?php $previewImage = $ads[0]['url'] ?? ''; ?>
-            <div class="queue-ad-preview queue-ads-layout-<?= e($settings['ads_layout']) ?> queue-ads-fit-<?= e($settings['ads_fit']) ?>" id="queueAdPreview" data-preview-image="<?= e($previewImage) ?>">
+            <div class="queue-ad-preview queue-ads-layout-<?= e($settings['ads_layout']) ?> queue-ads-split-<?= e($settings['ads_split'] ?? 'equal') ?> queue-ads-fit-<?= e($settings['ads_fit']) ?>" id="queueAdPreview" data-preview-image="<?= e($previewImage) ?>">
                 <div class="queue-ad-preview-board">Queue</div>
                 <div class="queue-ad-preview-ads">
                     <?php if ($previewImage !== ''): ?>
@@ -145,6 +155,17 @@ require_once __DIR__ . '/../includes/header.php';
         </form>
 
         <h3 class="queue-settings-subtitle">Slideshow order</h3>
+        <?php
+        $missingAdFiles = array_filter($ads, static fn(array $ad): bool => !empty($ad['file_missing']));
+        ?>
+        <?php if ($missingAdFiles !== []): ?>
+            <div class="alert alert-warning">
+                <?= count($missingAdFiles) ?> advertisement image<?= count($missingAdFiles) === 1 ? '' : 's' ?>
+                <?= count($missingAdFiles) === 1 ? 'is' : 'are' ?> missing from the server upload folder and will not appear on the display board.
+                Remove them below and upload again.
+            </div>
+        <?php endif; ?>
+
         <?php if ($ads === []): ?>
             <div class="empty-state">
                 <i class="fas fa-image"></i>
@@ -153,12 +174,15 @@ require_once __DIR__ . '/../includes/header.php';
         <?php else: ?>
             <div class="queue-ad-grid queue-ads-fit-<?= e($settings['ads_fit']) ?>" id="queueAdGrid">
                 <?php foreach ($ads as $index => $ad): ?>
-                    <article class="queue-ad-card">
+                    <article class="queue-ad-card<?= !empty($ad['file_missing']) ? ' is-missing-file' : '' ?>">
                         <img src="<?= e((string) $ad['url']) ?>" alt="<?= e((string) ($ad['original_name'] ?: 'Advertisement')) ?>">
                         <div class="queue-ad-card-body">
                             <p>
                                 <strong><?= $index + 1 ?></strong>
                                 <br><small class="text-muted"><?= e((string) ($ad['original_name'] ?: 'Image')) ?></small>
+                                <?php if (!empty($ad['file_missing'])): ?>
+                                    <br><span class="badge badge-rejected">File missing — re-upload</span>
+                                <?php endif; ?>
                             </p>
                             <div class="queue-ad-card-actions">
                                 <form method="POST">
@@ -199,10 +223,12 @@ require_once __DIR__ . '/../includes/header.php';
 <script>
 (function () {
     const layout = document.getElementById('queue_ads_layout');
+    const split = document.getElementById('queue_ads_split');
     const fit = document.getElementById('queue_ads_fit');
     const preview = document.getElementById('queueAdPreview');
     const grid = document.getElementById('queueAdGrid');
     const layouts = ['side', 'side-left', 'top', 'bottom'];
+    const splits = ['equal', 'ads', 'queue'];
     const fits = ['cover', 'contain', 'fill'];
 
     function applyClass(el, prefix, value, allowed) {
@@ -213,11 +239,13 @@ require_once __DIR__ . '/../includes/header.php';
 
     function syncPreview() {
         applyClass(preview, 'queue-ads-layout-', layout ? layout.value : 'side', layouts);
+        applyClass(preview, 'queue-ads-split-', split ? split.value : 'equal', splits);
         applyClass(preview, 'queue-ads-fit-', fit ? fit.value : 'cover', fits);
         applyClass(grid, 'queue-ads-fit-', fit ? fit.value : 'cover', fits);
     }
 
     layout?.addEventListener('change', syncPreview);
+    split?.addEventListener('change', syncPreview);
     fit?.addEventListener('change', syncPreview);
 })();
 </script>

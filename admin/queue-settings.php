@@ -11,6 +11,16 @@ $settings = getQueueSettings();
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     $action = (string) ($_POST['action'] ?? 'save');
 
+    if ($action === 'delete_chime') {
+        $chimeId = (int) ($_POST['chime_id'] ?? 0);
+        $deleted = deleteQueueChimeUpload($chimeId);
+        auditLog('delete_queue_chime', 'queue_chime_uploads', $chimeId > 0 ? $chimeId : null);
+        setFlash($deleted ? 'success' : 'error', $deleted ? 'Uploaded chime removed.' : 'That chime was not found.', [
+            'title' => $deleted ? 'Chime Removed' : 'Could Not Remove',
+        ]);
+        redirect(APP_URL . '/admin/queue-settings.php');
+    }
+
     if ($action === 'close_waiting') {
         $closed = cancelRemainingWaitingTickets();
         auditLog('queue_close_waiting', 'queue_tickets', null, null, [
@@ -24,12 +34,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     }
 
     $previous = $settings;
+    $uploaded = [];
     $errors = saveQueueSettingsFromPost($_POST);
+    if (isset($_FILES['chime_audio'])) {
+        $uploaded = storeQueueChimeUpload($_FILES['chime_audio']);
+        if (!empty($uploaded['error'])) {
+            $errors[] = (string) $uploaded['error'];
+        } elseif (!empty($uploaded['id'])) {
+            setAppSetting('queue_chime', 'file-' . (int) $uploaded['id']);
+            auditLog('upload_queue_chime', 'queue_chime_uploads', (int) $uploaded['id']);
+        }
+    }
     $settings = getQueueSettings();
     auditLog('update_queue_settings', 'app_settings', null, $previous, $settings);
 
     if ($errors === []) {
-        setFlash('success', 'Queuing parameters and window assignments saved.', [
+        $savedMessage = !empty($uploaded['id'])
+            ? 'Queuing parameters saved. The uploaded clip is now the chime.'
+            : 'Queuing parameters and window assignments saved.';
+        setFlash('success', $savedMessage, [
             'title' => 'Queue Settings Saved',
             'context' => [
                 'Windows' => (string) $settings['window_count'],
@@ -40,6 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verifyCsrf()) {
     }
 }
 
+$chimeUploads = getQueueChimeUploads();
 $windows = getQueueWindows(true);
 $staff = getQueueAssignableStaff();
 $display = getQueueDisplayState();
@@ -103,7 +127,7 @@ require_once __DIR__ . '/../includes/header.php';
             </div>
         </div>
 
-        <form method="POST" class="form-grid">
+        <form method="POST" enctype="multipart/form-data" class="form-grid">
             <?= csrfField() ?>
             <input type="hidden" name="action" value="save">
 
@@ -145,11 +169,128 @@ require_once __DIR__ . '/../includes/header.php';
                     Require requestor name on the Get Number page
                 </label>
             </div>
+<<<<<<< HEAD
+            <div class="span-2 queue-voice-settings" id="queue-voice-settings"
+                 data-voice-uri="<?= e($settings['voice_uri']) ?>"
+                 data-voice-name="<?= e($settings['voice_name']) ?>"
+                 data-voice-lang="<?= e($settings['voice_lang']) ?>">
+                <h3 class="queue-settings-subtitle">Voice announcements</h3>
+                <p class="text-muted">Turn announcements on here and choose the voice the queue monitor uses when a number is called.</p>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="queue_sound_enabled" name="queue_sound_enabled" value="1" <?= $settings['sound_enabled'] ? 'checked' : '' ?>>
+                        Announce the number and requestor name when a number is called
+                    </label>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="queue_voice_uri">Voice</label>
+                        <select id="queue_voice_uri" name="queue_voice_uri">
+                            <option value="">Default English voice</option>
+                        </select>
+                        <small class="text-muted" id="queue-voice-note">Voices listed here are installed on this computer. Save the settings so the queue monitor uses the same voice when it is available there.</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="queue-voice-enable">Try the selected voice</label>
+                        <div>
+                            <button type="button" class="btn btn-outline" id="queue-voice-enable">
+                                <i class="fas fa-volume-up"></i> Enable voice
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="queue_chime">Chime sound</label>
+                        <select id="queue_chime" name="queue_chime">
+                            <optgroup label="Built-in">
+                                <?php foreach (queueChimeOptions() as $chimeId => $chimeLabel): ?>
+                                    <option value="<?= e($chimeId) ?>" <?= $settings['chime'] === $chimeId ? 'selected' : '' ?>>
+                                        <?= e($chimeLabel) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </optgroup>
+                            <?php if ($chimeUploads !== []): ?>
+                                <optgroup label="Uploaded">
+                                    <?php foreach ($chimeUploads as $upload): ?>
+                                        <?php $uploadValue = 'file-' . (int) $upload['id']; ?>
+                                        <option value="<?= e($uploadValue) ?>" data-url="<?= e((string) $upload['url']) ?>" <?= $settings['chime'] === $uploadValue ? 'selected' : '' ?>>
+                                            <?= e((string) $upload['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </optgroup>
+                            <?php endif; ?>
+                        </select>
+                        <small class="text-muted">Played on the queue monitor before the spoken number and name.</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="queue-chime-preview">Hear the chime</label>
+                        <div>
+                            <button type="button" class="btn btn-outline" id="queue-chime-preview">
+                                <i class="fas fa-bell"></i> Play chime
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label id="queue-chime-volume-heading">Chime volume</label>
+                        <div class="queue-chime-volume">
+                            <button type="button" class="btn btn-outline" id="queue-chime-volume-down" aria-label="Volume down">
+                                <i class="fas fa-volume-down"></i> Down
+                            </button>
+                            <strong id="queue-chime-volume-label" aria-live="polite"><?= (int) $settings['chime_volume'] ?>%</strong>
+                            <button type="button" class="btn btn-outline" id="queue-chime-volume-up" aria-label="Volume up">
+                                <i class="fas fa-volume-up"></i> Up
+                            </button>
+                        </div>
+                        <input type="hidden" name="queue_chime_volume" id="queue_chime_volume" value="<?= (int) $settings['chime_volume'] ?>">
+                        <small class="text-muted">Each step changes the chime by 10%. Save so the monitor uses this level.</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="chime_audio">Upload a short chime</label>
+                        <input type="file" id="chime_audio" name="chime_audio" accept="audio/mpeg,audio/wav,.mp3,.wav">
+                        <small class="text-muted">MP3 or WAV, up to 15 seconds and 2 MB. Saving with a file makes that clip the chime.</small>
+                    </div>
+                </div>
+                <?php if ($chimeUploads !== []): ?>
+                    <ul class="queue-chime-uploads">
+                        <?php foreach ($chimeUploads as $upload): ?>
+                            <li>
+                                <span><?= e((string) $upload['name']) ?> <span class="text-muted">(<?= e(rtrim(rtrim(number_format((float) $upload['duration_seconds'], 1), '0'), '.')) ?>s)</span></span>
+                                <button type="submit" class="btn btn-sm btn-outline" form="delete-chime-<?= (int) $upload['id'] ?>" onclick="return confirm('Remove this uploaded chime?');">Remove</button>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+                <input type="hidden" name="queue_voice_name" id="queue_voice_name" value="<?= e($settings['voice_name']) ?>">
+                <input type="hidden" name="queue_voice_lang" id="queue_voice_lang" value="<?= e($settings['voice_lang']) ?>">
+            </div>
+
+            <div class="span-2">
+                <h3 class="queue-settings-subtitle">Moving announcement</h3>
+                <p class="text-muted">This line scrolls along the bottom of the public monitor. Leave it blank to hide the announcement. Registrar staff can also change it from the Queue Monitor.</p>
+                <div class="form-group">
+                    <label for="queue_announcement">Announcement text</label>
+                    <textarea id="queue_announcement" name="queue_announcement" maxlength="280" rows="2" placeholder="Example: Office hours today are 8:00 AM to 5:00 PM. Please have your claim stub ready."><?= e($settings['announcement']) ?></textarea>
+                    <small class="text-muted">Up to 280 characters. Saving applies it on the public monitor within a few seconds.</small>
+                </div>
+=======
             <div class="form-group">
                 <label class="checkbox-label">
                     <input type="checkbox" name="queue_sound_enabled" value="1" <?= $settings['sound_enabled'] ? 'checked' : '' ?>>
-                    Play a chime on the display board when a new number is called
+                    Speak queue announcements on the display board when a new number is called
                 </label>
+                <small class="text-muted">Example: “Now serving Maria Santos at window 2.” Uses the browser’s built-in speech on the display device.</small>
+            </div>
+            <div class="form-group">
+                <label for="queue_speech_voice">Announcement voice</label>
+                <select id="queue_speech_voice" name="queue_speech_voice" data-saved-voice="<?= e($settings['speech_voice']) ?>">
+                    <option value="">System default (English when available)</option>
+                </select>
+                <small class="text-muted">Voices depend on the display board computer’s browser and operating system. Open this page on that device to see the same list, or pick a voice here and adjust if needed.</small>
+                <button type="button" class="btn btn-outline btn-sm" id="queue_speech_voice_test" style="margin-top:.5rem">
+                    <i class="fas fa-volume-up"></i> Test voice
+                </button>
+>>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
             </div>
 
             <div class="span-2">
@@ -212,4 +353,48 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
 </div>
 
+<<<<<<< HEAD
+<?php foreach ($chimeUploads as $upload): ?>
+    <form id="delete-chime-<?= (int) $upload['id'] ?>" method="POST">
+        <?= csrfField() ?>
+        <input type="hidden" name="action" value="delete_chime">
+        <input type="hidden" name="chime_id" value="<?= (int) $upload['id'] ?>">
+    </form>
+<?php endforeach; ?>
+<script src="<?= APP_URL ?>/assets/js/queue-chimes.js"></script>
+<script src="<?= APP_URL ?>/assets/js/queue-voice-settings.js"></script>
+=======
+<script src="<?= APP_URL ?>/assets/js/queue-speech.js"></script>
+<script>
+(function () {
+    var select = document.getElementById('queue_speech_voice');
+    var testBtn = document.getElementById('queue_speech_voice_test');
+    if (!select || !window.QueueSpeech) return;
+
+    var saved = select.getAttribute('data-saved-voice') || '';
+
+    function fillVoices() {
+        QueueSpeech.populateVoiceSelect(select, saved);
+    }
+
+    fillVoices();
+    if (window.speechSynthesis) {
+        window.speechSynthesis.addEventListener('voiceschanged', fillVoices);
+    }
+
+    if (testBtn) {
+        testBtn.addEventListener('click', function () {
+            QueueSpeech.announce({
+                requestor_name: 'Sample Requestor',
+                ticket_code: '001',
+                window_number: 1
+            }, {
+                enabled: true,
+                voiceUri: select.value || ''
+            });
+        });
+    }
+})();
+</script>
+>>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

@@ -57,6 +57,15 @@ function ensureQueueSchema(): void {
         KEY idx_queue_tickets_code (ticket_code)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 
+    $db->exec("CREATE TABLE IF NOT EXISTS queue_chime_uploads (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        file_path VARCHAR(255) NOT NULL,
+        original_name VARCHAR(255) NULL,
+        duration_seconds DECIMAL(6,2) NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_queue_chime_uploads_created (created_at, id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
     $db->exec("CREATE TABLE IF NOT EXISTS queue_display_ads (
         id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         file_path VARCHAR(255) NOT NULL,
@@ -88,11 +97,377 @@ function queueDefaultSettings(): array {
         'queue_pad' => '3',
         'queue_require_name' => '0',
         'queue_sound_enabled' => '1',
+<<<<<<< HEAD
+        'queue_voice_uri' => '',
+        'queue_voice_name' => '',
+        'queue_voice_lang' => '',
+        'queue_chime' => 'bell',
+        'queue_chime_volume' => '100',
+=======
+        'queue_speech_voice' => '',
+>>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
         'queue_ads_enabled' => '1',
         'queue_ads_interval' => '8',
         'queue_ads_layout' => 'side',
+        'queue_ads_split' => 'equal',
         'queue_ads_fit' => 'cover',
+        'queue_announcement' => '',
     ];
+}
+
+/** @return array<string,string> */
+function queueChimeOptions(): array {
+    return [
+        'bell' => 'Rising bell',
+        'ding' => 'Service ding',
+        'doorbell' => 'Doorbell',
+        'arpeggio' => 'Three-note chime',
+        'soft' => 'Soft tone',
+        'bright' => 'Bright ping',
+        'alert' => 'Attention beep',
+        'low' => 'Low bell',
+        'none' => 'No chime',
+    ];
+}
+
+function normalizeQueueChime(?string $chime): string {
+    $chime = (string) $chime;
+    if (preg_match('/^file-(\d+)$/', $chime, $matches) === 1) {
+        $upload = findQueueChimeUpload((int) $matches[1]);
+        return $upload ? 'file-' . (int) $upload['id'] : 'bell';
+    }
+    return array_key_exists($chime, queueChimeOptions()) ? $chime : 'bell';
+}
+
+function normalizeQueueChimeVolume($volume): int {
+    $volume = (int) $volume;
+    if ($volume < 0) {
+        return 0;
+    }
+    if ($volume > 100) {
+        return 100;
+    }
+    return $volume;
+}
+
+function queueChimeAudioUrl(int $chimeId): string {
+    return rtrim(APP_URL, '/') . '/queue/chime-audio.php?id=' . $chimeId;
+}
+
+function queueChimePlaybackUrl(string $chime): string {
+    if (preg_match('/^file-(\d+)$/', $chime, $matches) !== 1) {
+        return '';
+    }
+    $upload = findQueueChimeUpload((int) $matches[1]);
+    return $upload ? queueChimeAudioUrl((int) $upload['id']) : '';
+}
+
+/**
+ * @return list<array{id:int,name:string,url:string,duration_seconds:float}>
+ */
+function getQueueChimeUploads(): array {
+    ensureQueueSchema();
+    $rows = getDB()->query('SELECT id, original_name, duration_seconds FROM queue_chime_uploads ORDER BY id ASC')->fetchAll() ?: [];
+    $uploads = [];
+    foreach ($rows as $row) {
+        $id = (int) $row['id'];
+        $name = trim((string) ($row['original_name'] ?? ''));
+        $uploads[] = [
+            'id' => $id,
+            'name' => $name !== '' ? $name : 'Uploaded chime',
+            'url' => queueChimeAudioUrl($id),
+            'duration_seconds' => (float) ($row['duration_seconds'] ?? 0),
+        ];
+    }
+    return $uploads;
+}
+
+function findQueueChimeUpload(int $chimeId): ?array {
+    if ($chimeId <= 0) {
+        return null;
+    }
+    ensureQueueSchema();
+    $stmt = getDB()->prepare('SELECT id, file_path, original_name, duration_seconds FROM queue_chime_uploads WHERE id = ?');
+    $stmt->execute([$chimeId]);
+    $row = $stmt->fetch();
+    if (!$row) {
+        return null;
+    }
+    $row['id'] = (int) $row['id'];
+    $row['duration_seconds'] = (float) ($row['duration_seconds'] ?? 0);
+    return $row;
+}
+
+function queueChimeAbsolutePath(string $relativePath): ?string {
+    $relativePath = str_replace('\\', '/', ltrim($relativePath, '/'));
+    if (!str_starts_with($relativePath, 'queue-chimes/')) {
+        return null;
+    }
+
+    $base = realpath(UPLOAD_PATH . '/queue-chimes');
+    $file = realpath(UPLOAD_PATH . '/' . $relativePath);
+    if ($base === false || $file === false || !is_file($file)) {
+        return null;
+    }
+
+    $basePrefix = rtrim(str_replace('\\', '/', $base), '/') . '/';
+    $filePath = str_replace('\\', '/', $file);
+    if (!str_starts_with($filePath, $basePrefix)) {
+        return null;
+    }
+
+    return $file;
+}
+
+/**
+ * @return array{id?:int,error?:string}
+ */
+function storeQueueChimeUpload(array $file): array {
+    ensureQueueSchema();
+    $error = (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE);
+    if ($error === UPLOAD_ERR_NO_FILE) {
+        return [];
+    }
+    if ($error !== UPLOAD_ERR_OK) {
+        return ['error' => 'The chime could not be uploaded.'];
+    }
+
+    $count = (int) getDB()->query('SELECT COUNT(*) FROM queue_chime_uploads')->fetchColumn();
+    if ($count >= 10) {
+        return ['error' => 'Remove an uploaded chime before adding another. Up to 10 clips can be saved.'];
+    }
+
+    $ext = strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION));
+    if (!in_array($ext, ['mp3', 'wav'], true)) {
+        return ['error' => 'Upload an MP3 or WAV clip.'];
+    }
+    $size = (int) ($file['size'] ?? 0);
+    if ($size <= 0 || $size > 2 * 1024 * 1024) {
+        return ['error' => 'A chime file must be 2 MB or smaller.'];
+    }
+
+    $tmp = (string) ($file['tmp_name'] ?? '');
+    if ($tmp === '' || !is_uploaded_file($tmp)) {
+        return ['error' => 'The chime could not be uploaded.'];
+    }
+    if (!queueChimeFileMatchesType($tmp, $ext)) {
+        return ['error' => 'That file is not a valid MP3 or WAV clip.'];
+    }
+
+    $duration = queueChimeDurationSeconds($tmp, $ext);
+    if ($duration === null) {
+        return ['error' => 'The length of that clip could not be read. Use a standard MP3 or WAV file.'];
+    }
+    if ($duration > 15.05) {
+        return ['error' => 'A chime must be 15 seconds or shorter.'];
+    }
+
+    $dir = UPLOAD_PATH . '/queue-chimes';
+    if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
+        return ['error' => 'Could not create the chime folder.'];
+    }
+
+    $filename = bin2hex(random_bytes(8)) . '_' . time() . '.' . $ext;
+    $relative = 'queue-chimes/' . $filename;
+    if (!move_uploaded_file($tmp, $dir . '/' . $filename)) {
+        return ['error' => 'Could not save the chime.'];
+    }
+
+    $original = trim((string) ($file['name'] ?? ''));
+    $original = str_replace(["\0", '/', '\\'], '', $original);
+    if ($original === '') {
+        $original = 'Uploaded chime.' . $ext;
+    }
+    if (strlen($original) > 255) {
+        $original = substr($original, 0, 255);
+    }
+
+    $stmt = getDB()->prepare('INSERT INTO queue_chime_uploads (file_path, original_name, duration_seconds) VALUES (?, ?, ?)');
+    $stmt->execute([$relative, $original, round($duration, 2)]);
+
+    return ['id' => (int) getDB()->lastInsertId()];
+}
+
+function deleteQueueChimeUpload(int $chimeId): bool {
+    $upload = findQueueChimeUpload($chimeId);
+    if (!$upload) {
+        return false;
+    }
+
+    $fullPath = queueChimeAbsolutePath((string) $upload['file_path']);
+    getDB()->prepare('DELETE FROM queue_chime_uploads WHERE id = ?')->execute([$chimeId]);
+    if ($fullPath !== null && is_file($fullPath)) {
+        @unlink($fullPath);
+    }
+
+    if (getAppSetting('queue_chime', '') === 'file-' . $chimeId) {
+        setAppSetting('queue_chime', 'bell');
+    }
+
+    return true;
+}
+
+function queueChimeFileMatchesType(string $path, string $ext): bool {
+    $handle = fopen($path, 'rb');
+    if ($handle === false) {
+        return false;
+    }
+    $head = fread($handle, 16);
+    fclose($handle);
+    if (!is_string($head) || strlen($head) < 4) {
+        return false;
+    }
+    if ($ext === 'wav') {
+        return strlen($head) >= 12 && substr($head, 0, 4) === 'RIFF' && substr($head, 8, 4) === 'WAVE';
+    }
+    if (substr($head, 0, 3) === 'ID3') {
+        return true;
+    }
+    return ord($head[0]) === 0xFF && (ord($head[1]) & 0xE0) === 0xE0;
+}
+
+function queueChimeDurationSeconds(string $path, string $ext): ?float {
+    if ($ext === 'wav') {
+        return queueWavDurationSeconds($path);
+    }
+    if ($ext === 'mp3') {
+        return queueMp3DurationSeconds($path);
+    }
+    return null;
+}
+
+function queueWavDurationSeconds(string $path): ?float {
+    $handle = fopen($path, 'rb');
+    if ($handle === false) {
+        return null;
+    }
+    $riff = fread($handle, 12);
+    if (!is_string($riff) || strlen($riff) < 12 || substr($riff, 0, 4) !== 'RIFF' || substr($riff, 8, 4) !== 'WAVE') {
+        fclose($handle);
+        return null;
+    }
+
+    $byteRate = null;
+    $dataSize = null;
+    while (!feof($handle)) {
+        $chunk = fread($handle, 8);
+        if (!is_string($chunk) || strlen($chunk) < 8) {
+            break;
+        }
+        $id = substr($chunk, 0, 4);
+        $size = unpack('V', substr($chunk, 4, 4));
+        $size = (int) ($size[1] ?? 0);
+        if ($id === 'fmt ') {
+            $fmt = fread($handle, min(16, $size));
+            if (!is_string($fmt) || strlen($fmt) < 16) {
+                fclose($handle);
+                return null;
+            }
+            $rate = unpack('V', substr($fmt, 8, 4));
+            $byteRate = (int) ($rate[1] ?? 0);
+            if ($size > 16) {
+                fseek($handle, $size - 16, SEEK_CUR);
+            }
+        } elseif ($id === 'data') {
+            $dataSize = $size;
+            break;
+        } else {
+            fseek($handle, $size + ($size % 2), SEEK_CUR);
+        }
+    }
+    fclose($handle);
+
+    if ($byteRate === null || $byteRate <= 0 || $dataSize === null || $dataSize <= 0) {
+        return null;
+    }
+
+    return $dataSize / $byteRate;
+}
+
+function queueMp3DurationSeconds(string $path): ?float {
+    $data = file_get_contents($path);
+    if (!is_string($data) || $data === '') {
+        return null;
+    }
+    $length = strlen($data);
+    $offset = 0;
+    if ($length >= 10 && substr($data, 0, 3) === 'ID3') {
+        $tagSize = ((ord($data[6]) & 0x7F) << 21)
+            | ((ord($data[7]) & 0x7F) << 14)
+            | ((ord($data[8]) & 0x7F) << 7)
+            | (ord($data[9]) & 0x7F);
+        $offset = 10 + $tagSize;
+    }
+
+    $mpeg1Bitrates = [
+        1 => [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0],
+        2 => [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0],
+        3 => [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0],
+    ];
+    $mpeg2Bitrates = [
+        1 => [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0],
+        2 => [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0],
+        3 => [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0],
+    ];
+    $sampleRates = [
+        0 => [11025, 12000, 8000],
+        2 => [22050, 24000, 16000],
+        3 => [44100, 48000, 32000],
+    ];
+
+    $samples = 0;
+    $rate = 0;
+    $frames = 0;
+    while ($offset + 4 <= $length && $frames < 20000) {
+        $first = ord($data[$offset]);
+        $second = ord($data[$offset + 1]);
+        $third = ord($data[$offset + 2]);
+        if ($first !== 0xFF || ($second & 0xE0) !== 0xE0) {
+            $offset++;
+            continue;
+        }
+        $versionBits = ($second >> 3) & 0x03;
+        $layerBits = ($second >> 1) & 0x03;
+        $bitrateIndex = ($third >> 4) & 0x0F;
+        $sampleIndex = ($third >> 2) & 0x03;
+        $padding = ($third >> 1) & 0x01;
+        if ($versionBits === 1 || $layerBits === 0 || $bitrateIndex === 0 || $bitrateIndex === 15 || $sampleIndex === 3) {
+            $offset++;
+            continue;
+        }
+        $versionKey = $versionBits === 3 ? 3 : ($versionBits === 2 ? 2 : 0);
+        $bitrateTable = $versionKey === 3 ? $mpeg1Bitrates : $mpeg2Bitrates;
+        $bitrate = $bitrateTable[$layerBits][$bitrateIndex] ?? 0;
+        $sampleRate = $sampleRates[$versionKey][$sampleIndex] ?? 0;
+        if ($bitrate <= 0 || $sampleRate <= 0) {
+            $offset++;
+            continue;
+        }
+        $bitsPerSecond = $bitrate * 1000;
+        if ($layerBits === 3) {
+            $frameLength = (int) floor(((12 * $bitsPerSecond) / $sampleRate + $padding) * 4);
+            $frameSamples = 384;
+        } elseif ($versionBits !== 3 && $layerBits === 1) {
+            $frameLength = (int) floor((72 * $bitsPerSecond) / $sampleRate + $padding);
+            $frameSamples = 576;
+        } else {
+            $frameLength = (int) floor((144 * $bitsPerSecond) / $sampleRate + $padding);
+            $frameSamples = 1152;
+        }
+        if ($frameLength < 4 || $offset + $frameLength > $length) {
+            break;
+        }
+        $samples += $frameSamples;
+        $rate = $sampleRate;
+        $frames++;
+        $offset += $frameLength;
+    }
+
+    if ($frames < 1 || $rate <= 0) {
+        return null;
+    }
+
+    return $samples / $rate;
 }
 
 /** @return array<string,string> */
@@ -119,9 +494,47 @@ function normalizeQueueAdLayout(?string $layout): string {
     return array_key_exists($layout, queueAdLayoutOptions()) ? $layout : 'side';
 }
 
+/** @return array<string,string> */
+function queueAdSplitOptions(): array {
+    return [
+        'equal' => 'Half the screen each',
+        'ads' => 'Advertisements use 3/4 of the screen',
+        'queue' => 'Queue uses 3/4 of the screen',
+    ];
+}
+
+function normalizeQueueAdSplit(?string $split): string {
+    $split = (string) $split;
+    return array_key_exists($split, queueAdSplitOptions()) ? $split : 'equal';
+}
+
 function normalizeQueueAdFit(?string $fit): string {
     $fit = (string) $fit;
     return array_key_exists($fit, queueAdFitOptions()) ? $fit : 'cover';
+}
+
+/**
+ * @return array{uri:string,name:string,lang:string}
+ */
+function normalizeQueueVoiceChoice(string $uri, string $name, string $lang): array {
+    $uri = trim((string) (preg_replace('/[\x00-\x1F\x7F]/', '', $uri) ?? ''));
+    $name = trim((string) (preg_replace('/[\x00-\x1F\x7F]/', '', $name) ?? ''));
+    $lang = trim($lang);
+    if (strlen($uri) > 255) {
+        $uri = substr($uri, 0, 255);
+    }
+    if (strlen($name) > 120) {
+        $name = substr($name, 0, 120);
+    }
+    if (!preg_match('/^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8}){0,3}$/', $lang)) {
+        $lang = '';
+    }
+
+    return [
+        'uri' => $uri,
+        'name' => $name,
+        'lang' => $lang,
+    ];
 }
 
 /**
@@ -132,10 +545,21 @@ function normalizeQueueAdFit(?string $fit): string {
  *   pad:int,
  *   require_name:bool,
  *   sound_enabled:bool,
+<<<<<<< HEAD
+ *   voice_uri:string,
+ *   voice_name:string,
+ *   voice_lang:string,
+ *   chime:string,
+ *   chime_volume:int,
+=======
+ *   speech_voice:string,
+>>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
  *   ads_enabled:bool,
  *   ads_interval:int,
  *   ads_layout:string,
- *   ads_fit:string
+ *   ads_split:string,
+ *   ads_fit:string,
+ *   announcement:string
  * }
  */
 function getQueueSettings(): array {
@@ -154,10 +578,21 @@ function getQueueSettings(): array {
         'pad' => $pad,
         'require_name' => getAppSetting('queue_require_name', '0') === '1',
         'sound_enabled' => getAppSetting('queue_sound_enabled', '1') === '1',
+<<<<<<< HEAD
+        'voice_uri' => trim(getAppSetting('queue_voice_uri', '')),
+        'voice_name' => trim(getAppSetting('queue_voice_name', '')),
+        'voice_lang' => trim(getAppSetting('queue_voice_lang', '')),
+        'chime' => normalizeQueueChime(getAppSetting('queue_chime', 'bell')),
+        'chime_volume' => normalizeQueueChimeVolume(getAppSetting('queue_chime_volume', '100')),
+=======
+        'speech_voice' => trim(getAppSetting('queue_speech_voice', '')),
+>>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
         'ads_enabled' => getAppSetting('queue_ads_enabled', '1') === '1',
         'ads_interval' => $interval,
         'ads_layout' => normalizeQueueAdLayout(getAppSetting('queue_ads_layout', 'side')),
+        'ads_split' => normalizeQueueAdSplit(getAppSetting('queue_ads_split', 'equal')),
         'ads_fit' => normalizeQueueAdFit(getAppSetting('queue_ads_fit', 'cover')),
+        'announcement' => normalizeQueueAnnouncement(getAppSetting('queue_announcement', '')),
     ];
 }
 
@@ -185,6 +620,24 @@ function queueServiceLabel(?string $type): string {
     $types = queueServiceTypes();
     $key = (string) $type;
     return $types[$key] ?? ($key !== '' ? ucwords(str_replace('_', ' ', $key)) : 'Document Processing');
+}
+
+function queueRequestorDisplayName(?string $name): string {
+    $name = trim((string) $name);
+    return $name !== '' ? $name : 'Walk-in';
+}
+
+function queueRequestorProperName(?string $name): string {
+    $name = trim((string) $name);
+    if ($name === '') {
+        return 'Walk-in';
+    }
+    $lower = mb_strtolower($name, 'UTF-8');
+    $proper = preg_replace_callback('/(^|[\s\'-])(\p{L})/u', static function (array $match): string {
+        return $match[1] . mb_strtoupper($match[2], 'UTF-8');
+    }, $lower);
+
+    return is_string($proper) && $proper !== '' ? $proper : $lower;
 }
 
 function formatQueueTicketCode(int $number, ?string $prefix = null): string {
@@ -352,6 +805,18 @@ function saveQueueSettingsFromPost(array $input): array {
 
     $requireName = !empty($input['queue_require_name']) ? '1' : '0';
     $sound = !empty($input['queue_sound_enabled']) ? '1' : '0';
+<<<<<<< HEAD
+    $voice = normalizeQueueVoiceChoice(
+        (string) ($input['queue_voice_uri'] ?? ''),
+        (string) ($input['queue_voice_name'] ?? ''),
+        (string) ($input['queue_voice_lang'] ?? '')
+    );
+=======
+    $speechVoice = trim((string) ($input['queue_speech_voice'] ?? ''));
+    if (strlen($speechVoice) > 255) {
+        $speechVoice = substr($speechVoice, 0, 255);
+    }
+>>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
 
     setAppSetting('queue_enabled', $enabled);
     setAppSetting('queue_window_count', (string) $count);
@@ -359,6 +824,16 @@ function saveQueueSettingsFromPost(array $input): array {
     setAppSetting('queue_pad', (string) $pad);
     setAppSetting('queue_require_name', $requireName);
     setAppSetting('queue_sound_enabled', $sound);
+<<<<<<< HEAD
+    setAppSetting('queue_voice_uri', $voice['uri']);
+    setAppSetting('queue_voice_name', $voice['name']);
+    setAppSetting('queue_voice_lang', $voice['lang']);
+    setAppSetting('queue_chime', normalizeQueueChime((string) ($input['queue_chime'] ?? 'bell')));
+    setAppSetting('queue_chime_volume', (string) normalizeQueueChimeVolume($input['queue_chime_volume'] ?? 100));
+    $errors = array_merge($errors, saveQueueAnnouncement((string) ($input['queue_announcement'] ?? '')));
+=======
+    setAppSetting('queue_speech_voice', $speechVoice);
+>>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
 
     syncQueueWindows($count);
 
@@ -629,7 +1104,15 @@ function waitingQueueCount(): int {
 }
 
 function queueDisplayAdUrl(int $adId): string {
-    return rtrim(APP_URL, '/') . '/queue/ad-image.php?id=' . $adId;
+    return appUrlPath('/queue/ad-image.php?id=' . $adId);
+}
+
+function queueDisplayAdFileExists(?string $relativePath): bool {
+    if (!is_string($relativePath) || trim($relativePath) === '') {
+        return false;
+    }
+
+    return queueDisplayAdAbsolutePath(str_replace('\\', '/', $relativePath)) !== null;
 }
 
 /**
@@ -649,6 +1132,7 @@ function getQueueDisplayAds(bool $activeOnly = true): array {
         $row['id'] = (int) $row['id'];
         $row['sort_order'] = (int) $row['sort_order'];
         $row['is_active'] = (int) ($row['is_active'] ?? 0) === 1;
+        $row['file_missing'] = !queueDisplayAdFileExists((string) ($row['file_path'] ?? ''));
         $row['url'] = queueDisplayAdUrl($row['id']);
     }
     unset($row);
@@ -657,12 +1141,15 @@ function getQueueDisplayAds(bool $activeOnly = true): array {
 }
 
 /**
- * @return array{enabled:bool,interval_seconds:int,layout:string,fit:string,images:list<array{id:int,url:string,name:string}>}
+ * @return array{enabled:bool,interval_seconds:int,layout:string,split:string,fit:string,images:list<array{id:int,url:string,name:string}>}
  */
 function getQueueDisplayAdState(): array {
     $settings = getQueueSettings();
     $images = [];
     foreach (getQueueDisplayAds(true) as $ad) {
+        if (!empty($ad['file_missing'])) {
+            continue;
+        }
         $images[] = [
             'id' => (int) $ad['id'],
             'url' => (string) $ad['url'],
@@ -676,6 +1163,7 @@ function getQueueDisplayAdState(): array {
         'enabled' => $settings['ads_enabled'] && $images !== [],
         'interval_seconds' => (int) $settings['ads_interval'],
         'layout' => (string) $settings['ads_layout'],
+        'split' => (string) $settings['ads_split'],
         'fit' => (string) $settings['ads_fit'],
         'images' => $images,
     ];
@@ -695,9 +1183,13 @@ function saveQueueDisplayAdSettings(array $input): array {
     }
 
     $layout = normalizeQueueAdLayout((string) ($input['queue_ads_layout'] ?? 'side'));
+    $split = normalizeQueueAdSplit((string) ($input['queue_ads_split'] ?? 'equal'));
     $fit = normalizeQueueAdFit((string) ($input['queue_ads_fit'] ?? 'cover'));
     if (!array_key_exists((string) ($input['queue_ads_layout'] ?? 'side'), queueAdLayoutOptions())) {
         $errors[] = 'Choose a valid advertisement showing option.';
+    }
+    if (!array_key_exists((string) ($input['queue_ads_split'] ?? 'equal'), queueAdSplitOptions())) {
+        $errors[] = 'Choose a valid screen division.';
     }
     if (!array_key_exists((string) ($input['queue_ads_fit'] ?? 'cover'), queueAdFitOptions())) {
         $errors[] = 'Choose a valid display fit option.';
@@ -706,6 +1198,7 @@ function saveQueueDisplayAdSettings(array $input): array {
     setAppSetting('queue_ads_enabled', $enabled);
     setAppSetting('queue_ads_interval', (string) $interval);
     setAppSetting('queue_ads_layout', $layout);
+    setAppSetting('queue_ads_split', $split);
     setAppSetting('queue_ads_fit', $fit);
 
     return $errors;
@@ -876,6 +1369,31 @@ function queueDisplayAdAbsolutePath(string $relativePath): ?string {
     return $file;
 }
 
+function normalizeQueueAnnouncement(?string $text): string {
+    $text = trim(preg_replace('/\s+/u', ' ', strip_tags((string) $text)) ?? '');
+    if (mb_strlen($text) > 280) {
+        $text = trim(mb_substr($text, 0, 280));
+    }
+
+    return $text;
+}
+
+/**
+ * @return list<string>
+ */
+function saveQueueAnnouncement(string $raw): array {
+    ensureQueueSchema();
+    $clean = trim(preg_replace('/\s+/u', ' ', strip_tags($raw)) ?? '');
+    $errors = [];
+    if (mb_strlen($clean) > 280) {
+        $errors[] = 'The announcement can be up to 280 characters.';
+        $clean = trim(mb_substr($clean, 0, 280));
+    }
+    setAppSetting('queue_announcement', $clean);
+
+    return $errors;
+}
+
 /**
  * @return array<string,mixed>
  */
@@ -894,7 +1412,8 @@ function getQueueDisplayState(): array {
             'staff' => (string) ($window['staff_name'] ?? ''),
             'ticket_code' => $current['ticket_code'] ?? null,
             'ticket_id' => $current['id'] ?? null,
-            'requestor_name' => $current['requestor_name'] ?? null,
+            'requestor_name' => trim((string) ($current['requestor_name'] ?? '')),
+            'called_at' => $current ? (string) ($current['called_at'] ?? '') : '',
             'service_label' => $current['service_label'] ?? null,
             'status' => $current ? 'serving' : 'idle',
         ];
@@ -908,6 +1427,18 @@ function getQueueDisplayState(): array {
     return [
         'enabled' => $settings['enabled'],
         'sound_enabled' => $settings['sound_enabled'],
+<<<<<<< HEAD
+        'voice' => [
+            'uri' => (string) $settings['voice_uri'],
+            'name' => (string) $settings['voice_name'],
+            'lang' => (string) $settings['voice_lang'],
+        ],
+        'chime' => (string) $settings['chime'],
+        'chime_url' => queueChimePlaybackUrl((string) $settings['chime']),
+        'chime_volume' => (int) $settings['chime_volume'],
+=======
+        'speech_voice' => $settings['speech_voice'],
+>>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
         'date' => queueToday(),
         'date_label' => date('F j, Y'),
         'time_label' => date('g:i A'),
@@ -922,11 +1453,17 @@ function getQueueDisplayState(): array {
         'last_called' => $lastCalled ? [
             'id' => (int) $lastCalled['id'],
             'ticket_code' => (string) $lastCalled['ticket_code'],
+            'requestor_name' => trim((string) ($lastCalled['requestor_name'] ?? '')),
+<<<<<<< HEAD
+=======
+            'window_number' => (int) ($lastCalled['window_number'] ?? 0),
+>>>>>>> 0913fedd2764b6fd8ed8cf1afaa93b9b1c5da732
             'window' => (string) ($lastCalled['window_label'] ?? ''),
             'called_at' => (string) ($lastCalled['called_at'] ?? ''),
         ] : null,
         'office' => APP_NAME,
         'tagline' => APP_TAGLINE,
+        'announcement' => (string) $settings['announcement'],
         'ads' => getQueueDisplayAdState(),
     ];
 }
@@ -1097,5 +1634,5 @@ function queueMonitorUrl(): string {
 }
 
 function queueStatusUrl(): string {
-    return rtrim(APP_URL, '/') . '/queue/status.php';
+    return appUrlPath('/queue/status.php');
 }
